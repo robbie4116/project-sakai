@@ -10,6 +10,17 @@ const POLY  = window.AMBASSADOR_POLY;
 const CROPS = window.CROPS;
 const T     = window.STRINGS;
 
+// Persistent device identifier -- stored in localStorage, travels with all upserts
+function getDeviceId() {
+  let id = localStorage.getItem('taniman_device_id');
+  if (!id) {
+    id = 'dev_' + Math.random().toString(36).slice(2, 10) + '_' + Date.now().toString(36);
+    localStorage.setItem('taniman_device_id', id);
+  }
+  return id;
+}
+const DEVICE_ID = getDeviceId();
+
 // ── STATE ─────────────────────────────────────────────────────────
 const state = loadState() || {
   lang: 'tl',
@@ -523,7 +534,7 @@ function paintAt(clientX, clientY){
   renderCanvas();
   updateProgress();
   updateMapPlot(state.plotIdx);
-  schedSave();
+  schedSave(state.plotIdx);
 }
 
 function updateMapPlot(idx){
@@ -532,9 +543,23 @@ function updateMapPlot(idx){
 }
 
 let saveTimer = null;
-function schedSave(){
+let cloudSaveTimer = null;
+const dirtyPlots = new Set();
+
+function schedSave(idx) {
+  // tier 1 -- local, fast
   clearTimeout(saveTimer);
   saveTimer = setTimeout(saveState, 400);
+
+  // tier 2 -- cloud, batched
+  if (idx !== undefined) dirtyPlots.add(idx);
+  clearTimeout(cloudSaveTimer);
+  cloudSaveTimer = setTimeout(async () => {
+    if (dirtyPlots.size && typeof syncPlots === 'function') {
+      await syncPlots([...dirtyPlots], state, DEVICE_ID);
+    }
+    dirtyPlots.clear();
+  }, 5000);
 }
 
 // Mouse + touch handlers
@@ -634,7 +659,15 @@ function openPlot(idx){
   document.getElementById('next-btn').disabled = idx===PLOTS.length-1;
   loadMetadataIntoDrawer();
   refreshMetaToggle();
-  schedSave();
+  if (typeof syncOnNavigate === 'function') {
+    syncOnNavigate(idx, state, (updatedIdx) => {
+      loadMetadataIntoDrawer();
+      renderCanvas();
+      updateMapPlot(updatedIdx);
+      refreshMetaToggle();
+    });
+  }
+  schedSave(idx);
 }
 
 function updatePlotHeader(){
@@ -698,11 +731,11 @@ document.getElementById('meta-toggle').onclick = openDrawer;
 document.getElementById('dr-close').onclick = closeDrawer;
 scrim.onclick = closeDrawer;
 
-function loadMetadataIntoDrawer(){
+function loadMetadataIntoDrawer() {
   const p = getPlotData(state.plotIdx);
   document.getElementById('in-farmer').value = p.farmer || '';
   document.getElementById('in-note').value = p.note || '';
-  renderPhoto(p.photo);
+  renderPhoto(p.photo_url || p.photo || null);
 }
 function renderPhoto(dataUrl){
   const area = document.getElementById('photo-area');
@@ -711,7 +744,7 @@ function renderPhoto(dataUrl){
     document.getElementById('photo-x').onclick = ()=>{
       getPlotData(state.plotIdx).photo = null;
       renderPhoto(null);
-      schedSave(); refreshMetaToggle();
+      schedSave(state.plotIdx); refreshMetaToggle();
     };
   } else {
     area.innerHTML = `<div class="photo-slot" id="photo-slot">
@@ -723,11 +756,11 @@ function renderPhoto(dataUrl){
 }
 document.getElementById('in-farmer').oninput = (e)=>{
   getPlotData(state.plotIdx).farmer = e.target.value;
-  schedSave(); refreshMetaToggle();
+  schedSave(state.plotIdx); refreshMetaToggle();
 };
 document.getElementById('in-note').oninput = (e)=>{
   getPlotData(state.plotIdx).note = e.target.value;
-  schedSave(); refreshMetaToggle();
+  schedSave(state.plotIdx); refreshMetaToggle();
 };
 document.getElementById('in-photo').onchange = async (e)=>{
   const file = e.target.files[0]; if (!file) return;
@@ -745,9 +778,22 @@ document.getElementById('in-photo').onchange = async (e)=>{
     c.width = img.width*scale; c.height = img.height*scale;
     c.getContext('2d').drawImage(img,0,0,c.width,c.height);
     const small = c.toDataURL('image/jpeg', .82);
-    getPlotData(state.plotIdx).photo = small;
+    const plotData = getPlotData(state.plotIdx);
+    // Store base64 locally as legacy fallback
+    plotData.photo = small;
     renderPhoto(small);
-    schedSave(); refreshMetaToggle();
+    schedSave(state.plotIdx);
+    refreshMetaToggle();
+    // Upload to Storage in background; replace local base64 with URL when done
+    if (typeof uploadPhoto === 'function') {
+      uploadPhoto(state.plotIdx, small).then(url => {
+        if (url) {
+          plotData.photo_url = url;
+          plotData.photo = null;
+          schedSave(state.plotIdx);
+        }
+      });
+    }
   };
   img.src = dataUrl;
 };
@@ -936,3 +982,12 @@ _ro.observe(document.querySelector('.canvas-zone'));
 // Force map size recalc after layout settles
 setTimeout(()=>{ if (map) map.invalidateSize(); fitCanvas(); renderCanvas(); }, 80);
 setTimeout(()=>{ if (map) map.invalidateSize(); }, 400);
+
+// Cloud sync on startup -- fetch any newer data from other devices
+if (typeof syncInit === 'function') {
+  syncInit(state, (plotIdx) => {
+    updateMapPlot(plotIdx);
+    if (plotIdx === state.plotIdx) renderCanvas();
+    updateProgress();
+  });
+}
