@@ -1,0 +1,9 @@
+# Large satellite source files -- run generate_tiles.py locally, commit output
+tublay_satellite.tif
+benguet_satellite.tif
+Benguet_Sentinel2_Median.tif
+
+# Python
+__pycache__/
+*.pyc
+.venv/
