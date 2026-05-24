@@ -12,6 +12,26 @@ function readNumericOption(block, optionName) {
   return match ? Number(match[1]) : null;
 }
 
+function readOptionValue(block, optionName) {
+  const match = block.match(new RegExp(`${optionName}\\s*:\\s*([^,\\n}]+)`));
+  return match ? match[1].trim() : null;
+}
+
+function readNumericConstant(source, constantName) {
+  const match = source.match(new RegExp(`const\\s+${constantName}\\s*=\\s*(\\d+)`));
+  return match ? Number(match[1]) : null;
+}
+
+function resolveNumericValue(source, value) {
+  if (/^\d+$/.test(value)) return Number(value);
+  return readNumericConstant(source, value);
+}
+
+function readBoundsConstant(source, constantName) {
+  const match = source.match(new RegExp(`const\\s+${constantName}\\s*=\\s*L\\.latLngBounds\\s*\\(`));
+  return Boolean(match);
+}
+
 function extractFunctionBlock(name) {
   const start = appSource.indexOf(`function ${name}`);
   assert.notEqual(start, -1, `${name} should exist`);
@@ -27,23 +47,25 @@ function extractFunctionBlock(name) {
   throw new Error(`${name} block was not closed`);
 }
 
-test('map can zoom out to the lowest committed native tile zoom', async () => {
-  const zoomDirs = (await readdir(mapTilesDir, { withFileTypes: true }))
+test('map zoom floor follows the offline context tile layer', async () => {
+  const contextTilesDir = new URL('../tiles/context', import.meta.url);
+  const contextZoomDirs = (await readdir(contextTilesDir, { withFileTypes: true }))
     .filter((entry) => entry.isDirectory() && /^\d+$/.test(entry.name))
     .map((entry) => Number(entry.name));
-  const lowestNativeZoom = Math.min(...zoomDirs);
+  const lowestContextZoom = Math.min(...contextZoomDirs);
 
-  const tileLayerBlock = extractFunctionBlock('makeTileLayer');
   const initMapBlock = extractFunctionBlock('initMap');
+  const contextLayerBlock = extractFunctionBlock('makeContextTileLayer');
+  const detailLayerBlock = extractFunctionBlock('makeDetailTileLayer');
 
-  const mapMinZoom = readNumericOption(initMapBlock, 'minZoom');
-  const tileMinZoom = readNumericOption(tileLayerBlock, 'minZoom');
-  const tileMinNativeZoom = readNumericOption(tileLayerBlock, 'minNativeZoom');
-
-  assert.equal(mapMinZoom, lowestNativeZoom);
-  assert.equal(tileMinZoom, lowestNativeZoom);
-  assert.equal(tileMinNativeZoom, lowestNativeZoom);
-  assert.match(tileLayerBlock, /tiles\/map\/\{z\}\/\{x\}\/\{y\}\.jpg\?v=/);
+  assert.equal(resolveNumericValue(appSource, readOptionValue(initMapBlock, 'minZoom')), lowestContextZoom);
+  assert.equal(resolveNumericValue(appSource, readOptionValue(contextLayerBlock, 'minNativeZoom')), lowestContextZoom);
+  assert.equal(
+    resolveNumericValue(appSource, readOptionValue(detailLayerBlock, 'minNativeZoom')),
+    readNumericConstant(appSource, 'MAP_DETAIL_MIN_ZOOM'),
+  );
+  assert.match(contextLayerBlock, /tiles\/context\/\{z\}\/\{x\}\/\{y\}\.jpg\?v=/);
+  assert.match(detailLayerBlock, /tiles\/map\/\{z\}\/\{x\}\/\{y\}\.jpg\?v=/);
 });
 
 test('map tile generation preserves full XYZ tile extents instead of stretching partial source coverage', () => {
@@ -57,4 +79,24 @@ test('map tile generation preserves full XYZ tile extents instead of stretching 
   assert.match(tileGeneratorSource, /boundless\s*=\s*True/);
   assert.match(tileGeneratorSource, /out_shape\s*=\s*\(\s*3\s*,\s*MAP_TILE_PX\s*,\s*MAP_TILE_PX\s*\)/);
   assert.match(tileGeneratorSource, /OUTSIDE_TILE_FILL\s*=\s*\(\s*14\s*,\s*26\s*,\s*14\s*\)/);
+});
+
+test('map uses separate context and detail bounds', () => {
+  const initMapBlock = extractFunctionBlock('initMap');
+  const contextLayerBlock = extractFunctionBlock('makeContextTileLayer');
+  const detailLayerBlock = extractFunctionBlock('makeDetailTileLayer');
+
+  assert.equal(readBoundsConstant(appSource, 'MAP_CONTEXT_BOUNDS'), true);
+  assert.equal(readBoundsConstant(appSource, 'MAP_DETAIL_BOUNDS'), true);
+  assert.match(initMapBlock, /maxBounds:\s*MAP_CONTEXT_BOUNDS/);
+  assert.match(contextLayerBlock, /bounds:\s*MAP_CONTEXT_BOUNDS/);
+  assert.match(detailLayerBlock, /bounds:\s*MAP_DETAIL_BOUNDS/);
+});
+
+test('tile generator defines separate context and detail map outputs', () => {
+  assert.match(tileGeneratorSource, /DETAIL_MAP_OUT_DIR\s*=\s*Path\("tiles\/map"\)/);
+  assert.match(tileGeneratorSource, /CONTEXT_MAP_OUT_DIR\s*=\s*Path\("tiles\/context"\)/);
+  assert.match(tileGeneratorSource, /CONTEXT_SOURCE_TIF\s*=\s*"benguet_satellite\.tif"/);
+  assert.match(tileGeneratorSource, /generate_context_map_tiles/);
+  assert.match(tileGeneratorSource, /generate_detail_map_tiles/);
 });
