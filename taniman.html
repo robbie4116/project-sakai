@@ -132,9 +132,9 @@ input,textarea{font:inherit;color:inherit;background:none;border:none;outline:no
   min-width:0;display:flex;flex-direction:column;
 }
 .map-head{
-  padding:14px 20px 10px;
+  padding:10px 20px;
   border-bottom:1px solid var(--border);
-  display:flex;align-items:baseline;justify-content:space-between;
+  display:flex;align-items:center;justify-content:space-between;
   gap:10px;
   flex-shrink:0;
 }
@@ -142,12 +142,6 @@ input,textarea{font:inherit;color:inherit;background:none;border:none;outline:no
   font-family:'Fraunces',serif;font-weight:600;font-size:18px;
   letter-spacing:-0.005em;
   white-space:nowrap;
-}
-.map-head .hint{
-  font-size:11px;color:var(--muted);
-  text-align:right;
-  font-family:'IBM Plex Mono',monospace;
-  letter-spacing:0.02em;
 }
 #map{flex:1;min-height:0;z-index:1}
 .leaflet-container{background:var(--bg) !important;font-family:inherit !important}
@@ -173,17 +167,17 @@ input,textarea{font:inherit;color:inherit;background:none;border:none;outline:no
 }
 
 .map-zoom{
-  position:absolute;right:14px;top:14px;z-index:400;
-  display:flex;flex-direction:column;gap:1px;
+  display:flex;flex-direction:row;gap:1px;
+  flex-shrink:0;
 }
 .map-zoom button{
-  width:36px;height:36px;background:var(--surface);
+  width:34px;height:34px;background:var(--surface);
   border:1px solid var(--border);color:var(--text);
   font-size:18px;line-height:1;
   display:flex;align-items:center;justify-content:center;
 }
-.map-zoom button:first-child{border-radius:8px 8px 0 0}
-.map-zoom button:last-child{border-radius:0 0 8px 8px;border-top:none}
+.map-zoom button:first-child{border-radius:8px 0 0 8px}
+.map-zoom button:last-child{border-radius:0 8px 8px 0;border-left:none}
 .map-zoom button:hover{background:var(--surface-2)}
 
 /* ── EDITOR PANE ────────────────────────────────────────────────── */
@@ -629,13 +623,12 @@ input,textarea{font:inherit;color:inherit;background:none;border:none;outline:no
     <div class="map-pane">
       <div class="map-head">
         <h2 id="map-title">Ambassador Survey Area</h2>
-        <span class="hint" id="map-hint">8 × 8 = 64 plots</span>
+        <div class="map-zoom">
+          <button id="zoom-out" aria-label="Zoom out">−</button>
+          <button id="zoom-in"  aria-label="Zoom in">+</button>
+        </div>
       </div>
       <div id="map"></div>
-      <div class="map-zoom">
-        <button id="zoom-in" aria-label="Zoom in">+</button>
-        <button id="zoom-out" aria-label="Zoom out">−</button>
-      </div>
       <div class="map-legend">
         <div class="row"><span class="sw" style="background:transparent;border-style:dashed"></span><span id="lg-todo">Empty</span></div>
         <div class="row"><span class="sw" style="background:#FF6A1F"></span><span id="lg-done">Has crops</span></div>
