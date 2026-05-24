@@ -26,6 +26,7 @@ state.mixedStyle = state.mixedStyle || 'diagonal';
 // Undo stack — NOT persisted to localStorage (kept in-memory only).
 // Each entry: { plotIdx, labels:Uint8Array|null }
 const undoStack = [];
+const redoStack = [];
 const UNDO_LIMIT = 50;
 
 // Migrate (Uint8Array → array on load, and v1 single-crop → v2 bitmask)
@@ -179,21 +180,28 @@ function drawMixedCell(ctx, x0, y0, w, h, crops, style){
 }
 
 // ── UNDO ───────────────────────────────────────────────────────────────────
-function snapshotForUndo(idx){
+function snapshotForUndo(idx) {
   const p = state.plots[idx];
   const labels = p && p.labels ? new Uint8Array(p.labels) : null;
   undoStack.push({ plotIdx: idx, labels });
   if (undoStack.length > UNDO_LIMIT) undoStack.shift();
+  redoStack.length = 0;
   updateUndoBtn();
 }
-function undo(){
+function undo() {
   const entry = undoStack.pop();
   if (!entry) { updateUndoBtn(); return; }
+  // snapshot current state for redo before restoring
+  const cur = state.plots[entry.plotIdx];
+  redoStack.push({
+    plotIdx: entry.plotIdx,
+    labels: cur && cur.labels ? new Uint8Array(cur.labels) : null,
+  });
   if (!state.plots[entry.plotIdx]) {
-    state.plots[entry.plotIdx] = { labels: new Uint8Array(GRID*GRID), farmer:'', note:'', photo:null };
+    state.plots[entry.plotIdx] = { labels: new Uint8Array(GRID * GRID), farmer: '', note: '', photo: null };
   }
-  state.plots[entry.plotIdx].labels = entry.labels || new Uint8Array(GRID*GRID);
-  if (state.plotIdx !== entry.plotIdx){
+  state.plots[entry.plotIdx].labels = entry.labels || new Uint8Array(GRID * GRID);
+  if (state.plotIdx !== entry.plotIdx) {
     state.plotIdx = entry.plotIdx;
     updatePlotHeader();
     drawPlotsOnMap();
@@ -203,14 +211,41 @@ function undo(){
   renderCanvas();
   updateProgress();
   refreshMetaToggle();
-  schedSave();
+  schedSave(entry.plotIdx);
   updateUndoBtn();
   toast(tr('undone'));
 }
-function updateUndoBtn(){
-  const btn = document.getElementById('btn-undo');
-  if (!btn) return;
-  btn.disabled = undoStack.length === 0;
+function redo() {
+  const entry = redoStack.pop();
+  if (!entry) { updateUndoBtn(); return; }
+  const cur = state.plots[entry.plotIdx];
+  undoStack.push({
+    plotIdx: entry.plotIdx,
+    labels: cur && cur.labels ? new Uint8Array(cur.labels) : null,
+  });
+  if (undoStack.length > UNDO_LIMIT) undoStack.shift();
+  if (!state.plots[entry.plotIdx]) {
+    state.plots[entry.plotIdx] = { labels: new Uint8Array(GRID * GRID), farmer: '', note: '', photo: null };
+  }
+  state.plots[entry.plotIdx].labels = entry.labels || new Uint8Array(GRID * GRID);
+  if (state.plotIdx !== entry.plotIdx) {
+    state.plotIdx = entry.plotIdx;
+    updatePlotHeader();
+    drawPlotsOnMap();
+  } else {
+    updateMapPlot(entry.plotIdx);
+  }
+  renderCanvas();
+  updateProgress();
+  refreshMetaToggle();
+  schedSave(entry.plotIdx);
+  updateUndoBtn();
+}
+function updateUndoBtn() {
+  const undo = document.getElementById('btn-undo');
+  const redo = document.getElementById('btn-redo');
+  if (undo) undo.disabled = undoStack.length === 0;
+  if (redo) redo.disabled = redoStack.length === 0;
 }
 function updateMixedStyleBtn(){
   document.querySelectorAll('.mix-btn').forEach(b=>{
@@ -730,6 +765,7 @@ document.getElementById('btn-clear').onclick = ()=>{
 };
 
 document.getElementById('btn-undo').onclick = undo;
+document.getElementById('btn-redo').onclick = redo;
 document.querySelectorAll('.mix-btn').forEach(b=>{
   b.onclick = ()=>{
     state.mixedStyle = b.dataset.style;
@@ -857,6 +893,12 @@ document.getElementById('prev-btn').onclick = ()=>openPlot(state.plotIdx-1);
 document.getElementById('next-btn').onclick = ()=>openPlot(state.plotIdx+1);
 document.addEventListener('keydown', (e)=>{
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+  if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || e.key === 'Y')) {
+    e.preventDefault(); redo(); return;
+  }
+  if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'z' || e.key === 'Z')) {
+    e.preventDefault(); redo(); return;
+  }
   if ((e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'Z')){
     e.preventDefault(); undo(); return;
   }
