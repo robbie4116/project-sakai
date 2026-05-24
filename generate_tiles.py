@@ -20,15 +20,20 @@ from rasterio.enums import Resampling
 from rasterio.windows import Window
 
 # CONFIG
-SOURCE_TIF = "tublay_satellite.tif"
+DETAIL_SOURCE_TIF = "tublay_satellite.tif"
+CONTEXT_SOURCE_TIF = "benguet_satellite.tif"
 PLOT_OUT_DIR = Path("tiles/plots")
-MAP_OUT_DIR = Path("tiles/map")
+DETAIL_MAP_OUT_DIR = Path("tiles/map")
+CONTEXT_MAP_OUT_DIR = Path("tiles/context")
 PLOT_SIZE = 512
 MAP_TILE_PX = 256
 JPEG_QUALITY = 85
-TILE_QUALITY = 80
-MIN_ZOOM = 12
-MAX_ZOOM = 16
+DETAIL_TILE_QUALITY = 80
+CONTEXT_TILE_QUALITY = 74
+DETAIL_MIN_ZOOM = 12
+DETAIL_MAX_ZOOM = 16
+CONTEXT_MIN_ZOOM = 10
+CONTEXT_MAX_ZOOM = 13
 OUTSIDE_TILE_FILL = (14, 26, 14)
 
 # Ambassador bounding box + 20% padding (from data.js AMBASSADOR_PLOTS)
@@ -43,6 +48,14 @@ TILE_BBOX_N = BBOX_N + LAT_PAD
 TILE_BBOX_S = BBOX_S - LAT_PAD
 TILE_BBOX_E = BBOX_E + LNG_PAD
 TILE_BBOX_W = BBOX_W - LNG_PAD
+
+# Wider satellite-looking context bounds from benguet_satellite.tif.
+# At zooms 10-13 this is about 346 tiles, which is practical for an
+# offline static bundle while giving field users meaningful orientation.
+CONTEXT_BBOX_N = 16.93070509876553
+CONTEXT_BBOX_S = 16.1724728083975
+CONTEXT_BBOX_E = 120.9375
+CONTEXT_BBOX_W = 120.43212890625
 
 # 64 plots from data.js (matching AMBASSADOR_PLOTS order)
 PLOTS = [
@@ -133,6 +146,9 @@ def crop_band(src, row0, col0, row1, col1):
     return src.read(window=window)
 
 
+RGB_BANDS = [1, 2, 3]
+
+
 def arr_to_pil(arr):
     """Convert (bands, h, w) uint8 array to PIL RGB Image."""
     rgb = np.stack([arr[0], arr[1], arr[2]], axis=2)
@@ -147,7 +163,7 @@ def read_xyz_tile(src, lat_n, lat_s, lng_w, lng_e):
     col0, col1 = min(c0, c1), max(c0, c1)
     window = Window(col0, row0, col1 - col0, row1 - row0)
     arr = src.read(
-        [1, 2, 3],
+        RGB_BANDS,
         window=window,
         out_shape=(3, MAP_TILE_PX, MAP_TILE_PX),
         boundless=True,
@@ -205,38 +221,70 @@ def generate_plot_crops(src):
     print(f"Done: {len(PLOTS)} plot images -> {PLOT_OUT_DIR}/")
 
 
-def generate_map_tiles(src):
-    MAP_OUT_DIR.mkdir(parents=True, exist_ok=True)
+def generate_map_tiles(src, out_dir, min_zoom, max_zoom, bounds, quality, label):
+    out_dir.mkdir(parents=True, exist_ok=True)
 
     empty = Image.new("RGB", (MAP_TILE_PX, MAP_TILE_PX), color=OUTSIDE_TILE_FILL)
-    empty.save(MAP_OUT_DIR / "empty.jpg", "JPEG", quality=60)
+    empty.save(out_dir / "empty.jpg", "JPEG", quality=60)
 
+    lat_n, lat_s, lng_e, lng_w = bounds
     total = 0
-    for zoom in range(MIN_ZOOM, MAX_ZOOM + 1):
-        x0, y0 = deg2tile(TILE_BBOX_N, TILE_BBOX_W, zoom)
-        x1, y1 = deg2tile(TILE_BBOX_S, TILE_BBOX_E, zoom)
+    for zoom in range(min_zoom, max_zoom + 1):
+        x0, y0 = deg2tile(lat_n, lng_w, zoom)
+        x1, y1 = deg2tile(lat_s, lng_e, zoom)
         x0, x1 = min(x0, x1), max(x0, x1)
         y0, y1 = min(y0, y1), max(y0, y1)
         count = (x1 - x0 + 1) * (y1 - y0 + 1)
-        print(f"Zoom {zoom}: x {x0}-{x1}, y {y0}-{y1}  ({count} tiles)")
+        print(f"{label} zoom {zoom}: x {x0}-{x1}, y {y0}-{y1}  ({count} tiles)")
         for tx in range(x0, x1 + 1):
             for ty in range(y0, y1 + 1):
-                out_path = MAP_OUT_DIR / str(zoom) / str(tx) / f"{ty}.jpg"
+                out_path = out_dir / str(zoom) / str(tx) / f"{ty}.jpg"
                 out_path.parent.mkdir(parents=True, exist_ok=True)
-                lat_n, lat_s, lng_w, lng_e = tile_bounds(tx, ty, zoom)
-                arr = read_xyz_tile(src, lat_n, lat_s, lng_w, lng_e)
+                tile_lat_n, tile_lat_s, tile_lng_w, tile_lng_e = tile_bounds(tx, ty, zoom)
+                arr = read_xyz_tile(src, tile_lat_n, tile_lat_s, tile_lng_w, tile_lng_e)
                 img = arr_to_pil(arr)
-                img.save(out_path, "JPEG", quality=TILE_QUALITY)
+                img.save(out_path, "JPEG", quality=quality)
                 total += 1
-    print(f"Done: {total} map tiles -> {MAP_OUT_DIR}/")
+    print(f"Done: {total} {label} tiles -> {out_dir}/")
+
+
+def generate_detail_map_tiles(src):
+    generate_map_tiles(
+        src,
+        DETAIL_MAP_OUT_DIR,
+        DETAIL_MIN_ZOOM,
+        DETAIL_MAX_ZOOM,
+        (TILE_BBOX_N, TILE_BBOX_S, TILE_BBOX_E, TILE_BBOX_W),
+        DETAIL_TILE_QUALITY,
+        "detail",
+    )
+
+
+def generate_context_map_tiles(src):
+    generate_map_tiles(
+        src,
+        CONTEXT_MAP_OUT_DIR,
+        CONTEXT_MIN_ZOOM,
+        CONTEXT_MAX_ZOOM,
+        (CONTEXT_BBOX_N, CONTEXT_BBOX_S, CONTEXT_BBOX_E, CONTEXT_BBOX_W),
+        CONTEXT_TILE_QUALITY,
+        "context",
+    )
 
 
 if __name__ == "__main__":
-    print(f"Opening {SOURCE_TIF}...")
-    with rasterio.open(SOURCE_TIF) as src:
-        print(f"  {src.width}x{src.height} px, {src.count} bands, CRS={src.crs}")
+    print(f"Opening detail source {DETAIL_SOURCE_TIF}...")
+    with rasterio.open(DETAIL_SOURCE_TIF) as detail_src:
+        print(f"  {detail_src.width}x{detail_src.height} px, {detail_src.count} bands, CRS={detail_src.crs}")
         print("\n-- Generating plot crops --")
-        generate_plot_crops(src)
-        print("\n-- Generating map tiles --")
-        generate_map_tiles(src)
+        generate_plot_crops(detail_src)
+        print("\n-- Generating detail map tiles --")
+        generate_detail_map_tiles(detail_src)
+
+    print(f"\nOpening context source {CONTEXT_SOURCE_TIF}...")
+    with rasterio.open(CONTEXT_SOURCE_TIF) as context_src:
+        print(f"  {context_src.width}x{context_src.height} px, {context_src.count} bands, CRS={context_src.crs}")
+        print("\n-- Generating context map tiles --")
+        generate_context_map_tiles(context_src)
+
     print("\nAll done. Commit the tiles/ directory.")
