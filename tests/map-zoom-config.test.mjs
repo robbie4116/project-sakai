@@ -23,8 +23,11 @@ function readNumericConstant(source, constantName) {
 }
 
 function resolveNumericValue(source, value) {
+  if (value === null) return null;
   if (/^\d+$/.test(value)) return Number(value);
-  return readNumericConstant(source, value);
+  const resolved = readNumericConstant(source, value);
+  assert.notEqual(resolved, null, `constant ${value} not found in source`);
+  return resolved;
 }
 
 function readBoundsConstant(source, constantName) {
@@ -49,7 +52,9 @@ function extractFunctionBlock(name) {
 
 test('map zoom floor follows the offline context tile layer', async () => {
   const contextTilesDir = new URL('../tiles/context', import.meta.url);
-  const contextZoomDirs = (await readdir(contextTilesDir, { withFileTypes: true }))
+  const contextZoomDirs = (await readdir(contextTilesDir, { withFileTypes: true }).catch(() => {
+    throw new Error('tiles/context directory not found — run generate_tiles.py first');
+  }))
     .filter((entry) => entry.isDirectory() && /^\d+$/.test(entry.name))
     .map((entry) => Number(entry.name));
   const lowestContextZoom = Math.min(...contextZoomDirs);
