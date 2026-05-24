@@ -284,21 +284,13 @@ function applyLang(){
 
 // ── MAP ───────────────────────────────────────────────────────────
 let tileLayerRef = null;
-function makeTileLayer(){
-  const t = state.theme;
-  // Esri World Imagery — free for non-commercial; matches "satellite view"
-  // For dark theme we layer a Carto dark labels on top; light/contrast use Esri only
-  const sat = L.tileLayer(
-    'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-    { maxZoom: 19, attribution: '' }
-  );
-  const labels = L.tileLayer(
-    'https://stamen-tiles.a.ssl.fastly.net/toner-labels/{z}/{x}/{y}.png',
-    { maxZoom: 18, opacity: t==='dark' ? 0.6 : 0.55, errorTileUrl: '' }
-  );
-  // Group as a layerGroup so caller can remove cleanly
-  const g = L.layerGroup([sat]);
-  return g;
+function makeTileLayer() {
+  return L.tileLayer('tiles/map/{z}/{x}/{y}.jpg', {
+    minZoom: 12,
+    maxZoom: 16,
+    errorTileUrl: 'tiles/map/empty.jpg',
+    attribution: 'Imagery © Map Tiles API',
+  });
 }
 
 function initMap(){
