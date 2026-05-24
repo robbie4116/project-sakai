@@ -295,12 +295,12 @@ function applyTheme(){
   document.querySelectorAll('.theme-btn').forEach(b=>b.classList.toggle('on', b.dataset.theme===state.theme));
   // Re-tile the map with a theme-appropriate basemap
   if (map && contextTileLayerRef && esriTileLayerRef && detailTileLayerRef) {
-    map.removeLayer(detailTileLayerRef);
     map.removeLayer(esriTileLayerRef);
+    map.removeLayer(detailTileLayerRef);
     map.removeLayer(contextTileLayerRef);
     contextTileLayerRef = makeContextTileLayer().addTo(map);
-    esriTileLayerRef    = makeEsriTileLayer().addTo(map);
     detailTileLayerRef  = makeDetailTileLayer().addTo(map);
+    esriTileLayerRef    = makeEsriTileLayer().addTo(map);
   }
   // Re-render plot canvas (grid colors depend on theme)
   renderCanvas();
@@ -402,8 +402,8 @@ function initMap(){
     zoomAnimation:false,
   });
   contextTileLayerRef = makeContextTileLayer().addTo(map);
-  esriTileLayerRef    = makeEsriTileLayer().addTo(map);
   detailTileLayerRef  = makeDetailTileLayer().addTo(map);
+  esriTileLayerRef    = makeEsriTileLayer().addTo(map);
   L.polygon(POLY, {
     color:'var(--gold)' === 'var(--gold)' ? '#F2C84B' : '#F2C84B',
     weight:2.5, dashArray:'7,5',
