@@ -11,7 +11,16 @@ pip install rasterio Pillow numpy
 python generate_tiles.py
 ```
 
-Requires `tublay_satellite.tif` in the project root (not committed - ask a team member).
+Requires these source rasters in the project root (not committed - ask a team member):
+
+- `tublay_satellite.tif` — high-detail plot crops and Ambassador/Tublay detail map tiles
+- `benguet_satellite.tif` — wider low-zoom satellite context map tiles
+
+Tile outputs:
+
+- `tiles/plots/` — plot crop JPEGs used by the labeling canvas
+- `tiles/map/` — high-detail offline map tiles for the Ambassador work area
+- `tiles/context/` — wider low-zoom offline satellite context tiles for zoomed-out orientation
 
 ### 2. Configure Supabase
 
