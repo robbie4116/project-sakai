@@ -330,18 +330,20 @@ function applyLang(){
 
 // ── MAP ───────────────────────────────────────────────────────────
 let tileLayerRef = null;
+const MAP_TILE_VERSION = '20260524-zoomfloor';
 const MAP_TILE_BOUNDS = L.latLngBounds(
   [16.45459, 120.617322],
   [16.50233, 120.663228]
 );
 function makeTileLayer() {
-  return L.tileLayer('tiles/map/{z}/{x}/{y}.jpg', {
-    minZoom: 13,
+  return L.tileLayer(`tiles/map/{z}/{x}/{y}.jpg?v=${MAP_TILE_VERSION}`, {
+    minZoom: 12,
     maxZoom: 16,
-    minNativeZoom: 13,
+    minNativeZoom: 12,
     maxNativeZoom: 16,
     bounds: MAP_TILE_BOUNDS,
     noWrap: true,
+    errorTileUrl: 'tiles/map/empty.jpg',
     attribution: 'Imagery © Map Tiles API',
   });
 }
@@ -350,7 +352,7 @@ function initMap(){
   map = L.map('map', {
     center:[16.482,120.640],
     zoom:14,
-    minZoom: 13,
+    minZoom: 12,
     maxZoom: 16,
     maxBounds: MAP_TILE_BOUNDS,
     maxBoundsViscosity: 0.85,

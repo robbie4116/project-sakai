@@ -16,6 +16,8 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 import rasterio
+from rasterio.enums import Resampling
+from rasterio.windows import Window
 
 # CONFIG
 SOURCE_TIF = "tublay_satellite.tif"
@@ -27,6 +29,7 @@ JPEG_QUALITY = 85
 TILE_QUALITY = 80
 MIN_ZOOM = 12
 MAX_ZOOM = 16
+OUTSIDE_TILE_FILL = (14, 26, 14)
 
 # Ambassador bounding box + 20% padding (from data.js AMBASSADOR_PLOTS)
 BBOX_N = 16.49551
@@ -116,10 +119,14 @@ def lat_lng_to_pixel(src, lat, lng):
     return int(row), int(col)
 
 
+def lat_lng_to_float_pixel(src, lat, lng):
+    """Convert WGS84 lat/lng to fractional pixel row/col in the source raster."""
+    col, row = ~src.transform * (lng, lat)
+    return row, col
+
+
 def crop_band(src, row0, col0, row1, col1):
     """Read a window from source, return numpy array (bands, h, w)."""
-    from rasterio.windows import Window
-
     h = row1 - row0
     w = col1 - col0
     window = Window(col0, row0, w, h)
@@ -130,6 +137,28 @@ def arr_to_pil(arr):
     """Convert (bands, h, w) uint8 array to PIL RGB Image."""
     rgb = np.stack([arr[0], arr[1], arr[2]], axis=2)
     return Image.fromarray(rgb.astype(np.uint8))
+
+
+def read_xyz_tile(src, lat_n, lat_s, lng_w, lng_e):
+    """Read a full XYZ tile extent and pad areas outside the source raster."""
+    r0, c0 = lat_lng_to_float_pixel(src, lat_n, lng_w)
+    r1, c1 = lat_lng_to_float_pixel(src, lat_s, lng_e)
+    row0, row1 = min(r0, r1), max(r0, r1)
+    col0, col1 = min(c0, c1), max(c0, c1)
+    window = Window(col0, row0, col1 - col0, row1 - row0)
+    arr = src.read(
+        [1, 2, 3],
+        window=window,
+        out_shape=(3, MAP_TILE_PX, MAP_TILE_PX),
+        boundless=True,
+        fill_value=0,
+        resampling=Resampling.bilinear,
+    )
+    outside_source = np.all(arr == 0, axis=0)
+    if outside_source.any():
+        for band, value in enumerate(OUTSIDE_TILE_FILL):
+            arr[band, outside_source] = value
+    return arr
 
 
 def deg2tile(lat, lng, zoom):
@@ -179,7 +208,7 @@ def generate_plot_crops(src):
 def generate_map_tiles(src):
     MAP_OUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    empty = Image.new("RGB", (MAP_TILE_PX, MAP_TILE_PX), color=(80, 80, 80))
+    empty = Image.new("RGB", (MAP_TILE_PX, MAP_TILE_PX), color=OUTSIDE_TILE_FILL)
     empty.save(MAP_OUT_DIR / "empty.jpg", "JPEG", quality=60)
 
     total = 0
@@ -195,15 +224,8 @@ def generate_map_tiles(src):
                 out_path = MAP_OUT_DIR / str(zoom) / str(tx) / f"{ty}.jpg"
                 out_path.parent.mkdir(parents=True, exist_ok=True)
                 lat_n, lat_s, lng_w, lng_e = tile_bounds(tx, ty, zoom)
-                r0, c0 = lat_lng_to_pixel(src, lat_n, lng_w)
-                r1, c1 = lat_lng_to_pixel(src, lat_s, lng_e)
-                r0, r1 = max(0, min(r0, r1)), min(src.height, max(r0, r1))
-                c0, c1 = max(0, min(c0, c1)), min(src.width, max(c0, c1))
-                if r1 - r0 < 2 or c1 - c0 < 2:
-                    empty.save(out_path, "JPEG", quality=TILE_QUALITY)
-                    continue
-                arr = crop_band(src, r0, c0, r1, c1)
-                img = arr_to_pil(arr).resize((MAP_TILE_PX, MAP_TILE_PX), Image.LANCZOS)
+                arr = read_xyz_tile(src, lat_n, lat_s, lng_w, lng_e)
+                img = arr_to_pil(arr)
                 img.save(out_path, "JPEG", quality=TILE_QUALITY)
                 total += 1
     print(f"Done: {total} map tiles -> {MAP_OUT_DIR}/")
