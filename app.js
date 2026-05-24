@@ -294,9 +294,11 @@ function applyTheme(){
   document.documentElement.setAttribute('data-theme', state.theme);
   document.querySelectorAll('.theme-btn').forEach(b=>b.classList.toggle('on', b.dataset.theme===state.theme));
   // Re-tile the map with a theme-appropriate basemap
-  if (map && tileLayerRef) {
-    map.removeLayer(tileLayerRef);
-    tileLayerRef = makeTileLayer().addTo(map);
+  if (map && contextTileLayerRef && detailTileLayerRef) {
+    map.removeLayer(detailTileLayerRef);
+    map.removeLayer(contextTileLayerRef);
+    contextTileLayerRef = makeContextTileLayer().addTo(map);
+    detailTileLayerRef = makeDetailTileLayer().addTo(map);
   }
   // Re-render plot canvas (grid colors depend on theme)
   renderCanvas();
@@ -329,22 +331,47 @@ function applyLang(){
 }
 
 // ── MAP ───────────────────────────────────────────────────────────
-let tileLayerRef = null;
-const MAP_TILE_VERSION = '20260524-zoomfloor';
-const MAP_TILE_BOUNDS = L.latLngBounds(
+let contextTileLayerRef = null;
+let detailTileLayerRef = null;
+const MAP_TILE_VERSION = '20260524-context';
+const MAP_CONTEXT_MIN_ZOOM = 10;
+const MAP_CONTEXT_MAX_ZOOM = 13;
+const MAP_DETAIL_MIN_ZOOM = 12;
+const MAP_DETAIL_MAX_ZOOM = 16;
+const MAP_APP_MIN_ZOOM = 10;
+const MAP_APP_MAX_ZOOM = 16;
+const MAP_CONTEXT_BOUNDS = L.latLngBounds(
+  [16.1724728083975, 120.43212890625],
+  [16.93070509876553, 120.9375]
+);
+const MAP_DETAIL_BOUNDS = L.latLngBounds(
   [16.45459, 120.617322],
   [16.50233, 120.663228]
 );
-function makeTileLayer() {
+
+function makeContextTileLayer() {
+  return L.tileLayer(`tiles/context/{z}/{x}/{y}.jpg?v=${MAP_TILE_VERSION}`, {
+    minZoom: MAP_APP_MIN_ZOOM,
+    maxZoom: MAP_APP_MAX_ZOOM,
+    minNativeZoom: MAP_CONTEXT_MIN_ZOOM,
+    maxNativeZoom: MAP_CONTEXT_MAX_ZOOM,
+    bounds: MAP_CONTEXT_BOUNDS,
+    noWrap: true,
+    errorTileUrl: 'tiles/context/empty.jpg',
+    attribution: 'Offline satellite context',
+  });
+}
+
+function makeDetailTileLayer() {
   return L.tileLayer(`tiles/map/{z}/{x}/{y}.jpg?v=${MAP_TILE_VERSION}`, {
-    minZoom: 12,
-    maxZoom: 16,
-    minNativeZoom: 12,
-    maxNativeZoom: 16,
-    bounds: MAP_TILE_BOUNDS,
+    minZoom: MAP_DETAIL_MIN_ZOOM,
+    maxZoom: MAP_APP_MAX_ZOOM,
+    minNativeZoom: MAP_DETAIL_MIN_ZOOM,
+    maxNativeZoom: MAP_DETAIL_MAX_ZOOM,
+    bounds: MAP_DETAIL_BOUNDS,
     noWrap: true,
     errorTileUrl: 'tiles/map/empty.jpg',
-    attribution: 'Imagery © Map Tiles API',
+    attribution: 'Offline Ambassador detail imagery',
   });
 }
 
@@ -352,15 +379,16 @@ function initMap(){
   map = L.map('map', {
     center:[16.482,120.640],
     zoom:14,
-    minZoom: 12,
-    maxZoom: 16,
-    maxBounds: MAP_TILE_BOUNDS,
+    minZoom: MAP_APP_MIN_ZOOM,
+    maxZoom: MAP_APP_MAX_ZOOM,
+    maxBounds: MAP_CONTEXT_BOUNDS,
     maxBoundsViscosity: 0.85,
     zoomControl:false,
     attributionControl:false,
     zoomAnimation:false,
   });
-  tileLayerRef = makeTileLayer().addTo(map);
+  contextTileLayerRef = makeContextTileLayer().addTo(map);
+  detailTileLayerRef = makeDetailTileLayer().addTo(map);
   L.polygon(POLY, {
     color:'var(--gold)' === 'var(--gold)' ? '#F2C84B' : '#F2C84B',
     weight:2.5, dashArray:'7,5',
