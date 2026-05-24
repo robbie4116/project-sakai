@@ -330,17 +330,34 @@ function applyLang(){
 
 // ── MAP ───────────────────────────────────────────────────────────
 let tileLayerRef = null;
+const MAP_TILE_BOUNDS = L.latLngBounds(
+  [16.45459, 120.617322],
+  [16.50233, 120.663228]
+);
 function makeTileLayer() {
   return L.tileLayer('tiles/map/{z}/{x}/{y}.jpg', {
-    minZoom: 12,
+    minZoom: 13,
     maxZoom: 16,
-    errorTileUrl: 'tiles/map/empty.jpg',
+    minNativeZoom: 13,
+    maxNativeZoom: 16,
+    bounds: MAP_TILE_BOUNDS,
+    noWrap: true,
     attribution: 'Imagery © Map Tiles API',
   });
 }
 
 function initMap(){
-  map = L.map('map', { center:[16.482,120.640], zoom:14, zoomControl:false, attributionControl:false });
+  map = L.map('map', {
+    center:[16.482,120.640],
+    zoom:14,
+    minZoom: 13,
+    maxZoom: 16,
+    maxBounds: MAP_TILE_BOUNDS,
+    maxBoundsViscosity: 0.85,
+    zoomControl:false,
+    attributionControl:false,
+    zoomAnimation:false,
+  });
   tileLayerRef = makeTileLayer().addTo(map);
   L.polygon(POLY, {
     color:'var(--gold)' === 'var(--gold)' ? '#F2C84B' : '#F2C84B',
@@ -667,7 +684,7 @@ function openPlot(idx){
       refreshMetaToggle();
     });
   }
-  schedSave(idx);
+  schedSave();
 }
 
 function updatePlotHeader(){
@@ -742,7 +759,9 @@ function renderPhoto(dataUrl){
   if (dataUrl){
     area.innerHTML = `<div class="photo-preview"><img src="${dataUrl}"><button class="x" id="photo-x">×</button></div>`;
     document.getElementById('photo-x').onclick = ()=>{
-      getPlotData(state.plotIdx).photo = null;
+      const plotData = getPlotData(state.plotIdx);
+      plotData.photo = null;
+      plotData.photo_url = null;
       renderPhoto(null);
       schedSave(state.plotIdx); refreshMetaToggle();
     };
@@ -803,10 +822,10 @@ document.getElementById('btn-clear').onclick = ()=>{
   if (!plotHasData(state.plotIdx)) return;
   if (!confirm(tr('confirmClear'))) return;
   snapshotForUndo(state.plotIdx);
-  delete state.plots[state.plotIdx];
+  state.plots[state.plotIdx] = { labels: new Uint8Array(GRID*GRID), farmer:'', note:'', photo:null, photo_url:null };
   renderCanvas(); updateProgress(); updateMapPlot(state.plotIdx);
   loadMetadataIntoDrawer(); refreshMetaToggle();
-  saveState();
+  schedSave(state.plotIdx);
   toast(tr('cleared'));
 };
 
