@@ -1,10 +1,16 @@
 """
-generate_tiles.py - one-time asset generation from tublay_satellite.tif
+generate_tiles.py - one-time asset generation from source rasters
+
+Sources:
+  tublay_satellite.tif   - Ambassador/Tublay detail imagery (high resolution)
+  benguet_satellite.tif  - Benguet province context imagery (wide coverage)
 
 Outputs:
   tiles/plots/plot_000.jpg ... plot_063.jpg  (64 cropped plot images)
-  tiles/map/{z}/{x}/{y}.jpg                  (XYZ tiles, zoom 12-16)
-  tiles/map/empty.jpg                        (1x1 grey fallback tile)
+  tiles/map/{z}/{x}/{y}.jpg                  (XYZ detail tiles, zoom 12-16)
+  tiles/map/empty.jpg                        (fallback tile)
+  tiles/context/{z}/{x}/{y}.jpg              (XYZ context tiles, zoom 10-13)
+  tiles/context/empty.jpg                    (fallback tile)
 
 Run: python generate_tiles.py
 Requires: pip install rasterio Pillow numpy
