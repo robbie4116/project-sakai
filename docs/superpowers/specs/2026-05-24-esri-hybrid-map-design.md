@@ -224,7 +224,7 @@ if (map && contextTileLayerRef && esriTileLayerRef && detailTileLayerRef) {
 - The `.map-zoom` absolute-positioned element is removed from the map pane.
 - Zoom buttons move into the header bar as an inline horizontal pair, `−` on the left, `+` on the right.
 - CSS for `.map-zoom-inline` styles the pair as two adjacent square buttons matching the header height.
-- The `id="map-hint"` element is removed from the HTML and from `applyLang()` in `app.js`.
+- The `id="map-hint"` element is removed from the HTML. The corresponding line in `applyLang()` that sets `document.getElementById('map-hint').textContent` must also be removed from `app.js`.
 
 ---
 
@@ -232,7 +232,7 @@ if (map && contextTileLayerRef && esriTileLayerRef && detailTileLayerRef) {
 
 The existing tests in `tests/map-zoom-config.test.mjs` check for `makeContextTileLayer` and `makeDetailTileLayer` — both still present. The new `makeEsriTileLayer` does not need a dedicated test.
 
-One test assertion will need updating: the test that verifies context layer URL contains `tiles/context/{z}/{x}/{y}.jpg?v=` remains valid. No test checks for a specific `MAP_TILE_VERSION` string, so bumping the version does not break tests.
+The tests assert that the context and detail layer URLs contain the `?v=` query parameter (presence only, not value). Changing `MAP_TILE_VERSION` from `'20260524-context'` to `'20260524-esri'` does not break any test. No assertion checks the specific version string.
 
 The generator tests remain unchanged (no changes to `generate_tiles.py`).
 
