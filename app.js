@@ -294,11 +294,13 @@ function applyTheme(){
   document.documentElement.setAttribute('data-theme', state.theme);
   document.querySelectorAll('.theme-btn').forEach(b=>b.classList.toggle('on', b.dataset.theme===state.theme));
   // Re-tile the map with a theme-appropriate basemap
-  if (map && contextTileLayerRef && detailTileLayerRef) {
+  if (map && contextTileLayerRef && esriTileLayerRef && detailTileLayerRef) {
     map.removeLayer(detailTileLayerRef);
+    map.removeLayer(esriTileLayerRef);
     map.removeLayer(contextTileLayerRef);
     contextTileLayerRef = makeContextTileLayer().addTo(map);
-    detailTileLayerRef = makeDetailTileLayer().addTo(map);
+    esriTileLayerRef    = makeEsriTileLayer().addTo(map);
+    detailTileLayerRef  = makeDetailTileLayer().addTo(map);
   }
   // Re-render plot canvas (grid colors depend on theme)
   renderCanvas();
@@ -308,7 +310,6 @@ function applyLang(){
   document.querySelectorAll('.lang-btn').forEach(b=>b.classList.toggle('on', b.dataset.lang===state.lang));
   document.getElementById('brand-sub').textContent = tr('appSub');
   document.getElementById('map-title').textContent = state.lang==='tl' ? 'Ambassador' : state.lang==='ib' ? 'Ambassador' : 'Ambassador';
-  document.getElementById('map-hint').textContent = '8 × 8 · 64 ' + (state.lang==='tl'?'plot':'plot');
   document.getElementById('lg-todo').textContent = tr('todo');
   document.getElementById('lg-done').textContent = tr('done');
   document.getElementById('lab-brush').textContent = tr('brush');
@@ -332,8 +333,9 @@ function applyLang(){
 
 // ── MAP ───────────────────────────────────────────────────────────
 let contextTileLayerRef = null;
+let esriTileLayerRef = null;
 let detailTileLayerRef = null;
-const MAP_TILE_VERSION = '20260524-context';
+const MAP_TILE_VERSION = '20260524-esri';
 const MAP_CONTEXT_MIN_ZOOM = 10;
 const MAP_CONTEXT_MAX_ZOOM = 13;
 const MAP_DETAIL_MIN_ZOOM = 12;
@@ -345,8 +347,8 @@ const MAP_CONTEXT_BOUNDS = L.latLngBounds(
   [16.93070509876553, 120.9375]
 );
 const MAP_DETAIL_BOUNDS = L.latLngBounds(
-  [16.45459, 120.617322],
-  [16.50233, 120.663228]
+  [16.46141, 120.62388],
+  [16.49551, 120.65667]
 );
 
 function makeContextTileLayer() {
@@ -358,8 +360,20 @@ function makeContextTileLayer() {
     bounds: MAP_CONTEXT_BOUNDS,
     noWrap: true,
     errorTileUrl: 'tiles/context/empty.jpg',
-    attribution: 'Offline satellite context',
+    attribution: '',
   });
+}
+
+function makeEsriTileLayer() {
+  return L.tileLayer(
+    'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+    {
+      maxZoom: 19,
+      noWrap: true,
+      errorTileUrl: '',
+      attribution: '',
+    }
+  );
 }
 
 function makeDetailTileLayer() {
@@ -371,7 +385,7 @@ function makeDetailTileLayer() {
     bounds: MAP_DETAIL_BOUNDS,
     noWrap: true,
     errorTileUrl: 'tiles/map/empty.jpg',
-    attribution: 'Offline Ambassador detail imagery',
+    attribution: '',
   });
 }
 
@@ -388,7 +402,8 @@ function initMap(){
     zoomAnimation:false,
   });
   contextTileLayerRef = makeContextTileLayer().addTo(map);
-  detailTileLayerRef = makeDetailTileLayer().addTo(map);
+  esriTileLayerRef    = makeEsriTileLayer().addTo(map);
+  detailTileLayerRef  = makeDetailTileLayer().addTo(map);
   L.polygon(POLY, {
     color:'var(--gold)' === 'var(--gold)' ? '#F2C84B' : '#F2C84B',
     weight:2.5, dashArray:'7,5',
