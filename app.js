@@ -15,48 +15,23 @@ const MONTH_FULL  = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct'
 const MONTH_FULL_LONG = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 
 // month mask helpers (12-bit)
-const ALL_MONTHS = 0xFFF;
-function monthsBetween(s, e) {
-  // inclusive range, supports wrap (s > e means e.g. Nov–Feb)
-  let mask = 0;
-  if (s <= e) {
-    for (let i=s; i<=e; i++) mask |= (1<<i);
-  } else {
-    for (let i=s; i<12; i++) mask |= (1<<i);
-    for (let i=0; i<=e; i++) mask |= (1<<i);
-  }
-  return mask;
-}
+const MonthView = window.TANIMAN_MONTH_VIEW;
+const {
+  ALL_MONTHS,
+  monthsBetween,
+  maskList,
+  maskIntersects,
+  maskContains,
+  normalizeViewMonths,
+  viewMonthFromMask,
+  maskToDisplayLabel,
+  shouldAutoSwitchViewMonths,
+  isBrushHiddenOnMap,
+} = MonthView;
 function maskHas(mask, m) { return !!(mask & (1<<m)); }
-function maskList(mask) {
-  const out = [];
-  for (let i=0; i<12; i++) if (mask & (1<<i)) out.push(i);
-  return out;
-}
 function maskToLabel(mask) {
   if (mask === 0) return '—';
-  if (mask === ALL_MONTHS) return 'All year';
-  // find contiguous ranges (with wrap support)
-  const months = maskList(mask);
-  if (months.length === 1) return MONTH_FULL[months[0]];
-  // simple: list ranges with wrap
-  // shift so that gap is at start
-  let startBit = 0;
-  while (mask & (1<<startBit)) startBit++;
-  if (startBit >= 12) return 'All year';
-  const ranges = [];
-  let cur = null;
-  for (let k=0; k<12; k++) {
-    const m = (startBit + k) % 12;
-    if (mask & (1<<m)) {
-      if (!cur) cur = { s:m, e:m };
-      else cur.e = m;
-    } else if (cur) {
-      ranges.push(cur); cur = null;
-    }
-  }
-  if (cur) ranges.push(cur);
-  return ranges.map(r => r.s===r.e ? MONTH_FULL[r.s] : `${MONTH_FULL[r.s]}–${MONTH_FULL[r.e]}`).join(', ');
+  return maskToDisplayLabel(mask);
 }
 
 // ── STATE ─────────────────────────────────────────────────────────
@@ -72,6 +47,7 @@ const state = loadState() || {
   paintStart: 0,              // start month of current range (for UI handle dragging)
   paintEnd: 11,               // end month of current range
   viewMonth: -1,              // -1 = all months; 0..11 = scrub to month
+  viewMonths: ALL_MONTHS,     // mask of months displayed on map/canvas
   mixedStyle: 'diagonal',
   showTweaks: false,
   version: 3,
@@ -82,6 +58,8 @@ if (state.paintMonths === undefined) state.paintMonths = ALL_MONTHS;
 if (state.paintStart === undefined) state.paintStart = 0;
 if (state.paintEnd === undefined) state.paintEnd = 11;
 if (state.viewMonth === undefined) state.viewMonth = -1;
+state.viewMonths = normalizeViewMonths(state.viewMonths, state.viewMonth);
+state.viewMonth = viewMonthFromMask(state.viewMonths);
 if (!state.mixedStyle) state.mixedStyle = 'diagonal';
 
 // Per-plot data structure:
@@ -303,12 +281,10 @@ function restoreCloudDirtyQueue() {
 // ── CELL DATA QUERIES ─────────────────────────────────────────────
 function cellVisibleCrops(p, cellIdx) {
   const out = [];
-  const view = state.viewMonth;
+  const viewMonths = state.viewMonths;
   for (let c=0; c<CROPS.length; c++) {
     const v = p.cells[c][cellIdx];
-    if (!v) continue;
-    if (view === -1) out.push(c);
-    else if (v & (1<<view)) out.push(c);
+    if (v && maskIntersects(v, viewMonths)) out.push(c);
   }
   return out;
 }
@@ -329,13 +305,12 @@ function dominantCropForView(idx) {
   const p = state.plots[idx];
   if (!p || !p.cells) return { crop:null, counts:null };
   const counts = new Array(CROPS.length).fill(0);
-  const view = state.viewMonth;
+  const viewMonths = state.viewMonths;
   for (let c=0; c<CROPS.length; c++) {
     for (let i=0; i<p.cells[c].length; i++) {
       const v = p.cells[c][i];
       if (!v) continue;
-      if (view === -1) counts[c]++;
-      else if (v & (1<<view)) counts[c]++;
+      if (maskIntersects(v, viewMonths)) counts[c]++;
     }
   }
   const max = Math.max(...counts);
@@ -657,9 +632,11 @@ function renderCanvas(){
   document.getElementById('canvas-corner').textContent = `${GRID}×${GRID} · ${painted} / ${GRID*GRID}`;
   // top-right "showing" tag
   const tag = document.getElementById('canvas-view-tag');
-  tag.textContent = state.viewMonth === -1
-    ? 'Showing · all year'
-    : 'Showing · ' + MONTH_FULL_LONG[state.viewMonth];
+  const brushHidden = isBrushHiddenOnMap(state.viewMonths, state.paintMonths);
+  tag.classList.toggle('hidden-brush', brushHidden);
+  tag.textContent = brushHidden
+    ? `Hidden · ${maskToDisplayLabel(state.paintMonths)} brush`
+    : 'Showing · ' + maskToDisplayLabel(state.viewMonths, { singleLong: true }).toLowerCase();
 }
 
 // ── PAINTING ──────────────────────────────────────────────────────
@@ -670,6 +647,15 @@ function cellAt(clientX, clientY){
   const r = Math.floor(y / (rect.height / GRID));
   if (c<0||c>=GRID||r<0||r>=GRID) return null;
   return {r,c};
+}
+function ensurePaintVisibleOnMap() {
+  if (!shouldAutoSwitchViewMonths(state.viewMonths, state.paintMonths)) return;
+  if (typeof window.setViewMonths === 'function') {
+    window.setViewMonths(state.paintMonths, { source: 'paintAuto' });
+  } else {
+    state.viewMonths = normalizeViewMonths(state.paintMonths, state.viewMonth);
+    state.viewMonth = viewMonthFromMask(state.viewMonths);
+  }
 }
 function paintAt(clientX, clientY){
   const cell = cellAt(clientX, clientY);
@@ -695,6 +681,7 @@ function paintAt(clientX, clientY){
       }
     }
   }
+  if (state.brush !== 'erase') ensurePaintVisibleOnMap();
   renderCanvas();
   updateProgress();
   updateMapPlot(state.plotIdx);
@@ -1492,7 +1479,9 @@ if (hasSyncInit()) {
 // ── EXPOSE UTILITIES for calendar.js to consume ───────────────────
 window.TANIMAN = {
   state, GRID, PLOTS, CROPS, MONTH_SHORT, MONTH_FULL, MONTH_FULL_LONG, ALL_MONTHS,
-  monthsBetween, maskList, maskToLabel,
+  monthsBetween, maskList, maskToLabel, maskIntersects, maskContains,
+  normalizeViewMonths, viewMonthFromMask, maskToDisplayLabel,
+  shouldAutoSwitchViewMonths, isBrushHiddenOnMap,
   renderCanvas, drawPlotsOnMap, updateMapPlot, updateLegend, updatePlotHeader,
   saveState, tr, schedSave,
 };
