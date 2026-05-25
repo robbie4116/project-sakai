@@ -175,7 +175,7 @@ function saveState(){
 // ── CLOUD SYNC ───────────────────────────────────────────────────
 const cloudDirty = new Set();
 let cloudTimer = null;
-const CLOUD_SYNC_DELAY = 1800;
+const CLOUD_SYNC_DELAY = 4000;
 const CLOUD_RETRY_DELAY = 30000;
 
 function hasSyncPlots() { return typeof window.syncPlots === 'function'; }

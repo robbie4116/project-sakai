@@ -114,3 +114,8 @@ test('plot canvas draws the selected plot crop before label overlays', () => {
   assert.match(renderCanvasBlock, /const\s+tile\s*=\s*getPlotTile\(state\.plotIdx\)/);
   assert.match(renderCanvasBlock, /ctx\.drawImage\(tile,\s*0,\s*0,\s*w,\s*h\)/);
 });
+
+test('cloud sync waits four seconds after the latest dirty plot action', () => {
+  assert.equal(readNumericConstant(appSource, 'CLOUD_SYNC_DELAY'), 4000);
+  assert.match(appSource, /setTimeout\(\(\)\s*=>\s*\{\s*flushCloudSync\(\)\.catch\(e\s*=>\s*console\.warn\('cloud sync failed:',\s*e\)\);\s*\},\s*CLOUD_SYNC_DELAY\)/);
+});
