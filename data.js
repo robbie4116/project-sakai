@@ -17,7 +17,112 @@ window.CROPS = [
     name:{ en:'Wombok / Petsay', tl:'Petsay', ib:'Petsay', il:'Petsay' } },
 ];
 
+// Added in v3: monthly schedule, farmer ID, roster strings
 window.STRINGS = {
+  en: {
+    schedule: 'Schedule · when planted',
+    showing: 'Showing on map',
+    legend: 'Legend',
+    allYear: 'All year',
+    rainy: 'Rainy',
+    coolDry: 'Cool dry',
+    hotDry: 'Hot dry',
+    empty: 'No crops',
+    farmerId: 'Farmer ID',
+    farmerIdPh: 'Optional · e.g. F-001',
+    noFarmer: 'No farmer assigned',
+    schedSummary: 'Crop calendar (this plot)',
+    noSchedule: 'No crops scheduled yet',
+    roster: 'Farmers',
+    rosterFarmers: 'with ID',
+    rosterUnassigned: 'unassigned',
+    rosterEmpty: 'No matching farmers',
+    rosterNoId: 'No ID',
+    rosterNoName: 'No name given',
+    plotS: 'plot',
+    plotP: 'plots',
+    patches: 'patches',
+    plotDetails: 'Plot details',
+    redo: 'Redo',
+  },
+  tl: {
+    schedule: 'Iskedyul · kailan tinanim',
+    showing: 'Ipinapakita sa mapa',
+    legend: 'Lehenda',
+    allYear: 'Buong taon',
+    rainy: 'Tag-ulan',
+    coolDry: 'Tag-lamig',
+    hotDry: 'Tag-init',
+    empty: 'Walang tanim',
+    farmerId: 'ID ng magsasaka',
+    farmerIdPh: 'Opsyonal · hal. F-001',
+    noFarmer: 'Walang naka-ugnay',
+    schedSummary: 'Kalendaryo ng pananim',
+    noSchedule: 'Wala pang nakatakdang pananim',
+    roster: 'Mga magsasaka',
+    rosterFarmers: 'may ID',
+    rosterUnassigned: 'walang ID',
+    rosterEmpty: 'Walang nahanap',
+    rosterNoId: 'Walang ID',
+    rosterNoName: 'Walang pangalan',
+    plotS: 'plot',
+    plotP: 'mga plot',
+    patches: 'patak',
+    plotDetails: 'Detalye ng plot',
+    redo: 'I-redo',
+  },
+  ib: {
+    schedule: 'Iskedyul',
+    showing: 'Pakikitaen',
+    legend: 'Pakaammuan',
+    allYear: 'Sin-amin di tawen',
+    rainy: 'Tag-udan',
+    coolDry: 'Tag-lamiis',
+    hotDry: 'Tag-pudot',
+    empty: 'Anggwatan',
+    farmerId: 'ID di mannalon',
+    farmerIdPh: 'Optional · F-001',
+    noFarmer: 'Awan ay mannalon',
+    schedSummary: 'Kalendaryo di mula',
+    noSchedule: 'Awan pay iskedyul',
+    roster: 'Mannalon',
+    rosterFarmers: 'wadan ID',
+    rosterUnassigned: 'awan ID',
+    rosterEmpty: 'Awan ay nahanap',
+    rosterNoId: 'Awan ID',
+    rosterNoName: 'Awan ngadan',
+    plotS: 'plot', plotP: 'plot', patches: 'patak',
+    plotDetails: 'Detalye di plot',
+    redo: 'Redo',
+  },
+  il: {
+    schedule: 'Iskedyul',
+    showing: 'Maipakita',
+    legend: 'Pakaammo',
+    allYear: 'Sangatawen',
+    rainy: 'Tudo',
+    coolDry: 'Lam-ek',
+    hotDry: 'Pudot',
+    empty: 'Awan mula',
+    farmerId: 'ID ti mannalon',
+    farmerIdPh: 'Opsyonal · F-001',
+    noFarmer: 'Awan mannalon',
+    schedSummary: 'Kalendaryo ti mula',
+    noSchedule: 'Awan pay iskedyul',
+    roster: 'Mannalon',
+    rosterFarmers: 'addaan ID',
+    rosterUnassigned: 'awanan ID',
+    rosterEmpty: 'Awan a nasarakan',
+    rosterNoId: 'Awan ID',
+    rosterNoName: 'Awan nagan',
+    plotS: 'plot', plotP: 'plot', patches: 'patak',
+    plotDetails: 'Detalye ti plot',
+    redo: 'I-redo',
+  },
+};
+
+// Merge legacy strings (the original four-language pack)
+window.STRINGS_LEGACY = {
   en: {
     appName: 'Taniman',
     appSub: 'Ambassador · Tublay · Benguet',
@@ -183,3 +288,12 @@ window.STRINGS = {
     mixedLabel: 'Naglaok a mula',
   },
 };
+
+// Merge legacy strings as a base layer under the v3 keys
+(function mergeLegacy(){
+  for (const lang of Object.keys(window.STRINGS_LEGACY)) {
+    const base = window.STRINGS_LEGACY[lang] || {};
+    const top  = window.STRINGS[lang] || (window.STRINGS[lang] = {});
+    for (const k of Object.keys(base)) if (!(k in top)) top[k] = base[k];
+  }
+})();
