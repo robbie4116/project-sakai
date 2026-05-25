@@ -910,6 +910,8 @@ function applyLang(){
   document.getElementById('q-rainy').textContent = tr('rainy');
   document.getElementById('q-cool').textContent = tr('coolDry');
   document.getElementById('q-hot').textContent = tr('hotDry');
+  document.getElementById('prog-marked-label').textContent = tr('plotsMarked');
+  document.getElementById('prog-painted-label').textContent = tr('patchesPainted');
   buildPalette();
   updatePlotHeader();
   updateLegend();

@@ -44,6 +44,9 @@ window.STRINGS = {
     patches: 'patches',
     plotDetails: 'Plot details',
     redo: 'Redo',
+    plotsMarked: 'plots marked',
+    patchesPainted: 'patches painted',
+    brushHidden: 'Schedule {range} · hidden on map',
   },
   tl: {
     schedule: 'Iskedyul · kailan tinanim',
@@ -70,6 +73,9 @@ window.STRINGS = {
     patches: 'patak',
     plotDetails: 'Detalye ng plot',
     redo: 'I-redo',
+    plotsMarked: 'mga plot namarkahan',
+    patchesPainted: 'mga patak napinta',
+    brushHidden: 'Iskedyul {range} · nakatago sa mapa',
   },
   ib: {
     schedule: 'Iskedyul',
@@ -94,6 +100,9 @@ window.STRINGS = {
     plotS: 'plot', plotP: 'plot', patches: 'patak',
     plotDetails: 'Detalye di plot',
     redo: 'Redo',
+    plotsMarked: 'plot ay namarkaan',
+    patchesPainted: 'patak ay napinta',
+    brushHidden: 'Iskedyul {range} · nakatago ed mapa',
   },
   il: {
     schedule: 'Iskedyul',
@@ -118,6 +127,9 @@ window.STRINGS = {
     plotS: 'plot', plotP: 'plot', patches: 'patak',
     plotDetails: 'Detalye ti plot',
     redo: 'I-redo',
+    plotsMarked: 'plot a namarkaan',
+    patchesPainted: 'patak a napinta',
+    brushHidden: 'Iskedyul {range} · nalimed iti mapa',
   },
 };
 
