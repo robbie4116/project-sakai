@@ -219,15 +219,15 @@ function wireScrubber() {
       const { s, e } = scrubEndpointsFromMask(state.viewMonths);
       viewStart = s; viewEnd = e;
       scrubDragging = Math.abs(m - s) <= Math.abs(m - e) ? 'start' : 'end';
-      if (scrubDragging === 'start') setViewRange(Math.min(m, viewEnd), viewEnd);
-      else setViewRange(viewStart, Math.max(m, viewStart));
+      if (scrubDragging === 'start') setViewRange(m, viewEnd);
+      else setViewRange(viewStart, m);
     }
   };
   const moveInteract = (clientX) => {
     if (!scrubDragging) return;
     const m = nearestMonth(track, clientX);
-    if (scrubDragging === 'start') setViewRange(Math.min(m, viewEnd), viewEnd);
-    else setViewRange(viewStart, Math.max(m, viewStart));
+    if (scrubDragging === 'start') setViewRange(m, viewEnd);
+    else setViewRange(viewStart, m);
   };
   const endInteract = () => { scrubDragging = null; };
 
