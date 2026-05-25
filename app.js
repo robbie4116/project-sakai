@@ -186,6 +186,10 @@ function isCloudDirty(idx) {
   return cloudDirty.has(idx) || !!(p && p._dirty_at);
 }
 function mayMergeRemote(idx) { return !isCloudDirty(idx); }
+function hasPendingPhotoUpload(idx) {
+  const p = state.plots[idx];
+  return !!(p && p.photos && p.photos.some(ph => ph && ph.dataUrl && !ph.url));
+}
 
 function afterRemoteMerge(idx) {
   if (isCloudDirty(idx)) return;
@@ -229,10 +233,18 @@ async function flushCloudSync(indices) {
   const ok = await window.syncPlots(list, state, DEVICE_ID);
   if (ok) {
     list.forEach(idx => {
-      cloudDirty.delete(idx);
-      if (state.plots[idx]) delete state.plots[idx]._dirty_at;
+      if (hasPendingPhotoUpload(idx)) {
+        cloudDirty.add(idx);
+        if (state.plots[idx] && !state.plots[idx]._dirty_at) {
+          state.plots[idx]._dirty_at = new Date().toISOString();
+        }
+      } else {
+        cloudDirty.delete(idx);
+        if (state.plots[idx]) delete state.plots[idx]._dirty_at;
+      }
     });
     saveState();
+    scheduleCloudRetry();
   } else {
     list.forEach(idx => {
       if (state.plots[idx]) {
