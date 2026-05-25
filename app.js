@@ -890,7 +890,7 @@ function applyLang(){
   document.getElementById('lab-crop').textContent = tr('crop');
   document.getElementById('sched-label').textContent = tr('schedule');
   document.getElementById('scrub-label').textContent = tr('showing');
-  document.getElementById('lgd-head').textContent = tr('legend');
+  document.getElementById('lgd-head-txt').textContent = tr('legend');
   document.getElementById('btn-undo-txt').textContent = tr('undo');
   document.getElementById('btn-redo-txt').textContent = tr('redo');
   document.getElementById('btn-clear').textContent = tr('clear');
@@ -1392,6 +1392,10 @@ document.addEventListener('keydown', (e)=>{
 });
 
 window.addEventListener('resize', ()=>{ fitCanvas(); renderCanvas(); });
+
+document.getElementById('lgd-head').addEventListener('click', ()=>{
+  document.getElementById('map-legend').classList.toggle('collapsed');
+});
 
 // ── INIT ──────────────────────────────────────────────────────────
 applyTheme();

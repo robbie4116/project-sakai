@@ -178,7 +178,7 @@ input,textarea{font:inherit;color:inherit;background:none;border:none;outline:no
 
 /* ── MAP LEGEND (redesigned) ────────────────────────────────────── */
 .map-legend{
-  position:absolute;left:16px;bottom:80px;z-index:400;
+  position:absolute;left:16px;top:64px;bottom:auto;z-index:400;
   background:var(--surface);border:1px solid var(--border);
   border-radius:12px;padding:10px 12px;
   font-size:12px;color:var(--text-dim);
@@ -191,7 +191,13 @@ input,textarea{font:inherit;color:inherit;background:none;border:none;outline:no
   font-size:10px;font-weight:600;color:var(--muted);
   text-transform:uppercase;letter-spacing:0.1em;
   margin-bottom:2px;
+  cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:8px;
+  user-select:none;
 }
+.map-legend .lgd-chevron{font-size:9px;line-height:1;transition:transform .18s;flex-shrink:0}
+.map-legend.collapsed .lgd-chevron{transform:rotate(-90deg)}
+.map-legend.collapsed #map-legend-rows{display:none}
+.map-legend.collapsed{gap:0}
 .map-legend .lgd-row{
   display:flex;align-items:center;gap:9px;white-space:nowrap;
   font-size:12px;line-height:1.1;
