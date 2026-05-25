@@ -190,6 +190,14 @@ function hasPendingPhotoUpload(idx) {
   const p = state.plots[idx];
   return !!(p && p.photos && p.photos.some(ph => ph && ph.dataUrl && !ph.url));
 }
+function cloudRetryIndices(indices) {
+  const candidates = indices
+    ? indices.map(Number)
+    : Object.keys(state.plots).map(Number);
+  return [...new Set(candidates)]
+    .filter(idx => Number.isInteger(idx) && state.plots[idx])
+    .filter(idx => isCloudDirty(idx) || hasPendingPhotoUpload(idx));
+}
 
 function afterRemoteMerge(idx) {
   if (isCloudDirty(idx)) return;
@@ -223,24 +231,27 @@ async function uploadPendingPhotos(idx) {
 
 async function flushCloudSync(indices) {
   if (!hasSyncPlots()) return;
-  const list = (indices || Array.from(cloudDirty))
-    .map(Number)
-    .filter(idx => Number.isInteger(idx) && state.plots[idx]);
+  const list = cloudRetryIndices(indices);
   if (!list.length) return;
+  list.forEach(idx => {
+    cloudDirty.add(idx);
+    if (!state.plots[idx]._dirty_at) state.plots[idx]._dirty_at = new Date().toISOString();
+  });
+  const dirtySnapshot = new Map(list.map(idx => [idx, state.plots[idx]._dirty_at]));
   let photosChanged = false;
   for (const idx of list) photosChanged = (await uploadPendingPhotos(idx)) || photosChanged;
   if (photosChanged) saveState();
   const ok = await window.syncPlots(list, state, DEVICE_ID);
   if (ok) {
     list.forEach(idx => {
-      if (hasPendingPhotoUpload(idx)) {
+      if (!state.plots[idx]) return;
+      if (state.plots[idx]._dirty_at !== dirtySnapshot.get(idx)) {
         cloudDirty.add(idx);
-        if (state.plots[idx] && !state.plots[idx]._dirty_at) {
-          state.plots[idx]._dirty_at = new Date().toISOString();
-        }
+      } else if (hasPendingPhotoUpload(idx)) {
+        cloudDirty.add(idx);
       } else {
         cloudDirty.delete(idx);
-        if (state.plots[idx]) delete state.plots[idx]._dirty_at;
+        delete state.plots[idx]._dirty_at;
       }
     });
     saveState();
@@ -1105,7 +1116,7 @@ document.getElementById('btn-save').onclick = async () => {
   const oldHtml = btn.innerHTML;
   btn.innerHTML = '<span>⏳</span>';
   try {
-  await flushCloudSync(indices);
+  await flushCloudSync();
 
   const zip = new JSZip();
   const dateStamp = new Date().toISOString().slice(0,10);
