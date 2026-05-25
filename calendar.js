@@ -2,7 +2,11 @@
 // Both interact through window.TANIMAN exposed by app.js.
 
 (function(){
-const { state, CROPS, MONTH_SHORT, MONTH_FULL, MONTH_FULL_LONG, ALL_MONTHS, monthsBetween, maskToLabel } = window.TANIMAN;
+const {
+  state, CROPS, MONTH_SHORT, MONTH_FULL, MONTH_FULL_LONG, ALL_MONTHS,
+  monthsBetween, maskToLabel, normalizeViewMonths, viewMonthFromMask,
+  maskToDisplayLabel, isBrushHiddenOnMap,
+} = window.TANIMAN;
 
 // ── BUILD: schedule track + scrubber DOM ──────────────────────────
 function buildScheduleTrack() {
@@ -25,11 +29,6 @@ function buildScheduleTrack() {
 function buildScrubberTrack() {
   const track = document.getElementById('scrubber-track');
   track.innerHTML = '';
-  // indicator pill
-  const ind = document.createElement('div');
-  ind.className = 'scrubber-indicator';
-  ind.id = 'scrubber-indicator';
-  track.appendChild(ind);
   for (let m=0; m<12; m++) {
     const btn = document.createElement('div');
     btn.className = 'scrubber-month';
@@ -59,6 +58,7 @@ function updateScheduleReadout() {
     `<span class="crop-dot" style="background:${crop.hex}"></span>` +
     `<span>${crop.name[state.lang]||crop.name.en} · </span>` +
     `<span class="rng">${maskToLabel(state.paintMonths)}</span>`;
+  if (typeof updateHiddenBrushIndicator === 'function') updateHiddenBrushIndicator();
 }
 window.updateScheduleReadout = updateScheduleReadout;
 window.updateScrubberReadout = updateScrubberReadout;
@@ -132,61 +132,76 @@ function syncQuickButtons() {
 }
 
 // ── MAP MONTH SCRUBBER LOGIC ──────────────────────────────────────
+function updateHiddenBrushIndicator() {
+  const el = document.getElementById('scrub-hidden-warning');
+  if (!el) return;
+  const hidden = isBrushHiddenOnMap(state.viewMonths, state.paintMonths);
+  el.hidden = !hidden;
+  el.textContent = hidden
+    ? `Current brush: ${maskToDisplayLabel(state.paintMonths)} hidden on map`
+    : '';
+}
+
 function updateScrubberReadout() {
   const ro = document.getElementById('scrub-readout');
   const allBtn = document.getElementById('scrub-all');
-  if (state.viewMonth === -1) {
-    ro.innerHTML = `<span class="all">${window.TANIMAN.tr('allYear')}</span>`;
-    allBtn.classList.add('on');
-  } else {
-    ro.textContent = MONTH_FULL_LONG[state.viewMonth];
-    allBtn.classList.remove('on');
-  }
-  // update the highlighted month + indicator position
+  const label = maskToDisplayLabel(state.viewMonths, { singleLong: true });
+  ro.innerHTML = state.viewMonths === ALL_MONTHS ? `<span class="all">${label}</span>` : label;
+  allBtn.classList.toggle('on', state.viewMonths === ALL_MONTHS);
   const track = document.getElementById('scrubber-track');
   track.querySelectorAll('.scrubber-month').forEach(el=>{
-    el.classList.toggle('on', +el.dataset.m === state.viewMonth);
+    const m = +el.dataset.m;
+    const inRange = !!(state.viewMonths & (1<<m));
+    el.classList.toggle('on', inRange);
+    el.classList.toggle('in-range', inRange);
+    el.classList.toggle('endpoint', state.viewMonths !== ALL_MONTHS && inRange);
   });
-  const ind = document.getElementById('scrubber-indicator');
-  if (state.viewMonth === -1) {
-    ind.style.opacity = '0';
-  } else {
-    ind.style.opacity = '1';
-    // left = month index * (track width / 12) + 6 (padding)
-    ind.style.left = `calc(6px + (100% - 12px) * ${state.viewMonth} / 12)`;
-  }
 }
 
-function setViewMonth(m) {
-  state.viewMonth = m;
+function refreshMapDisplay() {
   updateScrubberReadout();
+  updateHiddenBrushIndicator();
   window.TANIMAN.renderCanvas();
   window.TANIMAN.drawPlotsOnMap();
   window.TANIMAN.updateLegend();
-  window.TANIMAN.saveState();
 }
+
+function setViewMonths(mask, { source = 'manual' } = {}) {
+  state.viewMonths = normalizeViewMonths(mask, state.viewMonth);
+  state.viewMonth = viewMonthFromMask(state.viewMonths);
+  refreshMapDisplay();
+  if (source !== 'load') window.TANIMAN.saveState();
+}
+window.setViewMonths = setViewMonths;
 
 function wireScrubber() {
   const track = document.getElementById('scrubber-track');
   const allBtn = document.getElementById('scrub-all');
-  allBtn.onclick = ()=> setViewMonth(-1);
-  track.querySelectorAll('.scrubber-month').forEach(el=>{
-    el.addEventListener('click', ()=> setViewMonth(+el.dataset.m));
-  });
-  // also drag-to-scrub
+  allBtn.onclick = ()=> setViewMonths(ALL_MONTHS);
+
   let scrubDragging = false;
+  let scrubStart = 0;
+  let scrubMoved = false;
   const pickFromX = (clientX) => {
-    const rect = track.getBoundingClientRect();
-    const x = clientX - rect.left;
-    let m = Math.floor(((x - 6) / (rect.width - 12)) * 12);
-    if (m < 0) m = 0; if (m > 11) m = 11;
-    setViewMonth(m);
+    return nearestMonth(track, clientX);
   };
-  track.addEventListener('mousedown', (e)=>{ scrubDragging = true; pickFromX(e.clientX); });
-  document.addEventListener('mousemove', (e)=>{ if (scrubDragging) pickFromX(e.clientX); });
+  const startScrub = (clientX) => {
+    scrubDragging = true;
+    scrubMoved = false;
+    scrubStart = pickFromX(clientX);
+    setViewMonths(1 << scrubStart);
+  };
+  const moveScrub = (clientX) => {
+    if (!scrubDragging) return;
+    const m = pickFromX(clientX);
+    scrubMoved = scrubMoved || m !== scrubStart;
+    setViewMonths(scrubMoved ? monthsBetween(scrubStart, m) : (1 << scrubStart));
+  };
+  track.addEventListener('mousedown', (e)=>{ e.preventDefault(); startScrub(e.clientX); });
+  document.addEventListener('mousemove', (e)=>{ moveScrub(e.clientX); });
   document.addEventListener('mouseup', ()=>{ scrubDragging = false; });
-  track.addEventListener('touchstart', (e)=>{ scrubDragging = true; pickFromX(e.touches[0].clientX); }, {passive:false});
-  track.addEventListener('touchmove', (e)=>{ if (scrubDragging) { e.preventDefault(); pickFromX(e.touches[0].clientX); } }, {passive:false});
+  track.addEventListener('touchstart', (e)=>{ e.preventDefault(); startScrub(e.touches[0].clientX); }, {passive:false});
+  track.addEventListener('touchmove', (e)=>{ if (scrubDragging) { e.preventDefault(); moveScrub(e.touches[0].clientX); } }, {passive:false});
   track.addEventListener('touchend', ()=>{ scrubDragging = false; });
 }
 
