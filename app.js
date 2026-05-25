@@ -587,19 +587,30 @@ function fitCanvas(){
   canvas.height = size;
 }
 
+function getPlotTile(idx) {
+  if (!imgCache[idx]) {
+    const img = new Image();
+    img.onload = () => {
+      if (idx === state.plotIdx) renderCanvas();
+    };
+    img.src = `tiles/plots/plot_${String(idx).padStart(3, '0')}.jpg`;
+    imgCache[idx] = img;
+  }
+  return imgCache[idx];
+}
+
 function renderCanvas(){
   const w = canvas.width, h = canvas.height;
   if (!w || !h) return;
   ctx.clearRect(0,0,w,h);
 
-  // base panel
-  ctx.fillStyle = getCss('--canvas-bg');
-  ctx.fillRect(0, 0, w, h);
-  // a faint vignette so it doesn't look completely flat
-  const grd = ctx.createLinearGradient(0,0,w,h);
-  grd.addColorStop(0,'rgba(255,255,255,.05)');
-  grd.addColorStop(1,'rgba(0,0,0,.1)');
-  ctx.fillStyle = grd; ctx.fillRect(0,0,w,h);
+  const tile = getPlotTile(state.plotIdx);
+  if (tile.complete && tile.naturalWidth > 0) {
+    ctx.drawImage(tile, 0, 0, w, h);
+  } else {
+    ctx.fillStyle = getCss('--canvas-bg');
+    ctx.fillRect(0, 0, w, h);
+  }
 
   if (state.theme === 'dark'){
     ctx.fillStyle = 'rgba(0,0,0,.18)'; ctx.fillRect(0,0,w,h);

@@ -105,3 +105,12 @@ test('tile generator defines separate context and detail map outputs', () => {
   assert.match(tileGeneratorSource, /generate_context_map_tiles/);
   assert.match(tileGeneratorSource, /generate_detail_map_tiles/);
 });
+
+test('plot canvas draws the selected plot crop before label overlays', () => {
+  const renderCanvasBlock = extractFunctionBlock('renderCanvas');
+
+  assert.match(appSource, /function\s+getPlotTile\s*\(\s*idx\s*\)/);
+  assert.match(appSource, /tiles\/plots\/plot_\$\{String\(idx\)\.padStart\(3,\s*'0'\)\}\.jpg/);
+  assert.match(renderCanvasBlock, /const\s+tile\s*=\s*getPlotTile\(state\.plotIdx\)/);
+  assert.match(renderCanvasBlock, /ctx\.drawImage\(tile,\s*0,\s*0,\s*w,\s*h\)/);
+});
