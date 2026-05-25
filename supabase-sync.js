@@ -18,14 +18,38 @@
     return db;
   }
 
+  // Encode photos array -> photo_url column value
+  function encodePhotos(photos) {
+    if (!photos || !photos.length) return null;
+    const urls = photos.map(p => p.url).filter(u => u != null);
+    if (!urls.length) return null;
+    if (urls.length === 1) return urls[0];
+    return JSON.stringify(urls);
+  }
+
+  // Decode photo_url column value -> photos array
+  function decodePhotos(photoUrl) {
+    if (!photoUrl) return [];
+    if (photoUrl.startsWith('[')) {
+      try {
+        const parsed = JSON.parse(photoUrl);
+        return parsed.map(url => ({ url, dataUrl: null }));
+      } catch (e) {
+        return [{ url: photoUrl, dataUrl: null }];
+      }
+    }
+    return [{ url: photoUrl, dataUrl: null }];
+  }
+
   // Convert app state plot object -> Supabase row
   function plotToRow(idx, plotData, deviceId) {
     return {
       plot_idx: idx,
-      labels: plotData.labels ? Array.from(plotData.labels) : [],
+      cells: plotData.cells ? plotData.cells.map(a => Array.from(a)) : [],
+      farmer_id: plotData.farmerId || '',
       farmer: plotData.farmer || '',
       note: plotData.note || '',
-      photo_url: plotData.photo_url || null,
+      photo_url: encodePhotos(plotData.photos) ?? (plotData.photo_url || null),
       device_id: deviceId,
       updated_at: new Date().toISOString(),
     };
@@ -34,11 +58,11 @@
   // Convert Supabase row -> app state plot object
   function rowToPlot(row) {
     return {
-      labels: new Uint8Array(row.labels || []),
+      cells: Array.isArray(row.cells) ? row.cells.map(a => new Uint16Array(a)) : [],
+      farmerId: row.farmer_id || '',
       farmer: row.farmer || '',
       note: row.note || '',
-      photo_url: row.photo_url || null,
-      photo: null,
+      photos: decodePhotos(row.photo_url), photo_url: null, photo: null,
       _synced_at: row.updated_at,
     };
   }
@@ -112,7 +136,7 @@
     }
   };
 
-  window.uploadPhoto = async function (plotIdx, dataUrl) {
+  window.uploadPhoto = async function (plotIdx, dataUrl, suffix) {
     if (!isOnline()) return null;
     const client = initClient();
     if (!client) return null;
@@ -123,9 +147,9 @@
       const ua = new Uint8Array(ab);
       for (let i = 0; i < byteStr.length; i++) ua[i] = byteStr.charCodeAt(i);
       const blob = new Blob([ab], { type: 'image/jpeg' });
-      const path = `plot_${String(plotIdx).padStart(3, '0')}.jpg`;
+      const safeSuffix = suffix || Date.now();
+      const path = `plot_${String(plotIdx).padStart(3, '0')}_${safeSuffix}.jpg`;
       const { error } = await client.storage.from('photos').upload(path, blob, {
-        upsert: true,
         contentType: 'image/jpeg',
       });
       if (error) { console.warn('uploadPhoto error:', error.message); return null; }

@@ -172,6 +172,71 @@ function saveState(){
   } catch(e){ console.warn('save failed', e); }
 }
 
+// ── CLOUD SYNC ───────────────────────────────────────────────────
+const cloudDirty = new Set();
+let cloudTimer = null;
+const CLOUD_SYNC_DELAY = 1800;
+
+function hasSyncPlots() { return typeof window.syncPlots === 'function'; }
+function hasSyncInit() { return typeof window.syncInit === 'function'; }
+function hasSyncOnNavigate() { return typeof window.syncOnNavigate === 'function'; }
+
+function afterRemoteMerge(idx) {
+  ensurePlot(idx);
+  updateMapPlot(idx);
+  if (idx === state.plotIdx) {
+    renderCanvas();
+    updatePlotHeader();
+    refreshMetaToggle();
+    if (drawer && drawer.classList.contains('on')) loadMetadataIntoDrawer();
+  }
+  updateProgress();
+  saveState();
+}
+
+async function uploadPendingPhotos(idx) {
+  if (typeof window.uploadPhoto !== 'function') return false;
+  const p = ensurePlot(idx);
+  let changed = false;
+  for (let i = 0; i < p.photos.length; i++) {
+    const ph = p.photos[i];
+    if (!ph || ph.url || !ph.dataUrl) continue;
+    const url = await window.uploadPhoto(idx, ph.dataUrl, `${Date.now()}_${i}`);
+    if (url) {
+      p.photos[i] = { url, dataUrl: null };
+      changed = true;
+    }
+  }
+  return changed;
+}
+
+async function flushCloudSync(indices) {
+  if (!hasSyncPlots()) return;
+  const list = (indices || Array.from(cloudDirty))
+    .map(Number)
+    .filter(idx => Number.isInteger(idx) && state.plots[idx]);
+  if (!list.length) return;
+  list.forEach(idx => cloudDirty.delete(idx));
+  let photosChanged = false;
+  for (const idx of list) photosChanged = (await uploadPendingPhotos(idx)) || photosChanged;
+  if (photosChanged) saveState();
+  await window.syncPlots(list, state, DEVICE_ID);
+}
+
+function markCloudDirty(idx) {
+  if (!Number.isInteger(idx) || !state.plots[idx]) return;
+  cloudDirty.add(idx);
+  clearTimeout(cloudTimer);
+  cloudTimer = setTimeout(() => {
+    flushCloudSync().catch(e => console.warn('cloud sync failed:', e));
+  }, CLOUD_SYNC_DELAY);
+}
+
+function savePlotChange(idx) {
+  schedSave();
+  markCloudDirty(idx);
+}
+
 // ── CELL DATA QUERIES ─────────────────────────────────────────────
 function cellVisibleCrops(p, cellIdx) {
   const out = [];
@@ -244,7 +309,7 @@ function undo() {
   if (state.plotIdx !== e.plotIdx) { state.plotIdx = e.plotIdx; updatePlotHeader(); drawPlotsOnMap(); }
   else updateMapPlot(e.plotIdx);
   renderCanvas(); updateProgress(); refreshMetaToggle(); updateUndoBtn();
-  schedSave();
+  savePlotChange(e.plotIdx);
   toast(tr('undone'));
 }
 function redo() {
@@ -257,7 +322,7 @@ function redo() {
   if (state.plotIdx !== e.plotIdx) { state.plotIdx = e.plotIdx; updatePlotHeader(); drawPlotsOnMap(); }
   else updateMapPlot(e.plotIdx);
   renderCanvas(); updateProgress(); refreshMetaToggle(); updateUndoBtn();
-  schedSave();
+  savePlotChange(e.plotIdx);
 }
 function updateUndoBtn() {
   const u = document.getElementById('btn-undo');
@@ -559,7 +624,7 @@ function paintAt(clientX, clientY){
   renderCanvas();
   updateProgress();
   updateMapPlot(state.plotIdx);
-  schedSave();
+  savePlotChange(state.plotIdx);
 }
 
 let saveTimer = null;
@@ -663,6 +728,9 @@ function openPlot(idx){
   else detailDraft = null;
   refreshMetaToggle();
   schedSave();
+  if (hasSyncOnNavigate()) {
+    window.syncOnNavigate(idx, state, afterRemoteMerge).catch(e => console.warn('navigation sync failed:', e));
+  }
 }
 function updatePlotHeader(){
   const plot = PLOTS[state.plotIdx];
@@ -911,6 +979,7 @@ document.getElementById('dr-save').onclick = () => {
   p.note = detailDraft.note;
   p.photos = detailDraft.photos.map(ph => ({ ...ph }));
   saveState();
+  markCloudDirty(idx);
   refreshMetaToggle();
   updatePlotHeader();
   updateProgress();
@@ -961,7 +1030,7 @@ document.getElementById('btn-clear').onclick = ()=>{
   renderCanvas(); updateProgress(); updateMapPlot(state.plotIdx);
   if (drawer.classList.contains('on')) loadMetadataIntoDrawer();
   refreshMetaToggle(); updatePlotHeader();
-  schedSave();
+  savePlotChange(state.plotIdx);
   toast(tr('cleared'));
 };
 document.getElementById('btn-undo').onclick = undo;
@@ -983,6 +1052,7 @@ document.getElementById('btn-save').onclick = async () => {
   btn.disabled = true;
   const oldHtml = btn.innerHTML;
   btn.innerHTML = '<span>⏳</span>';
+  await flushCloudSync(indices);
 
   const zip = new JSZip();
   const dateStamp = new Date().toISOString().slice(0,10);
@@ -1337,6 +1407,9 @@ function seedDemoIfEmpty(){
 }
 function mulberry32(a){return function(){let t=a+=0x6D2B79F5;t=Math.imul(t^t>>>15,t|1);t^=t+Math.imul(t^t>>>7,t|61);return((t^t>>>14)>>>0)/4294967296;}}
 seedDemoIfEmpty();
+if (hasSyncInit()) {
+  window.syncInit(state, afterRemoteMerge).catch(e => console.warn('initial sync failed:', e));
+}
 
 // ── EXPOSE UTILITIES for calendar.js to consume ───────────────────
 window.TANIMAN = {
