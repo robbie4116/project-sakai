@@ -226,8 +226,13 @@ function wireScrubber() {
   const moveInteract = (clientX) => {
     if (!scrubDragging) return;
     const m = nearestMonth(track, clientX);
-    if (scrubDragging === 'start') setViewRange(m, viewEnd);
-    else setViewRange(viewStart, m);
+    if (scrubDragging === 'start') {
+      if (m > viewEnd) { scrubDragging = 'end'; setViewRange(viewEnd, m); }
+      else setViewRange(m, viewEnd);
+    } else {
+      if (m < viewStart) { scrubDragging = 'start'; setViewRange(m, viewStart); }
+      else setViewRange(viewStart, m);
+    }
   };
   const endInteract = () => { scrubDragging = null; };
 
