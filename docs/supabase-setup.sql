@@ -1,11 +1,12 @@
 create table public.plots (
-  plot_idx   integer primary key,
-  labels     integer[] not null default '{}',
-  farmer     text      not null default '',
-  note       text      not null default '',
+  plot_idx   integer      primary key,
+  cells      jsonb        not null default '[]',
+  farmer_id  text         not null default '',
+  farmer     text         not null default '',
+  note       text         not null default '',
   photo_url  text,
-  device_id  text      not null default '',
-  updated_at timestamptz not null default now()
+  device_id  text         not null default '',
+  updated_at timestamptz  not null default now()
 );
 
 alter table public.plots enable row level security;
