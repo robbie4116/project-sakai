@@ -67,14 +67,15 @@
     };
   }
 
-  window.syncInit = async function (state, onMerge) {
-    if (!isOnline()) return;
+  window.syncInit = async function (state, onMerge, shouldMerge) {
+    if (!isOnline()) return false;
     const client = initClient();
-    if (!client) return;
+    if (!client) return false;
     try {
       const { data, error } = await client.from('plots').select('*');
-      if (error) { console.warn('syncInit fetch error:', error.message); return; }
+      if (error) { console.warn('syncInit fetch error:', error.message); return false; }
       for (const row of data) {
+        if (shouldMerge && !shouldMerge(row.plot_idx)) continue;
         const local = state.plots[row.plot_idx];
         const localTs = local && local._synced_at ? new Date(local._synced_at) : new Date(0);
         const remoteTs = new Date(row.updated_at);
@@ -83,47 +84,53 @@
           onMerge(row.plot_idx);
         }
       }
+      return true;
     } catch (e) {
       console.warn('syncInit error:', e);
+      return false;
     }
   };
 
   window.syncPlots = async function (indices, state, deviceId) {
-    if (!isOnline()) return;
+    if (!isOnline()) return false;
     const client = initClient();
-    if (!client) return;
+    if (!client) return false;
     const rows = indices
       .filter(idx => state.plots[idx])
       .map(idx => plotToRow(idx, state.plots[idx], deviceId));
-    if (!rows.length) return;
+    if (!rows.length) return false;
     try {
       const { error } = await client
         .from('plots')
         .upsert(rows, { onConflict: 'plot_idx' });
-      if (error) console.warn('syncPlots error:', error.message);
-      else {
-        for (const row of rows) {
-          if (state.plots[row.plot_idx]) {
-            state.plots[row.plot_idx]._synced_at = row.updated_at;
-          }
+      if (error) {
+        console.warn('syncPlots error:', error.message);
+        return false;
+      }
+      for (const row of rows) {
+        if (state.plots[row.plot_idx]) {
+          state.plots[row.plot_idx]._synced_at = row.updated_at;
         }
       }
+      return true;
     } catch (e) {
       console.warn('syncPlots error:', e);
+      return false;
     }
   };
 
-  window.syncOnNavigate = async function (idx, state, onMerge) {
-    if (!isOnline()) return;
+  window.syncOnNavigate = async function (idx, state, onMerge, shouldMerge) {
+    if (!isOnline()) return false;
     const client = initClient();
-    if (!client) return;
+    if (!client) return false;
     try {
       const { data, error } = await client
         .from('plots')
         .select('*')
         .eq('plot_idx', idx)
         .maybeSingle();
-      if (error || !data) return;
+      if (error || !data) return false;
+      if (shouldMerge && !shouldMerge(idx)) return false;
       const local = state.plots[idx];
       const localTs = local && local._synced_at ? new Date(local._synced_at) : new Date(0);
       const remoteTs = new Date(data.updated_at);
@@ -131,8 +138,10 @@
         state.plots[idx] = rowToPlot(data);
         onMerge(idx);
       }
+      return true;
     } catch (e) {
       // silently ignore - keep local state
+      return false;
     }
   };
 

@@ -176,12 +176,19 @@ function saveState(){
 const cloudDirty = new Set();
 let cloudTimer = null;
 const CLOUD_SYNC_DELAY = 1800;
+const CLOUD_RETRY_DELAY = 30000;
 
 function hasSyncPlots() { return typeof window.syncPlots === 'function'; }
 function hasSyncInit() { return typeof window.syncInit === 'function'; }
 function hasSyncOnNavigate() { return typeof window.syncOnNavigate === 'function'; }
+function isCloudDirty(idx) {
+  const p = state.plots[idx];
+  return cloudDirty.has(idx) || !!(p && p._dirty_at);
+}
+function mayMergeRemote(idx) { return !isCloudDirty(idx); }
 
 function afterRemoteMerge(idx) {
+  if (isCloudDirty(idx)) return;
   ensurePlot(idx);
   updateMapPlot(idx);
   if (idx === state.plotIdx) {
@@ -203,7 +210,7 @@ async function uploadPendingPhotos(idx) {
     if (!ph || ph.url || !ph.dataUrl) continue;
     const url = await window.uploadPhoto(idx, ph.dataUrl, `${Date.now()}_${i}`);
     if (url) {
-      p.photos[i] = { url, dataUrl: null };
+      p.photos[i] = { ...ph, url };
       changed = true;
     }
   }
@@ -216,25 +223,58 @@ async function flushCloudSync(indices) {
     .map(Number)
     .filter(idx => Number.isInteger(idx) && state.plots[idx]);
   if (!list.length) return;
-  list.forEach(idx => cloudDirty.delete(idx));
   let photosChanged = false;
   for (const idx of list) photosChanged = (await uploadPendingPhotos(idx)) || photosChanged;
   if (photosChanged) saveState();
-  await window.syncPlots(list, state, DEVICE_ID);
+  const ok = await window.syncPlots(list, state, DEVICE_ID);
+  if (ok) {
+    list.forEach(idx => {
+      cloudDirty.delete(idx);
+      if (state.plots[idx]) delete state.plots[idx]._dirty_at;
+    });
+    saveState();
+  } else {
+    list.forEach(idx => {
+      if (state.plots[idx]) {
+        cloudDirty.add(idx);
+        if (!state.plots[idx]._dirty_at) state.plots[idx]._dirty_at = new Date().toISOString();
+      }
+    });
+    saveState();
+    scheduleCloudRetry();
+  }
+  return ok;
 }
 
 function markCloudDirty(idx) {
   if (!Number.isInteger(idx) || !state.plots[idx]) return;
   cloudDirty.add(idx);
+  state.plots[idx]._dirty_at = new Date().toISOString();
   clearTimeout(cloudTimer);
   cloudTimer = setTimeout(() => {
     flushCloudSync().catch(e => console.warn('cloud sync failed:', e));
   }, CLOUD_SYNC_DELAY);
 }
 
+function scheduleCloudRetry() {
+  if (!cloudDirty.size) return;
+  clearTimeout(cloudTimer);
+  cloudTimer = setTimeout(() => {
+    flushCloudSync().catch(e => console.warn('cloud sync failed:', e));
+  }, CLOUD_RETRY_DELAY);
+}
+
 function savePlotChange(idx) {
   schedSave();
   markCloudDirty(idx);
+}
+
+function restoreCloudDirtyQueue() {
+  Object.keys(state.plots).forEach(k => {
+    const idx = Number(k);
+    if (state.plots[idx] && state.plots[idx]._dirty_at) cloudDirty.add(idx);
+  });
+  scheduleCloudRetry();
 }
 
 // ── CELL DATA QUERIES ─────────────────────────────────────────────
@@ -729,7 +769,7 @@ function openPlot(idx){
   refreshMetaToggle();
   schedSave();
   if (hasSyncOnNavigate()) {
-    window.syncOnNavigate(idx, state, afterRemoteMerge).catch(e => console.warn('navigation sync failed:', e));
+    window.syncOnNavigate(idx, state, afterRemoteMerge, mayMergeRemote).catch(e => console.warn('navigation sync failed:', e));
   }
 }
 function updatePlotHeader(){
@@ -978,8 +1018,8 @@ document.getElementById('dr-save').onclick = () => {
   p.farmer = detailDraft.farmer.trim();
   p.note = detailDraft.note;
   p.photos = detailDraft.photos.map(ph => ({ ...ph }));
-  saveState();
   markCloudDirty(idx);
+  saveState();
   refreshMetaToggle();
   updatePlotHeader();
   updateProgress();
@@ -1052,6 +1092,7 @@ document.getElementById('btn-save').onclick = async () => {
   btn.disabled = true;
   const oldHtml = btn.innerHTML;
   btn.innerHTML = '<span>⏳</span>';
+  try {
   await flushCloudSync(indices);
 
   const zip = new JSZip();
@@ -1194,9 +1235,11 @@ document.getElementById('btn-save').onclick = async () => {
 
   const blob = await zip.generateAsync({type:'blob'});
   saveAs(blob, `ambassador_cropmap_${dateStamp}.zip`);
-  btn.disabled = false;
-  btn.innerHTML = oldHtml;
   toast(tr('saved'));
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = oldHtml;
+  }
 };
 
 // ── ROSTER ────────────────────────────────────────────────────────
@@ -1407,8 +1450,9 @@ function seedDemoIfEmpty(){
 }
 function mulberry32(a){return function(){let t=a+=0x6D2B79F5;t=Math.imul(t^t>>>15,t|1);t^=t+Math.imul(t^t>>>7,t|61);return((t^t>>>14)>>>0)/4294967296;}}
 seedDemoIfEmpty();
+restoreCloudDirtyQueue();
 if (hasSyncInit()) {
-  window.syncInit(state, afterRemoteMerge).catch(e => console.warn('initial sync failed:', e));
+  window.syncInit(state, afterRemoteMerge, mayMergeRemote).catch(e => console.warn('initial sync failed:', e));
 }
 
 // ── EXPOSE UTILITIES for calendar.js to consume ───────────────────
