@@ -40,14 +40,14 @@ The Vercel deployment continues to exist and continues to use Supabase exactly a
                                           (state.json + photos/*.jpg)
 ```
 
-Both builds load the same `taniman.html`. A small runtime check (`window.__TAURI_INTERNALS__` exists?) determines whether `supabase-sync.js` or `offline-storage.js` activates. No build-time HTML rewriting is required.
+Both builds load the same `taniman.html`. A small runtime check (`window.__TAURI__` exists?) determines whether `supabase-sync.js` or `offline-storage.js` activates. No build-time HTML rewriting is required.
 
 ```
 Taniman.exe (Tauri v2 shell)
   ├── Edge WebView2 (system runtime, pre-installed on Win10 1803+/Win11)
   │     └── Loads bundled taniman.html + app.js + data.js + assets
   │           │
-  │           ├── If window.__TAURI_INTERNALS__ present:
+  │           ├── If window.__TAURI__ present:
   │           │     offline-storage.js activates → uses window.__TAURI__.fs
   │           └── Else (Vercel):
   │                 supabase-sync.js activates → uses Supabase JS SDK
@@ -188,7 +188,7 @@ Resulting HTML block:
 - `supabase-sync.js`: prepend `if (window.__TAURI__) return;` to the IIFE.
 - `offline-storage.js`: prepend `if (!window.__TAURI__) return;`.
 
-We use `window.__TAURI__` rather than `window.__TAURI_INTERNALS__` because the former is part of Tauri's public surface (gated on `withGlobalTauri`), whereas `__TAURI_INTERNALS__` is internals-prefixed and fragile across versions.
+We use `window.__TAURI__` (the public surface, gated on `withGlobalTauri: true`) rather than internals-prefixed globals like `__TAURI_INTERNALS__`, which are fragile across Tauri versions.
 
 **Supabase CDN tag in the offline build.** A failed `<script src=cdn>` in WebView2 is not silent: it logs a console error AND blocks the parser briefly while WebView2 attempts DNS/TCP. That UX cost is unacceptable on every startup. The offline build therefore **strips the Supabase CDN `<script>` tag** during the prepare-dist step (§10.1). `supabase-sync.js` still loads but no-ops on the Tauri global check, so missing `window.supabase` is moot. The Vercel build keeps the CDN tag exactly as today.
 
@@ -295,14 +295,16 @@ Filenames include the millisecond timestamp from `Date.now()` plus an index suff
 
 `app.js` writes to `localStorage` directly in two places that bypass the sync interface. Both need a small persistence hook:
 
-- **`loadState()` (around line 126):** try `window.loadPersisted?.()` first; if it returns a usable object, use that instead of `localStorage.getItem(STORAGE_KEY)`.
+- **`loadState()` (around line 126):** try `window.loadPersisted?.()` first; if it returns a usable object, use it as-is (already parsed). Otherwise fall back to `localStorage.getItem` + `JSON.parse`.
   ```js
   function loadState(){
     try {
-      const fromDisk = (typeof window.loadPersisted === 'function') ? window.loadPersisted() : null;
-      const raw = fromDisk ? JSON.stringify(fromDisk) : localStorage.getItem(STORAGE_KEY);
-      if (!raw) return null;
-      const s = JSON.parse(raw);
+      let s = (typeof window.loadPersisted === 'function') ? window.loadPersisted() : null;
+      if (!s) {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if (!raw) return null;
+        s = JSON.parse(raw);
+      }
       for (const k of Object.keys(s.plots||{})) {
         const p = s.plots[k];
         if (p.cells) p.cells = p.cells.map(a => new Uint16Array(a));
@@ -311,7 +313,7 @@ Filenames include the millisecond timestamp from `Date.now()` plus an index suff
     } catch(e){ console.warn('load failed', e); return null; }
   }
   ```
-  Note `loadPersisted` is **synchronous** in this design — see 6.7 for how `offline-storage.js` makes that work.
+  Note `loadPersisted` is **synchronous** in this design and returns an already-parsed object (or `null`) — see §6.7 for how `offline-storage.js` makes that work. Avoiding a `JSON.stringify` / `JSON.parse` round-trip on the disk path keeps boot fast and avoids any risk of losing fidelity on non-JSON-serializable values.
 
 - **`saveState()` (around line 138):** after the existing `localStorage.setItem(...)`, also call `window.persistState?.(out)`.
   ```js
@@ -476,7 +478,7 @@ Implementation: a small Node script at `src-tauri/scripts/prepare-dist.mjs` (Nod
 
 1. Wipe and recreate `src-tauri/dist-static/`.
 2. Copy these from the repo root: `taniman.html`, `app.js`, `data.js`, `styles.css`, `config.js`, `supabase-sync.js`, `offline-storage.js`, `month-view-utils.js`, `calendar.js`, plus the `vendor/`, `fonts/`, and `tiles/` directories.
-3. In the copied `dist-static/taniman.html`, strip the Supabase CDN `<script>` tag by regex (matches the exact `cdn.jsdelivr.net/npm/@supabase/...` URL line). Vercel's `taniman.html` is untouched.
+3. In the copied `dist-static/taniman.html`, strip the Supabase CDN `<script>` tag by regex (matches the exact `cdn.jsdelivr.net/npm/@supabase/...` URL line). **If the regex finds zero matches, the script throws and the build fails loudly** — this guards against silent breakage if the CDN URL ever changes in `taniman.html`. Vercel's `taniman.html` is untouched.
 4. Print the staged file count and total size for sanity-check.
 
 `src-tauri/package.json` wires this in via npm scripts:
@@ -589,7 +591,7 @@ On a Windows laptop with **wifi disconnected**:
 | File | Status | Notes |
 |---|---|---|
 | `taniman.html` | edited | Google Fonts → local; insert `<script src="offline-storage.js">` between supabase-sync.js and app.js; tiny inline glue to defer app.js until offline preload resolves. |
-| `supabase-sync.js` | edited | Add `if (window.__TAURI_INTERNALS__) return;` guard at top of IIFE. |
+| `supabase-sync.js` | edited | Add `if (window.__TAURI__) return;` guard at top of IIFE. |
 | `app.js` | edited | ~6 lines — wire `loadPersisted` / `persistState` hooks into `loadState` / `saveState`. |
 | `offline-storage.js` | **new** | ~200 LOC. Tauri-fs-backed state + photo persistence. IIFE no-ops when not in Tauri. |
 | `src-tauri/Cargo.toml` | **new** | Standard Tauri v2 scaffold with `tauri-plugin-fs` and `tauri-plugin-dialog` deps. |
@@ -621,6 +623,6 @@ No changes to: `data.js`, `styles.css`, `config.js`, `vendor/`, `fonts/`, `tiles
 | Two `Taniman.exe` instances racing on the same `data/`. | Documented as unsupported. No lockfile in v1. |
 | `data/` on a USB stick ejected mid-session. | Saves throw; autosave indicator goes red; in-memory state preserved; user can re-attach or quit + relocate. |
 | `app.js` async boot sequence (loadPersisted must be sync). | Preload promise gates `app.js` from loading until `state.json` is in memory (§6.7). |
-| Vercel drift from desktop build. | Both builds load the same `taniman.html` + the same source files. The branch point is a single runtime check on `window.__TAURI_INTERNALS__`. Drift is structurally hard. |
+| Vercel drift from desktop build. | Both builds load the same `taniman.html` + the same source files. The branch point is a single runtime check on `window.__TAURI__`. Drift is structurally hard. |
 | Bundle size. | ~18–22 MB (5 MB Tauri shell + 13 MB tiles + small misc). Acceptable. |
 | Tauri v2 API surface changes. | Pin to a specific v2 minor in `Cargo.toml` and `@tauri-apps/cli` (e.g., `2.x.y`). Document the pinned version in README. |
