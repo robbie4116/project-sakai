@@ -47,25 +47,37 @@ test('dominant crop remains a compatibility wrapper over composition metadata', 
   assert.doesNotMatch(dominant, /new Array\(CROPS\.length\)\.fill\(0\)/);
 });
 
-test('map style no longer fills mixed plots with the dominant crop color', () => {
+test('map style no longer fills painted plots with the dominant crop color', () => {
   const style = extractFunctionBlock(appSource, 'plotStyle');
 
   assert.match(style, /plotCompositionForView\(idx\)/);
-  assert.match(style, /composition\.isMixed/);
   assert.match(style, /--mixed-fill/);
+  assert.doesNotMatch(style, /composition\.isMixed/);
+  assert.doesNotMatch(style, /fillColor:\s*crop\.hex/);
   assert.doesNotMatch(style, /plotIsMixed\(idx\)/);
 });
 
-test('map renders proportional mixed crop bar overlays', () => {
+test('map renders proportional crop bar overlays for any painted plot', () => {
   const draw = extractFunctionBlock(appSource, 'drawPlotsOnMap');
   const update = extractFunctionBlock(appSource, 'updateMapPlot');
   const barHtml = extractFunctionBlock(appSource, 'compositionBarHtml');
+  const compositionBar = extractFunctionBlock(appSource, 'updateCompositionBar');
 
   assert.match(appSource, /plotCompositionBars/);
   assert.match(draw, /updateCompositionBar\(plot\)/);
   assert.match(update, /updateCompositionBar\(plot\)/);
+  assert.match(compositionBar, /composition\.totalVisibleCells\s*<=\s*0/);
+  assert.doesNotMatch(compositionBar, /composition\.isMixed/);
+  assert.doesNotMatch(barHtml, /composition\.isMixed/);
   assert.match(barHtml, /composition\.percentages\[i\]\s*\*\s*100/);
   assert.match(barHtml, /mix-seg/);
+});
+
+test('crop bar segments render in crop palette order', () => {
+  const barHtml = extractFunctionBlock(appSource, 'compositionBarHtml');
+
+  assert.match(barHtml, /composition\.counts\.map\(\(count,\s*i\)/);
+  assert.match(barHtml, /background:\$\{CROPS\[i\]\.hex\}/);
 });
 
 test('legend aggregates visible cell coverage rather than dominant plot counts', () => {

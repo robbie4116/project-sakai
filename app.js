@@ -533,20 +533,12 @@ function plotStyle(idx){
   const { crop } = composition;
   const isCurrent = idx === state.plotIdx;
   if (crop){
-    if (composition.isMixed) {
-      return {
-        color: isCurrent ? '#F2C84B' : getCss('--mixed-stroke'),
-        weight: isCurrent ? 3 : 2,
-        fillColor: getCss('--mixed-fill'),
-        fillOpacity: 0.46,
-        dashArray: isCurrent ? null : '4,3',
-      };
-    }
     return {
-      color: isCurrent ? '#F2C84B' : crop.hex,
-      weight: isCurrent ? 3 : 1.6,
-      fillColor: crop.hex, fillOpacity: 0.65,
-      dashArray: null,
+      color: isCurrent ? '#F2C84B' : getCss('--mixed-stroke'),
+      weight: isCurrent ? 3 : 2,
+      fillColor: getCss('--mixed-fill'),
+      fillOpacity: 0.46,
+      dashArray: isCurrent ? null : '4,3',
     };
   }
   // EMPTY plot — grey (per requirement) — translucent so satellite shows through
@@ -558,7 +550,7 @@ function plotStyle(idx){
 }
 
 function compositionBarHtml(composition) {
-  if (!composition || !composition.isMixed || composition.totalVisibleCells <= 0) return '';
+  if (!composition || composition.totalVisibleCells <= 0) return '';
   const segments = composition.counts.map((count, i) => {
     if (count <= 0) return '';
     const pct = Math.max(4, composition.percentages[i] * 100);
@@ -570,7 +562,7 @@ function compositionBarHtml(composition) {
 function updateCompositionBar(plot) {
   const existing = plotCompositionBars[plot.idx];
   const composition = plotCompositionForView(plot.idx);
-  if (!composition.isMixed) {
+  if (composition.totalVisibleCells <= 0) {
     if (existing) {
       map.removeLayer(existing);
       delete plotCompositionBars[plot.idx];
