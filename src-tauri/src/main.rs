@@ -26,11 +26,24 @@ fn write_photo(
     Ok(format!("photos/{}", filename))
 }
 
+#[tauri::command]
+fn save_zip(
+    state: tauri::State<DataDir>,
+    filename: String,
+    data: Vec<u8>,
+) -> Result<String, String> {
+    let exports_dir = state.0.join("exports");
+    std::fs::create_dir_all(&exports_dir).map_err(|e| e.to_string())?;
+    let abs_path = exports_dir.join(&filename);
+    std::fs::write(&abs_path, &data).map_err(|e| e.to_string())?;
+    Ok(abs_path.to_string_lossy().to_string())
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
-        .invoke_handler(tauri::generate_handler![get_data_dir, write_photo])
+        .invoke_handler(tauri::generate_handler![get_data_dir, write_photo, save_zip])
         .setup(|app| {
             // Resolve <exe_dir>/data
             let exe = std::env::current_exe()

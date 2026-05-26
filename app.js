@@ -1346,9 +1346,16 @@ document.getElementById('btn-save').onclick = async () => {
     plots: metaPlots,
   }, null, 2));
 
-  const blob = await zip.generateAsync({type:'blob'});
-  saveAs(blob, `ambassador_cropmap_${dateStamp}.zip`);
-  toast(tr('saved'));
+  if (window.__TAURI__) {
+    const uint8 = await zip.generateAsync({type:'uint8array'});
+    const filename = `ambassador_cropmap_${dateStamp}.zip`;
+    await window.__TAURI__.core.invoke('save_zip', { filename, data: Array.from(uint8) });
+    toast(`Saved to data/exports/${filename}`);
+  } else {
+    const blob = await zip.generateAsync({type:'blob'});
+    saveAs(blob, `ambassador_cropmap_${dateStamp}.zip`);
+    toast(tr('saved'));
+  }
   } finally {
     btn.disabled = false;
     btn.innerHTML = oldHtml;
