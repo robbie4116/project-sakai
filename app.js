@@ -127,6 +127,7 @@ function loadState(){
   try {
     let s = (typeof window.loadPersisted === 'function') ? window.loadPersisted() : null;
     if (!s) {
+      if (window.__TAURI__) return null; // disk is authoritative; ignore stale localStorage
       const raw = localStorage.getItem(STORAGE_KEY);
       if (!raw) return null;
       s = JSON.parse(raw);
