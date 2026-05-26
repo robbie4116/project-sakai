@@ -4,6 +4,7 @@
 
 (function () {
   'use strict';
+  if (window.__TAURI__) return;
 
   let db = null;
 
