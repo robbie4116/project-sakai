@@ -121,11 +121,14 @@ thesis-digimap/
 │   ├── icons/                       (.ico + standard PNGs)
 │   ├── capabilities/
 │   │   └── default.json             (v2 capability file)
+│   ├── scripts/
+│   │   └── prepare-dist.mjs         (~40 LOC: stage runtime files into dist-static/, strip Supabase CDN tag)
+│   ├── dist-static/                 (GITIGNORED — staging output; rebuilt every build)
 │   └── src/
-│       └── main.rs                  (~60 LOC: resolve data dir, register fs scope, expose get_data_dir command)
+│       └── main.rs                  (~80 LOC: resolve data dir, register fs scope, expose get_data_dir command)
 │
 ├── vercel.json                      EDITED — add framework:null + null install/build commands
-└── .gitignore                       EDITED — add src-tauri/target/, src-tauri/node_modules/
+└── .gitignore                       EDITED — add src-tauri/target/, src-tauri/node_modules/, src-tauri/dist-static/
 ```
 
 **`package.json` lives inside `src-tauri/`, not at repo root.** This is deliberate: Vercel auto-detects `package.json` at the repo root and may attempt `npm install`. Keeping it under `src-tauri/` makes it invisible to Vercel and clearly scoped to the desktop-build pipeline.
@@ -145,25 +148,49 @@ becomes:
 ```
 `fonts/fonts.css` and the woff2 files already exist in the repo. Applies to Vercel too (one fewer third-party request, faster paint).
 
-### 5b. Conditional sync-layer loading
+### 5b. Conditional sync-layer loading + deferred app boot
+
 Today the bottom of `<body>` loads (in order): `data.js → config.js → month-view-utils.js → Supabase SDK (CDN) → supabase-sync.js → app.js → calendar.js`.
 
-Insert `offline-storage.js` **between `supabase-sync.js` and `app.js`** so the offline sync globals (`window.syncInit`, `window.syncPlots`, `window.uploadPhoto`, plus `window.persistState`, `window.loadPersisted`) are defined before `app.js` runs:
+Two structural changes to that block:
+
+1. Insert `offline-storage.js` **after `supabase-sync.js`** so the offline sync globals (`window.syncInit`, `window.syncPlots`, `window.uploadPhoto`, plus `window.persistState`, `window.loadPersisted`) are defined before `app.js` runs.
+2. Convert the final `<script src="app.js">` and `<script src="calendar.js">` from static tags into a small **promise-gated dynamic loader**, so that in offline mode `app.js` starts only after `state.json` has been preloaded into memory (so `loadState()` can stay synchronous). In Vercel mode the promise resolves immediately and behavior is identical to today.
+
+Resulting HTML block:
 
 ```html
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 <script src="supabase-sync.js"></script>
 <script src="offline-storage.js"></script>      <!-- NEW; offline-only IIFE -->
-<script src="app.js"></script>
-<script src="calendar.js"></script>
+<script>
+  // Boot sequence: wait for offline preload (no-op in Vercel mode), then app.js, then calendar.js.
+  (function () {
+    var ready = window.__TANIMAN_OFFLINE_READY || Promise.resolve();
+    ready.then(function () {
+      var s1 = document.createElement('script');
+      s1.src = 'app.js';
+      s1.onload = function () {
+        var s2 = document.createElement('script');
+        s2.src = 'calendar.js';
+        document.body.appendChild(s2);
+      };
+      document.body.appendChild(s1);
+    });
+  })();
+</script>
 ```
 
-Each module self-checks the environment and no-ops in the wrong mode:
+**Safety check — `DOMContentLoaded` semantics:** `app.js` and `calendar.js` both run top-level code that attaches listeners to elements already present in the DOM. Neither uses `window.onload` or `document.addEventListener('DOMContentLoaded', ...)`. Dynamic injection after `DOMContentLoaded` therefore has no behavioral effect — verified by grep at design time. If a future refactor adds a `DOMContentLoaded` handler, it would silently no-op and must be rewritten as an immediate call instead.
 
-- `supabase-sync.js`: add `if (window.__TAURI_INTERNALS__) return;` at the top of its IIFE. (`window.__TAURI_INTERNALS__` is injected by Tauri v2 before any page script runs.)
-- `offline-storage.js`: starts with `if (!window.__TAURI_INTERNALS__) return;`.
+**Environment detection.** With `app.withGlobalTauri: true` in `tauri.conf.json`, Tauri v2 sets `window.__TAURI__` synchronously before any user script runs. Each module self-checks:
 
-The Supabase CDN `<script>` tag stays. In Tauri mode the script still loads (WebView2 has no internet, so the request fails silently); `supabase-sync.js`'s IIFE returns early before it would try to use the Supabase global, so the failed CDN fetch is harmless. (For belt-and-suspenders, future revision could move Supabase to a local vendor copy — out of scope here.)
+- `supabase-sync.js`: prepend `if (window.__TAURI__) return;` to the IIFE.
+- `offline-storage.js`: prepend `if (!window.__TAURI__) return;`.
+
+We use `window.__TAURI__` rather than `window.__TAURI_INTERNALS__` because the former is part of Tauri's public surface (gated on `withGlobalTauri`), whereas `__TAURI_INTERNALS__` is internals-prefixed and fragile across versions.
+
+**Supabase CDN tag in the offline build.** A failed `<script src=cdn>` in WebView2 is not silent: it logs a console error AND blocks the parser briefly while WebView2 attempts DNS/TCP. That UX cost is unacceptable on every startup. The offline build therefore **strips the Supabase CDN `<script>` tag** during the prepare-dist step (§10.1). `supabase-sync.js` still loads but no-ops on the Tauri global check, so missing `window.supabase` is moot. The Vercel build keeps the CDN tag exactly as today.
 
 ---
 
@@ -207,9 +234,9 @@ The data directory's absolute path is fetched once at startup via `await window.
 
 ### 6.4 On-disk schema — `state.json`
 
-`state.json` is the **exact serialization** of the in-memory `state` object that `app.js`'s `saveState()` currently writes to `localStorage` under key `taniman_v3`. We do not invent a separate per-plot file format. The whole point is that disk is a mirror of state — one file, human-readable, lossless. Shape (truncated for clarity):
+`state.json` is the **exact serialization** of the in-memory `state` object that `app.js`'s `saveState()` currently writes to `localStorage` under key `taniman_v3`. We do not invent a separate per-plot file format. The whole point is that disk is a mirror of state — one file, human-readable, lossless. Illustrative shape (JSONC; comments and ellipses are not in the real file):
 
-```json
+```jsonc
 {
   "version": 3,
   "plotIdx": 3,
@@ -225,16 +252,21 @@ The data directory's absolute path is fetched once at startup via `await window.
   "mixedStyle": "blend",
   "showTweaks": false,
   "plots": {
-    "0":  { "cells": [ [u16,u16,... 2500 entries], ... CROPS.length entries ],
-            "farmerId": "uuid-or-empty",
-            "farmer": "Juan Dela Cruz",
-            "note": "Mostly cabbage; carrots in NE corner.",
-            "photos": [
-              { "url": "photos/plot_00_1716700000000_0.jpg", "captured_at": "2026-05-26T09:14:00+08:00" }
-            ],
-            "_dirty_at": null
-          },
-    "...": { ... }
+    // each key is a stringified plot index 0..63;
+    // each value mirrors the in-memory plot object verbatim.
+    "0": {
+      // cells: CROPS.length entries, each a plain number array of length 2500
+      // (Uint16Array serialized via Array.from)
+      "cells": [ [0, 0, 0 /* ... 2500 entries ... */], [0, 0, 0], [0, 0, 0], [0, 0, 0] ],
+      "farmerId": "",
+      "farmer": "Juan Dela Cruz",
+      "note": "Mostly cabbage; carrots in NE corner.",
+      "photos": [
+        { "url": "photos/plot_00_1716700000000_0.jpg", "captured_at": "2026-05-26T09:14:00+08:00" }
+      ],
+      "_dirty_at": null
+    }
+    // ... plots "1" through "63" follow the same shape ...
   }
 }
 ```
@@ -306,29 +338,19 @@ Total `app.js` change: roughly 6 lines added / 2 modified.
 
 `window.loadPersisted()` is called from `app.js`'s synchronous `loadState()`. Tauri's `fs.readTextFile` is asynchronous (Promise-based). We can't block `loadState`.
 
-Solution: `offline-storage.js` performs an **async preload** before `app.js` is allowed to run.
+Solution: `offline-storage.js` performs an **async preload before `app.js` is allowed to run**.
 
-The cleanest implementation defers `app.js` execution itself. `offline-storage.js` is loaded synchronously (script tag), and in its IIFE it:
+Inside `offline-storage.js`'s IIFE (Tauri branch only):
 
-1. If `window.__TAURI_INTERNALS__` is absent → return immediately, do nothing. Vercel build path.
-2. Otherwise, hold a Promise resolved when the data dir is fetched and `state.json` is read into a module-level variable `cachedState`.
-3. Block `app.js` from starting until the preload is done.
+1. **Synchronously** assign `window.__TANIMAN_OFFLINE_READY = preloadPromise` — this assignment MUST happen before the IIFE returns or any `await` is hit, because the inline glue in §5b reads the global immediately after `offline-storage.js` finishes parsing.
+2. Inside `preloadPromise` (async): `await window.__TAURI__.core.invoke('get_data_dir')` → cache the absolute path. Then `await fs.exists(state.json)` → if true, `readTextFile` and `JSON.parse` it into `cachedState`. If parse fails, try `state.json.bak`. If both fail, `cachedState = null` and a warning is logged.
+3. Resolve the promise.
 
-"Block `app.js`" is achieved by **moving the `<script src="app.js">` tag's execution behind a Promise**:
+The inline glue in §5b waits on `window.__TANIMAN_OFFLINE_READY` (or `Promise.resolve()` in Vercel mode) before dynamically injecting `app.js` and then `calendar.js`. `app.js`'s subsequent synchronous `loadState()` call hits `window.loadPersisted()`, which now returns the in-memory `cachedState` immediately.
 
-```html
-<script src="offline-storage.js"></script>
-<script>if (window.__TANIMAN_OFFLINE_READY) window.__TANIMAN_OFFLINE_READY.then(() => {
-  const s = document.createElement('script'); s.src = 'app.js'; document.body.appendChild(s);
-}); else { const s = document.createElement('script'); s.src = 'app.js'; document.body.appendChild(s); }</script>
-```
+`window.persistState(out)` is fire-and-forget: it builds the JSON string synchronously and kicks off an async `writeTextFile` (.tmp + rename + .bak rotation per §6.3). Returns immediately so `saveState()` does not need to be async-ified.
 
-In offline mode `offline-storage.js` sets `window.__TANIMAN_OFFLINE_READY = <preload promise>`. The inline glue waits on it. In Vercel mode the global is undefined and `app.js` loads immediately as today.
-
-This is slightly more involved than the previous design draft assumed, but it's the only way to keep `loadState()` synchronous (and therefore keep `app.js` unchanged in its async-control structure). The alternative — making `loadState` async — would require revisiting every initialization site in `app.js`, which is exactly the surface we want to avoid.
-
-`window.loadPersisted()` then returns the cached object synchronously.
-`window.persistState(out)` returns immediately (fire-and-forget); the disk write proceeds in the background.
+This keeps `loadState()` and `saveState()` in `app.js` synchronous — no async refactor of `app.js`'s initialization sites is needed.
 
 ### 6.8 ZIP export — keep FileSaver
 
@@ -338,18 +360,29 @@ The existing ZIP export uses JSZip + FileSaver, which fires a download. WebView2
 
 ## 7. Rust Core — `src-tauri/src/main.rs`
 
-About 60 lines. Responsibilities:
+About 80 lines. Responsibilities:
 
-1. On startup, resolve `data_dir = current_exe().parent().join("data")`.
-2. Create `data_dir` and `data_dir/photos` if missing. If creation fails, show a Tauri error dialog ("Cannot write to <path>. Please move Taniman.exe to a writable folder.") and exit.
-3. Register `data_dir` with the v2 filesystem scope:
+1. Build the `tauri::Builder`, register `tauri_plugin_fs::init()` (and the dialog plugin if used), and add `get_data_dir` to the invoke handler.
+2. Inside `.setup(|app| { ... })`:
+   - Resolve `data_dir = std::env::current_exe()?.parent().ok_or(...)?.join("data")`.
+   - Create `data_dir` and `data_dir/photos` if missing via `std::fs::create_dir_all`. If creation fails, show a `tauri_plugin_dialog::message` dialog ("Cannot write to `<path>`. Please move `Taniman.exe` to a writable folder.") and `std::process::exit(1)`.
+   - Stash the resolved path in app state (`app.manage(DataDir(data_dir.clone()))`) so the `get_data_dir` command can return it.
+   - Add the directory to the fs plugin's runtime scope:
+     ```rust
+     use tauri_plugin_fs::FsExt;            // required extension trait
+     app.fs_scope().allow_directory(&data_dir, true)?;
+     ```
+     The `FsExt` import and the `tauri_plugin_fs::init()` plugin registration are both required for this call to compile. Without the plugin registered, `app.fs_scope()` does not exist on `AppHandle`; without `FsExt` in scope, `allow_directory` is not in the method table on the returned scope.
+3. Expose:
    ```rust
-   app.fs_scope().allow_directory(&data_dir, true)?;
+   #[tauri::command]
+   fn get_data_dir(state: tauri::State<DataDir>) -> String {
+       state.0.to_string_lossy().to_string()
+   }
    ```
-4. Expose a `#[tauri::command] fn get_data_dir() -> String` returning the absolute path of `data_dir` as a UTF-8 string.
-5. Register the WebView window. Title, dimensions per §8.
+   `DataDir` is a newtype around `PathBuf` registered via `app.manage(...)`.
 
-No other custom commands. The whole JS-facing API is `fs.*` (writes inside scope) plus `core.invoke('get_data_dir')`.
+No other custom commands. The whole JS-facing API is `window.__TAURI__.fs.*` (writes inside the registered scope) plus `core.invoke('get_data_dir')`.
 
 ---
 
@@ -362,8 +395,7 @@ No other custom commands. The whole JS-facing API is `fs.*` (writes inside scope
   "version": "1.0.0",
   "identifier": "ph.cordillera.taniman",
   "build": {
-    "devUrl": "http://localhost:5173",          // unused — see frontendDist
-    "frontendDist": "../"                       // serve the repo root as the webview's content root
+    "frontendDist": "../dist-static"            // staging dir produced by prepare-dist (§10.1)
   },
   "app": {
     "windows": [{
@@ -398,16 +430,20 @@ Capabilities file `src-tauri/capabilities/default.json`:
     "fs:default",
     "fs:allow-read-text-file",
     "fs:allow-write-text-file",
-    "fs:allow-read-file",
     "fs:allow-write-file",
     "fs:allow-exists",
     "fs:allow-mkdir",
-    "fs:allow-rename"
+    "fs:allow-rename",
+    "fs:scope"                                  // REQUIRED: enables runtime scope additions from main.rs
   ]
 }
 ```
 
-The actual directory scope is **registered at runtime in `main.rs`** (§7 step 3) rather than declared statically with a `$APP` or `$APPDATA` token, because we want the directory next to the .exe, not the OS app-data directory. v2's `allow_directory` API supports this cleanly.
+Two notes on the permission set:
+- `fs:scope` is required for the runtime `allow_directory` call in §7 to take effect. Without it, the JS-side `fs.*` calls are rejected at the permission layer even with a runtime-registered directory.
+- `fs:default` already grants several baseline checks; the additional explicit `fs:allow-*` grants make the intent obvious in the capability file. They are not redundant in v2 — each specific operation needs its own permission identifier.
+
+The actual directory **scope** (which directories the `fs:*` permissions apply to) is registered at runtime in `main.rs` (§7 step 2) rather than declared with a static `$APP` or `$APPDATA` token, because the data folder lives next to the .exe — a location that can only be resolved at runtime via `current_exe()`.
 
 ---
 
@@ -432,23 +468,58 @@ Combined with keeping `package.json` inside `src-tauri/`, Vercel runs zero insta
 
 ## 10. Build Pipeline
 
-### One-time dev-machine setup
+### 10.1 `prepare-dist` — staging step
+
+`frontendDist: "../"` would bundle the entire repo into the .exe — `docs/`, `.git`, screenshots, `Boundary_*.geojson`, the source `.tif` files (already gitignored but possibly present in the working copy), `src-tauri/target/`, and so on. To avoid that, the build runs a staging step first that copies only the runtime files into `src-tauri/dist-static/` and patches `taniman.html` to remove the Supabase CDN tag.
+
+Implementation: a small Node script at `src-tauri/scripts/prepare-dist.mjs` (Node is already required for the Tauri CLI). About 40 LOC. Steps:
+
+1. Wipe and recreate `src-tauri/dist-static/`.
+2. Copy these from the repo root: `taniman.html`, `app.js`, `data.js`, `styles.css`, `config.js`, `supabase-sync.js`, `offline-storage.js`, `month-view-utils.js`, `calendar.js`, plus the `vendor/`, `fonts/`, and `tiles/` directories.
+3. In the copied `dist-static/taniman.html`, strip the Supabase CDN `<script>` tag by regex (matches the exact `cdn.jsdelivr.net/npm/@supabase/...` URL line). Vercel's `taniman.html` is untouched.
+4. Print the staged file count and total size for sanity-check.
+
+`src-tauri/package.json` wires this in via npm scripts:
+```jsonc
+{
+  "scripts": {
+    "prepare-dist": "node scripts/prepare-dist.mjs",
+    "tauri": "tauri",
+    "dev": "npm run prepare-dist && tauri dev",
+    "build": "npm run prepare-dist && tauri build"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2"
+  }
+}
+```
+
+So the only commands a developer types are `npm run dev` and `npm run build`.
+
+### 10.2 One-time dev-machine setup
 1. Install Rust via `rustup`.
-2. Inside `src-tauri/`: `npm install` (picks up `@tauri-apps/cli` as a devDependency).
-3. WebView2 SDK is fetched automatically by Tauri's build.
+2. Install Node (any LTS ≥18).
+3. `cd src-tauri && npm install`.
 
-### Day-to-day commands (run from `src-tauri/`)
+### 10.3 Day-to-day commands (run from `src-tauri/`)
 ```
-npm run tauri dev        # hot-reload dev mode (opens a Tauri window pointed at ../)
-npm run tauri build      # produces target/release/Taniman.exe
+npm run dev              # hot-reload dev mode (opens a Tauri window pointed at dist-static)
+npm run build            # produces target/release/Taniman.exe
 ```
 
-Build output:
-- `src-tauri/target/release/Taniman.exe` — raw .exe, ~18–22 MB (Tauri shell ~5 MB + repo content baked in via `frontendDist: "../"` ≈ 13 MB tiles + 460 KB fonts + 273 KB vendor + small JS/CSS).
+Both scripts run `prepare-dist` first so the staged directory is always fresh.
+
+### 10.4 Build output
+- `src-tauri/target/release/Taniman.exe` — raw .exe, ~18–22 MB:
+  - Tauri shell ~5 MB
+  - `tiles/` ~13 MB
+  - `fonts/` ~460 KB
+  - `vendor/` ~273 KB
+  - HTML/JS/CSS combined <200 KB
 
 For v1 distribution: copy the raw .exe into a fresh `Taniman-Offline/` folder, ZIP, hand off.
 
-### Vercel build is untouched
+### 10.5 Vercel build is untouched
 Vercel runs no Tauri commands. It serves the static files (`taniman.html`, `app.js`, `data.js`, `vendor/`, `fonts/`, `tiles/`, etc.) exactly as today.
 
 ---
@@ -488,8 +559,9 @@ Vercel runs no Tauri commands. It serves the static files (`taniman.html`, `app.
 ### 13a. Vercel build regression
 1. Push a preview branch. Open the preview URL in Chrome and Edge.
 2. Verify the app loads exactly as before. Google Fonts now come from local `fonts/`. Supabase SDK still loads from CDN. Sync still works end-to-end.
-3. Verify `window.__TAURI_INTERNALS__` is `undefined` → `offline-storage.js` is a no-op, `supabase-sync.js` is active.
+3. Verify `window.__TAURI__` is `undefined` → `offline-storage.js` is a no-op, `supabase-sync.js` is active.
 4. Confirm `window.persistState` and `window.loadPersisted` are undefined → `app.js`'s `?.()` calls fall back to localStorage as today.
+5. Verify the inline boot glue resolves immediately (no `window.__TANIMAN_OFFLINE_READY` defined) → `app.js` and `calendar.js` are injected with effectively zero delay; UI works as today.
 
 ### 13b. Tauri build (offline) end-to-end
 On a Windows laptop with **wifi disconnected**:
@@ -520,15 +592,16 @@ On a Windows laptop with **wifi disconnected**:
 | `supabase-sync.js` | edited | Add `if (window.__TAURI_INTERNALS__) return;` guard at top of IIFE. |
 | `app.js` | edited | ~6 lines — wire `loadPersisted` / `persistState` hooks into `loadState` / `saveState`. |
 | `offline-storage.js` | **new** | ~200 LOC. Tauri-fs-backed state + photo persistence. IIFE no-ops when not in Tauri. |
-| `src-tauri/Cargo.toml` | **new** | Standard Tauri v2 scaffold. |
+| `src-tauri/Cargo.toml` | **new** | Standard Tauri v2 scaffold with `tauri-plugin-fs` and `tauri-plugin-dialog` deps. |
 | `src-tauri/tauri.conf.json` | **new** | Config from §8. |
 | `src-tauri/build.rs` | **new** | Standard Tauri v2 `build.rs`. |
-| `src-tauri/src/main.rs` | **new** | ~60 LOC; data-dir resolution + scope registration + `get_data_dir` command. |
-| `src-tauri/capabilities/default.json` | **new** | v2 capability declarations from §8. |
+| `src-tauri/src/main.rs` | **new** | ~80 LOC; data-dir resolution + plugin registration + runtime fs-scope `allow_directory` + `get_data_dir` command. |
+| `src-tauri/capabilities/default.json` | **new** | v2 capability declarations from §8, including `fs:scope`. |
+| `src-tauri/scripts/prepare-dist.mjs` | **new** | ~40 LOC; copies runtime files into `dist-static/` and strips Supabase CDN tag. |
 | `src-tauri/icons/*` | **new** | App icons (icon.ico + standard PNGs), generated via `npm run tauri icon <source.png>`. |
-| `src-tauri/package.json` | **new** | Declares `@tauri-apps/cli` devDependency; scripts: `tauri`, `tauri dev`, `tauri build`. |
+| `src-tauri/package.json` | **new** | Declares `@tauri-apps/cli` devDependency; scripts: `prepare-dist`, `dev`, `build`, `tauri`. |
 | `vercel.json` | edited | Add `framework: null`, null `buildCommand`/`installCommand`. |
-| `.gitignore` | edited | Add `src-tauri/target/`, `src-tauri/node_modules/`. |
+| `.gitignore` | edited | Add `src-tauri/target/`, `src-tauri/node_modules/`, `src-tauri/dist-static/`. |
 | `README.md` (if present) | edited or new | Short "How to build the offline desktop app" section. |
 
 No changes to: `data.js`, `styles.css`, `config.js`, `vendor/`, `fonts/`, `tiles/`, `month-view-utils.js`, `calendar.js`, `generate_tiles.py`.
