@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "identifier": "ph.cordillera.taniman",
   "build": {
-    "frontendDist": "../dist-static",
+    "frontendDist": "dist-static",
     "beforeDevCommand": "npm run prepare-dist",
     "beforeBuildCommand": "npm run prepare-dist"
   },
