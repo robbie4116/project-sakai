@@ -11,11 +11,26 @@ fn get_data_dir(state: tauri::State<DataDir>) -> String {
     state.0.to_string_lossy().to_string()
 }
 
+#[tauri::command]
+fn write_photo(
+    state: tauri::State<DataDir>,
+    plot_idx: u32,
+    suffix: String,
+    data: Vec<u8>,
+) -> Result<String, String> {
+    let photos_dir = state.0.join("photos");
+    std::fs::create_dir_all(&photos_dir).map_err(|e| e.to_string())?;
+    let filename = format!("plot_{:02}_{}.jpg", plot_idx, suffix);
+    let abs_path = photos_dir.join(&filename);
+    std::fs::write(&abs_path, &data).map_err(|e| e.to_string())?;
+    Ok(format!("photos/{}", filename))
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
-        .invoke_handler(tauri::generate_handler![get_data_dir])
+        .invoke_handler(tauri::generate_handler![get_data_dir, write_photo])
         .setup(|app| {
             // Resolve <exe_dir>/data
             let exe = std::env::current_exe()

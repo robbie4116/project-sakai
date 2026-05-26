@@ -83,22 +83,22 @@
   window.syncOnNavigate = async function () { /* no-op */ };
 
   // -- photo upload writes a JPEG to data/photos/ ------------------
+  // Uses the write_photo Rust command instead of fs.writeFile because
+  // Uint8Array serialisation over the Tauri global IPC is unreliable;
+  // Array.from(bytes) sends a plain JSON number array that Vec<u8> deserialises cleanly.
   window.uploadPhoto = async function (idx, dataUrl, suffix) {
     try {
       await window.__TANIMAN_OFFLINE_READY;
-      if (!dataDir) throw new Error('offline dataDir unavailable');
-      const fs = window.__TAURI__.fs;
-      const photosDir = `${dataDir}\\photos`;
-      if (!(await fs.exists(photosDir))) await fs.mkdir(photosDir, { recursive: true });
-      const pad = String(idx).padStart(2, '0');
-      const relPath = `photos/plot_${pad}_${suffix}.jpg`;
-      const absPath = `${dataDir}\\${relPath.replace(/\//g, '\\')}`;
       const comma = dataUrl.indexOf(',');
       const b64 = dataUrl.slice(comma + 1);
       const bin = atob(b64);
       const bytes = new Uint8Array(bin.length);
       for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-      await fs.writeFile(absPath, bytes);
+      const relPath = await window.__TAURI__.core.invoke('write_photo', {
+        plotIdx: idx,
+        suffix: suffix,
+        data: Array.from(bytes),
+      });
       return relPath;
     } catch (e) {
       console.warn('uploadPhoto failed', e);
