@@ -125,9 +125,12 @@ let detailDraft = null;
 // ── PERSISTENCE ───────────────────────────────────────────────────
 function loadState(){
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return null;
-    const s = JSON.parse(raw);
+    let s = (typeof window.loadPersisted === 'function') ? window.loadPersisted() : null;
+    if (!s) {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) return null;
+      s = JSON.parse(raw);
+    }
     for (const k of Object.keys(s.plots||{})) {
       const p = s.plots[k];
       if (p.cells) p.cells = p.cells.map(a => new Uint16Array(a));
@@ -146,6 +149,7 @@ function saveState(){
       };
     }
     localStorage.setItem(STORAGE_KEY, JSON.stringify(out));
+    if (typeof window.persistState === 'function') window.persistState(out);
     lastSaveAt = Date.now();
     updateAutosave();
   } catch(e){ console.warn('save failed', e); }
