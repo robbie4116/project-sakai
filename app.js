@@ -116,7 +116,7 @@ if (!Object.prototype.hasOwnProperty.call(T, state.lang)) state.lang = 'en';
 function tr(k){ return (T[state.lang]||T.en)[k] || k; }
 function getCss(name){ return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || '#888'; }
 
-let map, plotRects = {}, plotMarkers = {};
+let map, plotRects = {}, plotMarkers = {}, plotCompositionBars = {};
 let painting = false, lastIdx = -1;
 let imgCache = {};
 let lastSaveAt = Date.now();
@@ -289,6 +289,58 @@ function cellVisibleCrops(p, cellIdx) {
   }
   return out;
 }
+function plotCompositionForView(idx, viewMonths = state.viewMonths) {
+  const p = state.plots[idx];
+  const gridCells = GRID * GRID;
+  const counts = new Array(CROPS.length).fill(0);
+  const percentages = new Array(CROPS.length).fill(0);
+  if (!p || !p.cells) {
+    return {
+      crop: null,
+      cropIdx: -1,
+      counts,
+      percentages,
+      totalVisibleCells: 0,
+      visiblePaintedCells: 0,
+      emptyCells: gridCells,
+      nonZeroCropCount: 0,
+      isMixed: false,
+    };
+  }
+
+  const visibleCells = new Uint8Array(gridCells);
+  for (let c=0; c<CROPS.length; c++) {
+    const cells = p.cells[c] || [];
+    for (let i=0; i<cells.length; i++) {
+      const v = cells[i];
+      if (v && maskIntersects(v, viewMonths)) {
+        counts[c]++;
+        visibleCells[i] = 1;
+      }
+    }
+  }
+
+  const totalVisibleCells = counts.reduce((sum, n) => sum + n, 0);
+  let visiblePaintedCells = 0;
+  for (let i=0; i<visibleCells.length; i++) if (visibleCells[i]) visiblePaintedCells++;
+  const emptyCells = Math.max(0, gridCells - visiblePaintedCells);
+  for (let i=0; i<counts.length; i++) percentages[i] = totalVisibleCells ? counts[i] / totalVisibleCells : 0;
+
+  const max = Math.max(...counts);
+  const cropIdx = max > 0 ? counts.indexOf(max) : -1;
+  const nonZeroCropCount = counts.filter(n => n > 0).length;
+  return {
+    crop: cropIdx >= 0 ? CROPS[cropIdx] : null,
+    cropIdx,
+    counts,
+    percentages,
+    totalVisibleCells,
+    visiblePaintedCells,
+    emptyCells,
+    nonZeroCropCount,
+    isMixed: nonZeroCropCount > 1,
+  };
+}
 function plotHasPaint(idx) {
   const p = state.plots[idx];
   if (!p || !p.cells) return false;
@@ -303,27 +355,10 @@ function plotHasData(idx) {
   return plotHasPaint(idx) || p.farmer || p.farmerId || p.note || (p.photos && p.photos.length);
 }
 function dominantCropForView(idx) {
-  const p = state.plots[idx];
-  if (!p || !p.cells) return { crop:null, counts:null };
-  const counts = new Array(CROPS.length).fill(0);
-  const viewMonths = state.viewMonths;
-  for (let c=0; c<CROPS.length; c++) {
-    for (let i=0; i<p.cells[c].length; i++) {
-      const v = p.cells[c][i];
-      if (!v) continue;
-      if (maskIntersects(v, viewMonths)) counts[c]++;
-    }
-  }
-  const max = Math.max(...counts);
-  if (max === 0) return { crop:null, counts };
-  return { crop: CROPS[counts.indexOf(max)], cropIdx: counts.indexOf(max), counts };
+  return plotCompositionForView(idx);
 }
 function plotIsMixed(idx) {
-  const dom = dominantCropForView(idx);
-  if (!dom.counts) return false;
-  let nonZero = 0;
-  for (const c of dom.counts) if (c>0) nonZero++;
-  return nonZero > 1;
+  return plotCompositionForView(idx).isMixed;
 }
 
 // ── UNDO ──────────────────────────────────────────────────────────
@@ -494,15 +529,24 @@ function initMap(){
 }
 
 function plotStyle(idx){
-  const { crop } = dominantCropForView(idx);
+  const composition = plotCompositionForView(idx);
+  const { crop } = composition;
   const isCurrent = idx === state.plotIdx;
   if (crop){
-    const mixed = plotIsMixed(idx);
+    if (composition.isMixed) {
+      return {
+        color: isCurrent ? '#F2C84B' : getCss('--mixed-stroke'),
+        weight: isCurrent ? 3 : 2,
+        fillColor: getCss('--mixed-fill'),
+        fillOpacity: 0.46,
+        dashArray: isCurrent ? null : '4,3',
+      };
+    }
     return {
-      color: isCurrent ? '#F2C84B' : (mixed ? '#FFFFFF' : crop.hex),
-      weight: isCurrent ? 3 : (mixed ? 2 : 1.6),
+      color: isCurrent ? '#F2C84B' : crop.hex,
+      weight: isCurrent ? 3 : 1.6,
       fillColor: crop.hex, fillOpacity: 0.65,
-      dashArray: mixed && !isCurrent ? '4,3' : null,
+      dashArray: null,
     };
   }
   // EMPTY plot — grey (per requirement) — translucent so satellite shows through
@@ -513,10 +557,49 @@ function plotStyle(idx){
     : { color:greyStroke, weight:1.2, fillColor:greyFill, fillOpacity:0.18, dashArray:'4,3' };
 }
 
+function compositionBarHtml(composition) {
+  if (!composition || !composition.isMixed || composition.totalVisibleCells <= 0) return '';
+  const segments = composition.counts.map((count, i) => {
+    if (count <= 0) return '';
+    const pct = Math.max(4, composition.percentages[i] * 100);
+    return `<span class="mix-seg" style="width:${pct}%;background:${CROPS[i].hex}"></span>`;
+  }).join('');
+  return `<div class="mix-bar" aria-hidden="true">${segments}</div>`;
+}
+
+function updateCompositionBar(plot) {
+  const existing = plotCompositionBars[plot.idx];
+  const composition = plotCompositionForView(plot.idx);
+  if (!composition.isMixed) {
+    if (existing) {
+      map.removeLayer(existing);
+      delete plotCompositionBars[plot.idx];
+    }
+    return;
+  }
+
+  const icon = L.divIcon({
+    className: '',
+    html: compositionBarHtml(composition),
+    iconSize: [44, 10],
+    iconAnchor: [22, -8],
+  });
+  if (existing) {
+    existing.setIcon(icon);
+    return;
+  }
+  plotCompositionBars[plot.idx] = L.marker([plot.centerLat, plot.centerLng], {
+    icon,
+    interactive: false,
+    keyboard: false,
+  }).addTo(map);
+}
+
 function drawPlotsOnMap(){
   Object.values(plotRects).forEach(r=>map.removeLayer(r));
   Object.values(plotMarkers).forEach(m=>map.removeLayer(m));
-  plotRects = {}; plotMarkers = {};
+  Object.values(plotCompositionBars).forEach(m=>map.removeLayer(m));
+  plotRects = {}; plotMarkers = {}; plotCompositionBars = {};
 
   PLOTS.forEach(plot=>{
     const style = plotStyle(plot.idx);
@@ -529,6 +612,7 @@ function drawPlotsOnMap(){
       }),
       interactive:false
     }).addTo(map);
+    updateCompositionBar(plot);
     rect.on('click', ()=>openPlot(plot.idx));
     rect.on('mouseover', function(){
       if (plot.idx===state.plotIdx) return;
@@ -546,6 +630,8 @@ function drawPlotsOnMap(){
 function updateMapPlot(idx){
   const rect = plotRects[idx];
   if (rect) rect.setStyle(plotStyle(idx));
+  const plot = PLOTS[idx];
+  if (plot) updateCompositionBar(plot);
 }
 
 // ── PLOT CANVAS ───────────────────────────────────────────────────
@@ -854,30 +940,37 @@ setInterval(updateAutosave, 1000);
 function updateLegend(){
   const root = document.getElementById('map-legend-rows');
   if (!root) return;
-  // count plots where each crop is visible-dominant under current view
-  const tally = new Array(CROPS.length).fill(0);
-  let empties = 0;
+  const visibleCellsByCrop = new Array(CROPS.length).fill(0);
+  const plotsContainingCrop = new Array(CROPS.length).fill(0);
+  let emptyVisibleCells = 0;
+  let totalVisibleCells = 0;
   PLOTS.forEach(plot=>{
-    const { crop, cropIdx } = dominantCropForView(plot.idx);
-    if (crop) tally[cropIdx]++;
-    else empties++;
+    const composition = plotCompositionForView(plot.idx);
+    totalVisibleCells += GRID * GRID;
+    emptyVisibleCells += composition.emptyCells;
+    composition.counts.forEach((count, i) => {
+      visibleCellsByCrop[i] += count;
+      if (count > 0) plotsContainingCrop[i]++;
+    });
   });
+  const coveragePct = (count) => totalVisibleCells ? Math.round((count / totalVisibleCells) * 100) : 0;
   root.innerHTML = '';
-  // empty row
+
   {
     const row = document.createElement('div');
     row.className = 'lgd-row';
     row.innerHTML = `<span class="lgd-sw empty"></span>
-      <span class="lgd-nm">${tr('empty')}</span>
-      <span class="lgd-ct">${empties}</span>`;
+      <span class="lgd-nm">${tr('unpainted')}</span>
+      <span class="lgd-val"><span class="lgd-ct">${coveragePct(emptyVisibleCells)}%</span><span class="lgd-sub">${emptyVisibleCells} cells</span></span>`;
     root.appendChild(row);
   }
   CROPS.forEach((crop,i)=>{
+    const count = visibleCellsByCrop[i];
     const row = document.createElement('div');
     row.className = 'lgd-row';
     row.innerHTML = `<span class="lgd-sw" style="background:${crop.hex};border-color:${crop.hex}"></span>
       <span class="lgd-nm">${crop.name[state.lang]||crop.name.en}</span>
-      <span class="lgd-ct">${tally[i]}</span>`;
+      <span class="lgd-val"><span class="lgd-ct">${coveragePct(count)}%</span><span class="lgd-sub">${count} cells · ${plotsContainingCrop[i]} plots</span></span>`;
     root.appendChild(row);
   });
 }
@@ -891,7 +984,7 @@ function applyLang(){
   document.getElementById('lab-crop').textContent = tr('crop');
   document.getElementById('sched-label').textContent = tr('schedule');
   document.getElementById('scrub-label').textContent = tr('showing');
-  document.getElementById('lgd-head-txt').textContent = tr('legend');
+  document.getElementById('lgd-head-txt').textContent = tr('legendCoverage');
   document.getElementById('btn-undo-txt').textContent = tr('undo');
   document.getElementById('btn-redo-txt').textContent = tr('redo');
   document.getElementById('btn-clear').textContent = tr('clear');

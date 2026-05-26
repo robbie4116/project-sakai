@@ -11,6 +11,8 @@
   --canvas-bg:#1A2B1A;
   --empty-fill:#3A4A3A;
   --empty-stroke:#7E9A6E;
+  --mixed-fill:rgba(255,255,255,0.30);
+  --mixed-stroke:rgba(255,255,255,0.92);
 }
 :root[data-theme="light"]{
   --bg:#F4EFE3; --bg-2:#EBE3D0;
@@ -24,6 +26,8 @@
   --canvas-bg:#E5DBC0;
   --empty-fill:#B8B0A0;
   --empty-stroke:#7C7858;
+  --mixed-fill:rgba(255,255,255,0.54);
+  --mixed-stroke:rgba(31,42,26,0.78);
 }
 :root[data-theme="contrast"]{
   --bg:#FFFFFF; --bg-2:#FFFFFF;
@@ -37,6 +41,8 @@
   --canvas-bg:#FFFFFF;
   --empty-fill:#CCCCCC;
   --empty-stroke:#000000;
+  --mixed-fill:rgba(255,255,255,0.72);
+  --mixed-stroke:#000000;
 }
 
 /* ── RESET ──────────────────────────────────────────────────────── */
@@ -184,8 +190,8 @@ input,textarea{font:inherit;color:inherit;background:none;border:none;outline:no
   font-size:12px;color:var(--text-dim);
   display:flex;flex-direction:column;gap:6px;
   box-shadow:0 6px 20px rgba(0,0,0,.22);
-  min-width:180px;
-  max-width:220px;
+  min-width:250px;
+  max-width:300px;
 }
 .map-legend .lgd-head{
   font-size:10px;font-weight:600;color:var(--muted);
@@ -199,7 +205,8 @@ input,textarea{font:inherit;color:inherit;background:none;border:none;outline:no
 .map-legend.collapsed #map-legend-rows{display:none}
 .map-legend.collapsed{gap:0}
 .map-legend .lgd-row{
-  display:flex;align-items:center;gap:9px;white-space:nowrap;
+  display:grid;grid-template-columns:14px minmax(82px,1fr) auto;
+  align-items:center;column-gap:9px;white-space:nowrap;
   font-size:12px;line-height:1.1;
 }
 .map-legend .lgd-sw{
@@ -219,6 +226,16 @@ input,textarea{font:inherit;color:inherit;background:none;border:none;outline:no
 .map-legend .lgd-ct{
   font-family:'IBM Plex Mono',monospace;font-size:10px;
   color:var(--muted);
+}
+.map-legend .lgd-val{
+  display:flex;flex-direction:column;align-items:flex-end;gap:2px;
+  min-width:96px;line-height:1;
+}
+.map-legend .lgd-sub{
+  font-family:'IBM Plex Mono',monospace;font-size:8px;
+  color:var(--muted);
+  opacity:.82;
+  white-space:nowrap;
 }
 
 /* ── MAP MONTH SCRUBBER ─────────────────────────────────────────── */
@@ -956,6 +973,19 @@ input,textarea{font:inherit;color:inherit;background:none;border:none;outline:no
 }
 :root[data-theme="light"] .plot-num{background:rgba(255,255,255,.85);color:#1F2A1A}
 :root[data-theme="contrast"] .plot-num{background:#fff;color:#000;border:1px solid #000}
+.mix-bar{
+  width:44px;height:8px;
+  display:flex;overflow:hidden;
+  border:1px solid rgba(17,24,39,.72);
+  background:rgba(255,255,255,.72);
+  box-shadow:0 1px 4px rgba(0,0,0,.34);
+  pointer-events:none;
+}
+.mix-seg{
+  height:100%;
+  min-width:3px;
+  flex:0 0 auto;
+}
 
 /* responsive: ensure tablet portrait still works */
 @media (max-width: 1100px){

@@ -41,14 +41,18 @@ test('app initializes canonical viewMonths and legacy mirror from month utility'
 
 test('visible crop and dominant crop calculations use viewMonths mask overlap', () => {
   const cellVisible = extractFunctionBlock(appSource, 'cellVisibleCrops');
+  const composition = extractFunctionBlock(appSource, 'plotCompositionForView');
   const dominant = extractFunctionBlock(appSource, 'dominantCropForView');
 
   assert.match(cellVisible, /state\.viewMonths/);
   assert.match(cellVisible, /maskIntersects\(v,\s*viewMonths\)/);
   assert.doesNotMatch(cellVisible, /state\.viewMonth(?!s)/);
 
-  assert.match(dominant, /state\.viewMonths/);
-  assert.match(dominant, /maskIntersects\(v,\s*viewMonths\)/);
+  assert.match(appSource, /function plotCompositionForView\(idx,\s*viewMonths\s*=\s*state\.viewMonths\)/);
+  assert.match(composition, /maskIntersects\(v,\s*viewMonths\)/);
+  assert.doesNotMatch(composition, /state\.viewMonth(?!s)/);
+
+  assert.match(dominant, /plotCompositionForView\(idx\)/);
   assert.doesNotMatch(dominant, /state\.viewMonth(?!s)/);
 });
 
