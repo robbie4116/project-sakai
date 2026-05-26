@@ -271,8 +271,24 @@
 <script src="month-view-utils.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 <script src="supabase-sync.js"></script>
-<script src="app.js"></script>
-<script src="calendar.js"></script>
+<script src="offline-storage.js"></script>
+<script>
+  // Boot sequence: wait for offline preload (no-op in Vercel mode),
+  // then inject app.js and calendar.js in order.
+  (function () {
+    var ready = window.__TANIMAN_OFFLINE_READY || Promise.resolve();
+    ready.then(function () {
+      var s1 = document.createElement('script');
+      s1.src = 'app.js';
+      s1.onload = function () {
+        var s2 = document.createElement('script');
+        s2.src = 'calendar.js';
+        document.body.appendChild(s2);
+      };
+      document.body.appendChild(s1);
+    });
+  })();
+</script>
 
 </body>
 </html>
