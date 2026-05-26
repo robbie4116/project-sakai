@@ -125,9 +125,10 @@ let detailDraft = null;
 // ── PERSISTENCE ───────────────────────────────────────────────────
 function loadState(){
   try {
-    let s = (typeof window.loadPersisted === 'function') ? window.loadPersisted() : null;
+    const isTauri = typeof window.loadPersisted === 'function';
+    let s = isTauri ? window.loadPersisted() : null;
     if (!s) {
-      if (window.__TAURI__) return null; // disk is authoritative; ignore stale localStorage
+      if (isTauri) return null; // disk is authoritative; never fall back to localStorage
       const raw = localStorage.getItem(STORAGE_KEY);
       if (!raw) return null;
       s = JSON.parse(raw);
@@ -149,8 +150,11 @@ function saveState(){
         cells: p.cells ? p.cells.map(a => Array.from(a)) : null,
       };
     }
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(out));
-    if (typeof window.persistState === 'function') window.persistState(out);
+    if (typeof window.persistState === 'function') {
+      window.persistState(out);
+    } else {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(out));
+    }
     lastSaveAt = Date.now();
     updateAutosave();
   } catch(e){ console.warn('save failed', e); }
