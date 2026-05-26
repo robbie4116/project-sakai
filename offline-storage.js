@@ -14,6 +14,7 @@
 
   let cachedState = null;
   let dataDir = null;
+  let writeQueue = Promise.resolve();
 
   // Synchronously install the preload promise so the boot glue (taniman.html)
   // can find it immediately after this script finishes parsing.
@@ -32,6 +33,8 @@
             cachedState = JSON.parse(await fs.readTextFile(bakFile));
           }
         }
+      } else if (await fs.exists(bakFile)) {
+        cachedState = JSON.parse(await fs.readTextFile(bakFile));
       }
     } catch (e) {
       console.warn('offline preload failed', e);
@@ -43,14 +46,25 @@
   window.loadPersisted = function () { return cachedState; };
 
   window.persistState = function (stateBlob) {
+    let text;
+    try {
+      text = JSON.stringify(stateBlob);
+    } catch (e) {
+      console.warn('persistState failed', e);
+      return;
+    }
+
     // Fire-and-forget. Errors surface via console; UI continues.
-    void (async function () {
+    writeQueue = writeQueue.catch(function () {
+      // Keep later writes moving after an unexpected queue failure.
+    }).then(async function () {
       try {
+        await window.__TANIMAN_OFFLINE_READY;
+        if (!dataDir) throw new Error('offline dataDir unavailable');
         const fs = window.__TAURI__.fs;
         const stateFile = `${dataDir}\\state.json`;
         const tmpFile   = `${dataDir}\\state.json.tmp`;
         const bakFile   = `${dataDir}\\state.json.bak`;
-        const text = JSON.stringify(stateBlob);
         await fs.writeTextFile(tmpFile, text);
         if (await fs.exists(stateFile)) {
           if (await fs.exists(bakFile)) await fs.remove(bakFile);
@@ -60,7 +74,7 @@
       } catch (e) {
         console.warn('persistState failed', e);
       }
-    })();
+    });
   };
 
   // -- sync-layer no-ops (offline mode has no remote) --------------
@@ -71,11 +85,14 @@
   // -- photo upload writes a JPEG to data/photos/ ------------------
   window.uploadPhoto = async function (idx, dataUrl, suffix) {
     try {
+      await window.__TANIMAN_OFFLINE_READY;
+      if (!dataDir) throw new Error('offline dataDir unavailable');
       const fs = window.__TAURI__.fs;
       const photosDir = `${dataDir}\\photos`;
       if (!(await fs.exists(photosDir))) await fs.mkdir(photosDir, { recursive: true });
       const pad = String(idx).padStart(2, '0');
-      const relPath = `photos/plot_${pad}_${suffix}.jpg`;
+      const safeSuffix = String(suffix).replace(/[^A-Za-z0-9_-]/g, '_');
+      const relPath = `photos/plot_${pad}_${safeSuffix}.jpg`;
       const absPath = `${dataDir}\\${relPath.replace(/\//g, '\\')}`;
       const comma = dataUrl.indexOf(',');
       const b64 = dataUrl.slice(comma + 1);
