@@ -526,6 +526,22 @@ Vercel runs no Tauri commands. It serves the static files (`taniman.html`, `app.
 
 ---
 
+## 10A. Map Tile Coverage — Already Offline
+
+The map UI uses three separate local tile sources, all already shipped in the repo and bundled into the .exe by `prepare-dist`. No code changes are required for the offline build to render any zoom level the app currently exposes.
+
+| Layer | Path | Zoom range | Coverage area | Approx size |
+|---|---|---|---|---|
+| Wide context (zoom out) | `tiles/context/{z}/{x}/{y}.jpg` | 10–13 | Benguet area (Tublay + surroundings) | ~5 MB / 65 files |
+| Detail (zoom in) | `tiles/map/{z}/{x}/{y}.jpg` | 12–16 | Ambassador barangay | ~2.8 MB / 153 files |
+| Plot canvas background | `tiles/plots/plot_XX.jpg` | n/a (painted-canvas asset) | One per plot | ~5 MB / 64 files |
+
+The map's `maxZoom` is capped at 16 in `app.js` (`MAP_APP_MAX_ZOOM`), so the offline build never reaches a zoom level requiring external tiles. The `makeEsriTileLayer()` function at `app.js:481` references an online ESRI service with `maxZoom: 19`; since the app config never exceeds zoom 16, this layer is never instantiated in the active map flow. To be defensive, the offline build should leave the function defined but unreferenced — it is already not added to the map by the existing init code. No edit required, but worth verifying during implementation that no codepath calls `makeEsriTileLayer()` under offline conditions.
+
+`errorTileUrl` fallbacks (`tiles/context/empty.jpg`, `tiles/map/empty.jpg`) are also part of the repo and ship in the bundle, so even at the very edges of the tile coverage the user sees the grey fallback rather than a Chromium network-error tile.
+
+---
+
 ## 11. What Stays The Same
 
 - `app.js` painting logic, brush sizes, bitmask cell model, undo/redo stack (in-memory; same as today).
