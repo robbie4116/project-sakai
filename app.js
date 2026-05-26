@@ -110,6 +110,7 @@ const _params = new URLSearchParams(location.search);
 if (_params.get('theme'))   state.theme   = _params.get('theme');
 if (_params.get('lang'))    state.lang    = _params.get('lang');
 if (_params.get('plot'))    state.plotIdx = +_params.get('plot');
+if (!Object.prototype.hasOwnProperty.call(T, state.lang)) state.lang = 'en';
 
 // ── HELPERS ───────────────────────────────────────────────────────
 function tr(k){ return (T[state.lang]||T.en)[k] || k; }

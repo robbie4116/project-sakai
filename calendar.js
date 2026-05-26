@@ -8,7 +8,7 @@ const {
   maskToDisplayLabel, isBrushHiddenOnMap, tr,
 } = window.TANIMAN;
 
-let viewStart = 0, viewEnd = 11;
+let scrubStart = 0, scrubEnd = 11;
 
 function scrubEndpointsFromMask(mask) {
   if (mask === ALL_MONTHS) return { s: 0, e: 11 };
@@ -20,8 +20,13 @@ function scrubEndpointsFromMask(mask) {
 }
 
 function setViewRange(s, e) {
-  viewStart = s; viewEnd = e;
-  setViewMonths(monthsBetween(s, e));
+  scrubStart = s; scrubEnd = e;
+  setViewMonths(monthsBetween(scrubStart, scrubEnd));
+}
+
+function setViewEnd(m) {
+  scrubEnd = m;
+  setViewMonths(monthsBetween(scrubStart, m));
 }
 
 // ── BUILD: schedule track + scrubber DOM ──────────────────────────
@@ -205,33 +210,33 @@ window.setViewMonths = setViewMonths;
 function wireScrubber() {
   const track = document.getElementById('scrubber-track');
   const allBtn = document.getElementById('scrub-all');
-  allBtn.onclick = () => { viewStart = 0; viewEnd = 11; setViewMonths(ALL_MONTHS); };
+  allBtn.onclick = () => { scrubStart = 0; scrubEnd = 11; setViewMonths(ALL_MONTHS); };
 
   let scrubDragging = null;
 
   const startInteract = (clientX) => {
     const m = nearestMonth(track, clientX);
     if (state.viewMonths === ALL_MONTHS) {
-      viewStart = m; viewEnd = m;
+      scrubStart = m; scrubEnd = m;
       scrubDragging = 'end';
       setViewRange(m, m);
     } else {
       const { s, e } = scrubEndpointsFromMask(state.viewMonths);
-      viewStart = s; viewEnd = e;
+      scrubStart = s; scrubEnd = e;
       scrubDragging = Math.abs(m - s) <= Math.abs(m - e) ? 'start' : 'end';
-      if (scrubDragging === 'start') setViewRange(m, viewEnd);
-      else setViewRange(viewStart, m);
+      if (scrubDragging === 'start') setViewRange(m, scrubEnd);
+      else setViewEnd(m);
     }
   };
   const moveInteract = (clientX) => {
     if (!scrubDragging) return;
     const m = nearestMonth(track, clientX);
     if (scrubDragging === 'start') {
-      if (m > viewEnd) { scrubDragging = 'end'; setViewRange(viewEnd, m); }
-      else setViewRange(m, viewEnd);
+      if (m > scrubEnd) { scrubDragging = 'end'; setViewRange(scrubEnd, m); }
+      else setViewRange(m, scrubEnd);
     } else {
-      if (m < viewStart) { scrubDragging = 'start'; setViewRange(m, viewStart); }
-      else setViewRange(viewStart, m);
+      if (m < scrubStart) { scrubDragging = 'start'; setViewRange(m, scrubStart); }
+      else setViewEnd(m);
     }
   };
   const endInteract = () => { scrubDragging = null; };
