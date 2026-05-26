@@ -1,7 +1,8 @@
 // Stage the offline build's static content.
 // - Wipes src-tauri/dist-static/
 // - Copies the runtime files from the repo root
-// - Strips the Supabase CDN <script> tag from the staged taniman.html
+// - taniman.html is staged as index.html (Tauri's webview expects index.html)
+// - Strips the Supabase CDN <script> tag from the staged index.html
 import { existsSync, rmSync, cpSync, readFileSync, writeFileSync, statSync, readdirSync } from 'node:fs';
 import { resolve, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -11,8 +12,9 @@ const REPO = resolve(__dirname, '..', '..');
 const SRC_TAURI = resolve(__dirname, '..');
 const DIST = join(SRC_TAURI, 'dist-static');
 
+// taniman.html is handled separately (renamed to index.html for Tauri)
 const FILES = [
-  'taniman.html', 'app.js', 'data.js', 'styles.css', 'config.js',
+  'app.js', 'data.js', 'styles.css', 'config.js',
   'supabase-sync.js', 'offline-storage.js',
   'month-view-utils.js', 'calendar.js'
 ];
@@ -21,7 +23,12 @@ const DIRS = ['vendor', 'fonts', 'tiles'];
 // 1) Wipe dist
 if (existsSync(DIST)) rmSync(DIST, { recursive: true, force: true });
 
-// 2) Copy files
+// 2a) Copy taniman.html → index.html (Tauri's webview serves index.html by default)
+const tanimanSrc = join(REPO, 'taniman.html');
+if (!existsSync(tanimanSrc)) throw new Error('Missing source file: taniman.html');
+cpSync(tanimanSrc, join(DIST, 'index.html'));
+
+// 2b) Copy remaining files
 for (const f of FILES) {
   const src = join(REPO, f);
   if (!existsSync(src)) throw new Error(`Missing source file: ${f}`);
@@ -35,8 +42,8 @@ for (const d of DIRS) {
   cpSync(src, join(DIST, d), { recursive: true });
 }
 
-// 4) Strip the Supabase CDN <script> tag from the staged taniman.html
-const htmlPath = join(DIST, 'taniman.html');
+// 4) Strip the Supabase CDN <script> tag from the staged index.html
+const htmlPath = join(DIST, 'index.html');
 const html = readFileSync(htmlPath, 'utf8');
 const CDN_RE = /^\s*<script\s+src="https:\/\/cdn\.jsdelivr\.net\/npm\/@supabase\/[^"]+"\s*>\s*<\/script>\s*$/gm;
 const matches = html.match(CDN_RE);
@@ -56,6 +63,6 @@ function dirSize(p) {
   return total;
 }
 const totalBytes = dirSize(DIST);
-console.log(`prepare-dist: staged ${FILES.length} files + ${DIRS.length} dirs into ${DIST}`);
+console.log(`prepare-dist: staged taniman.html→index.html + ${FILES.length} files + ${DIRS.length} dirs into ${DIST}`);
 console.log(`prepare-dist: total size ${(totalBytes / 1024 / 1024).toFixed(2)} MB`);
 console.log(`prepare-dist: stripped ${matches.length} Supabase CDN <script> tag(s)`);
