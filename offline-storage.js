@@ -10,10 +10,7 @@
 //   window.__TANIMAN_OFFLINE_READY = Promise   - boot glue waits on this
 (function () {
   'use strict';
-  if (!window.__TAURI__) {
-    window.__TANIMAN_DEBUG = { tauri: false, reason: 'window.__TAURI__ falsy at offline-storage.js parse time' };
-    return;
-  }
+  if (!window.__TAURI__) return;
 
   // In Tauri mode, localStorage is never the source of truth. Wipe any stale
   // taniman_v3 entry on every launch so it can never leak in via a missed gate.
@@ -23,51 +20,28 @@
   let dataDir = null;
   let writeQueue = Promise.resolve();
 
-  window.__TANIMAN_DEBUG = {
-    tauri: true,
-    tauriKeys: Object.keys(window.__TAURI__),
-    fsAvailable: !!(window.__TAURI__ && window.__TAURI__.fs),
-    dataDir: null,
-    stateFileExists: null,
-    bakFileExists: null,
-    cachedStateLoaded: false,
-    preloadError: null,
-  };
-
   // Synchronously install the preload promise so the boot glue (taniman.html)
   // can find it immediately after this script finishes parsing.
   window.__TANIMAN_OFFLINE_READY = (async function preload() {
     try {
       dataDir = await window.__TAURI__.core.invoke('get_data_dir');
-      window.__TANIMAN_DEBUG.dataDir = dataDir;
       const fs = window.__TAURI__.fs;
       const stateFile = `${dataDir}\\state.json`;
       const bakFile = `${dataDir}\\state.json.bak`;
-      const stateExists = await fs.exists(stateFile);
-      const bakExists = await fs.exists(bakFile);
-      window.__TANIMAN_DEBUG.stateFileExists = stateExists;
-      window.__TANIMAN_DEBUG.bakFileExists = bakExists;
-      if (stateExists) {
+      if (await fs.exists(stateFile)) {
         try {
           cachedState = JSON.parse(await fs.readTextFile(stateFile));
-          window.__TANIMAN_DEBUG.cachedStateLoaded = true;
-          window.__TANIMAN_DEBUG.cachedSource = 'state.json';
         } catch (e) {
           console.warn('state.json parse failed; trying .bak', e);
-          if (bakExists) {
+          if (await fs.exists(bakFile)) {
             cachedState = JSON.parse(await fs.readTextFile(bakFile));
-            window.__TANIMAN_DEBUG.cachedStateLoaded = true;
-            window.__TANIMAN_DEBUG.cachedSource = 'state.json.bak';
           }
         }
-      } else if (bakExists) {
+      } else if (await fs.exists(bakFile)) {
         cachedState = JSON.parse(await fs.readTextFile(bakFile));
-        window.__TANIMAN_DEBUG.cachedStateLoaded = true;
-        window.__TANIMAN_DEBUG.cachedSource = 'state.json.bak';
       }
     } catch (e) {
       console.warn('offline preload failed', e);
-      window.__TANIMAN_DEBUG.preloadError = String(e);
       cachedState = null;
     }
   })();
