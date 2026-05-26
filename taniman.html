@@ -273,6 +273,48 @@
 <script src="supabase-sync.js"></script>
 <script src="offline-storage.js"></script>
 <script>
+  // Render diagnostic banner immediately — DOES NOT depend on app.js or calendar.js
+  // loading successfully. Fires as soon as the DOM is parseable.
+  function renderDiag() {
+    try {
+      if (document.getElementById('__diag_banner')) return;
+      var d = window.__TANIMAN_DEBUG || { tauri: 'banner-rendered-before-offline-storage' };
+      var st = window.state || {};
+      var plotCount = st.plots ? Object.keys(st.plots).length : 0;
+      var paintedPlots = 0;
+      if (st.plots) {
+        for (var k in st.plots) {
+          var p = st.plots[k];
+          if (p && p.cells && p.cells.some(function(a){
+            for (var i=0;i<a.length;i++) if (a[i]>0) return true;
+            return false;
+          })) paintedPlots++;
+        }
+      }
+      var lp = (typeof window.loadPersisted === 'function');
+      var ls = '';
+      try { ls = localStorage.getItem('taniman_v3') ? (localStorage.getItem('taniman_v3').length + ' bytes') : 'empty'; } catch(e){ ls = 'err'; }
+      var lines = [
+        'tauri=' + d.tauri,
+        'fs=' + d.fsAvailable,
+        'loadPersisted_defined=' + lp,
+        'dataDir=' + d.dataDir,
+        'state.json exists=' + d.stateFileExists,
+        '.bak exists=' + d.bakFileExists,
+        'cachedSource=' + (d.cachedSource || 'none'),
+        'plots=' + plotCount,
+        'painted=' + paintedPlots,
+        'ls_v3=' + ls,
+        'preloadErr=' + (d.preloadError || 'none'),
+      ];
+      var box = document.createElement('div');
+      box.id = '__diag_banner';
+      box.style.cssText = 'position:fixed;top:0;left:0;right:0;background:#000;color:#0f0;font:11px monospace;padding:6px 10px;z-index:2147483647;white-space:pre-wrap;border-bottom:2px solid #0f0';
+      box.textContent = 'DIAG: ' + lines.join(' | ');
+      document.body.appendChild(box);
+    } catch (e) { /* never break the app */ }
+  }
+
   // Boot sequence: wait for offline preload (no-op in Vercel mode),
   // then inject app.js and calendar.js in order.
   (function () {
@@ -283,49 +325,15 @@
       s1.onload = function () {
         var s2 = document.createElement('script');
         s2.src = 'calendar.js';
-        s2.onload = function () {
-          // Diagnostic banner — temporary, surfaces state hydration source so we
-          // can see why old data appears in the offline desktop build.
-          try {
-            var d = window.__TANIMAN_DEBUG || {};
-            var st = window.state || {};
-            var plotCount = st.plots ? Object.keys(st.plots).length : 0;
-            var paintedPlots = 0;
-            if (st.plots) {
-              for (var k in st.plots) {
-                var p = st.plots[k];
-                if (p && p.cells && p.cells.some(function(a){
-                  for (var i=0;i<a.length;i++) if (a[i]>0) return true;
-                  return false;
-                })) paintedPlots++;
-              }
-            }
-            var lp = (typeof window.loadPersisted === 'function');
-            var ls = '';
-            try { ls = localStorage.getItem('taniman_v3') ? (localStorage.getItem('taniman_v3').length + ' bytes') : 'empty'; } catch(e){ ls = 'err'; }
-            var lines = [
-              'tauri=' + d.tauri,
-              'fs=' + d.fsAvailable,
-              'loadPersisted_defined=' + lp,
-              'dataDir=' + d.dataDir,
-              'state.json exists=' + d.stateFileExists,
-              '.bak exists=' + d.bakFileExists,
-              'cachedSource=' + (d.cachedSource || 'none'),
-              'plots in state=' + plotCount,
-              'painted plots=' + paintedPlots,
-              'localStorage taniman_v3=' + ls,
-              'preloadErr=' + (d.preloadError || 'none'),
-            ];
-            var box = document.createElement('div');
-            box.style.cssText = 'position:fixed;top:0;left:0;right:0;background:#000;color:#0f0;font:11px monospace;padding:6px 10px;z-index:99999;white-space:pre-wrap;border-bottom:2px solid #0f0';
-            box.textContent = 'DIAG: ' + lines.join(' | ');
-            document.body.appendChild(box);
-          } catch (e) { /* never break the app */ }
-        };
+        s2.onload = function () { setTimeout(renderDiag, 200); };
+        s2.onerror = function () { setTimeout(renderDiag, 200); };
         document.body.appendChild(s2);
       };
+      s1.onerror = function () { setTimeout(renderDiag, 200); };
       document.body.appendChild(s1);
     });
+    // Failsafe: if neither script ever fires onload, still show banner after 3s
+    setTimeout(renderDiag, 3000);
   })();
 </script>
 
