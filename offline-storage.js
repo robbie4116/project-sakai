@@ -91,8 +91,7 @@
       const photosDir = `${dataDir}\\photos`;
       if (!(await fs.exists(photosDir))) await fs.mkdir(photosDir, { recursive: true });
       const pad = String(idx).padStart(2, '0');
-      const safeSuffix = String(suffix).replace(/[^A-Za-z0-9_-]/g, '_');
-      const relPath = `photos/plot_${pad}_${safeSuffix}.jpg`;
+      const relPath = `photos/plot_${pad}_${suffix}.jpg`;
       const absPath = `${dataDir}\\${relPath.replace(/\//g, '\\')}`;
       const comma = dataUrl.indexOf(',');
       const b64 = dataUrl.slice(comma + 1);
