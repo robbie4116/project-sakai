@@ -1349,8 +1349,19 @@ document.getElementById('btn-save').onclick = async () => {
   if (window.__TAURI__) {
     const uint8 = await zip.generateAsync({type:'uint8array'});
     const filename = `ambassador_cropmap_${dateStamp}.zip`;
-    await window.__TAURI__.core.invoke('save_zip', { filename, data: Array.from(uint8) });
-    toast(`Saved to data/exports/${filename}`);
+    // Encode as base64 string — avoids IPC size limits that hit large byte arrays.
+    let binary = '';
+    const chunk = 0x8000;
+    for (let i = 0; i < uint8.length; i += chunk)
+      binary += String.fromCharCode(...uint8.subarray(i, i + chunk));
+    const dataB64 = btoa(binary);
+    try {
+      await window.__TAURI__.core.invoke('save_zip', { filename, dataB64 });
+      toast(`Saved to data/exports/${filename}`);
+    } catch (e) {
+      console.error('save_zip failed', e);
+      toast('Export failed: ' + e);
+    }
   } else {
     const blob = await zip.generateAsync({type:'blob'});
     saveAs(blob, `ambassador_cropmap_${dateStamp}.zip`);

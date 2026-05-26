@@ -30,8 +30,10 @@ fn write_photo(
 fn save_zip(
     state: tauri::State<DataDir>,
     filename: String,
-    data: Vec<u8>,
+    data_b64: String,
 ) -> Result<String, String> {
+    use base64::{Engine, engine::general_purpose::STANDARD};
+    let data = STANDARD.decode(&data_b64).map_err(|e| e.to_string())?;
     let exports_dir = state.0.join("exports");
     std::fs::create_dir_all(&exports_dir).map_err(|e| e.to_string())?;
     let abs_path = exports_dir.join(&filename);
