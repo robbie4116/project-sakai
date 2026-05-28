@@ -41,11 +41,31 @@ fn save_zip(
     Ok(abs_path.to_string_lossy().to_string())
 }
 
+#[tauri::command]
+fn open_data_dir(state: tauri::State<DataDir>) -> Result<(), String> {
+    let path = &state.0;
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("explorer")
+            .arg(path)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg(path)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
-        .invoke_handler(tauri::generate_handler![get_data_dir, write_photo, save_zip])
+        .invoke_handler(tauri::generate_handler![get_data_dir, write_photo, save_zip, open_data_dir])
         .setup(|app| {
             // Resolve <exe_dir>/data
             let exe = std::env::current_exe()

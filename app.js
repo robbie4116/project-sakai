@@ -1591,6 +1591,18 @@ function seedDemoIfEmpty(){
 function mulberry32(a){return function(){let t=a+=0x6D2B79F5;t=Math.imul(t^t>>>15,t|1);t^=t+Math.imul(t^t>>>7,t|61);return((t^t>>>14)>>>0)/4294967296;}}
 // Demo seed runs only in the Vercel/browser build. The offline desktop build
 // must always start blank for field researchers — never inject fake farmers.
+if (window.__TAURI__) {
+  const btnOpenDir = document.getElementById('btn-open-dir');
+  btnOpenDir.style.display = '';
+  btnOpenDir.onclick = async () => {
+    try {
+      await window.__TAURI__.core.invoke('open_data_dir');
+    } catch (e) {
+      console.warn('open_data_dir failed', e);
+    }
+  };
+}
+
 if (!window.__TAURI__) seedDemoIfEmpty();
 restoreCloudDirtyQueue();
 if (hasSyncInit()) {
