@@ -125,9 +125,14 @@ let detailDraft = null;
 // ── PERSISTENCE ───────────────────────────────────────────────────
 function loadState(){
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return null;
-    const s = JSON.parse(raw);
+    const isTauri = typeof window.loadPersisted === 'function';
+    let s = isTauri ? window.loadPersisted() : null;
+    if (!s) {
+      if (isTauri) return null; // disk is authoritative; never fall back to localStorage
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) return null;
+      s = JSON.parse(raw);
+    }
     for (const k of Object.keys(s.plots||{})) {
       const p = s.plots[k];
       if (p.cells) p.cells = p.cells.map(a => new Uint16Array(a));
@@ -145,7 +150,11 @@ function saveState(){
         cells: p.cells ? p.cells.map(a => Array.from(a)) : null,
       };
     }
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(out));
+    if (typeof window.persistState === 'function') {
+      window.persistState(out);
+    } else {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(out));
+    }
     lastSaveAt = Date.now();
     updateAutosave();
   } catch(e){ console.warn('save failed', e); }
@@ -1342,9 +1351,27 @@ document.getElementById('btn-save').onclick = async () => {
     plots: metaPlots,
   }, null, 2));
 
-  const blob = await zip.generateAsync({type:'blob'});
-  saveAs(blob, `ambassador_cropmap_${dateStamp}.zip`);
-  toast(tr('saved'));
+  if (window.__TAURI__) {
+    const uint8 = await zip.generateAsync({type:'uint8array'});
+    const filename = `ambassador_cropmap_${dateStamp}.zip`;
+    // Encode as base64 string — avoids IPC size limits that hit large byte arrays.
+    let binary = '';
+    const chunk = 0x8000;
+    for (let i = 0; i < uint8.length; i += chunk)
+      binary += String.fromCharCode(...uint8.subarray(i, i + chunk));
+    const dataB64 = btoa(binary);
+    try {
+      await window.__TAURI__.core.invoke('save_zip', { filename, dataB64 });
+      toast(`Saved to data/exports/${filename}`);
+    } catch (e) {
+      console.error('save_zip failed', e);
+      toast('Export failed: ' + e);
+    }
+  } else {
+    const blob = await zip.generateAsync({type:'blob'});
+    saveAs(blob, `ambassador_cropmap_${dateStamp}.zip`);
+    toast(tr('saved'));
+  }
   } finally {
     btn.disabled = false;
     btn.innerHTML = oldHtml;
@@ -1562,7 +1589,9 @@ function seedDemoIfEmpty(){
   updatePlotHeader();
 }
 function mulberry32(a){return function(){let t=a+=0x6D2B79F5;t=Math.imul(t^t>>>15,t|1);t^=t+Math.imul(t^t>>>7,t|61);return((t^t>>>14)>>>0)/4294967296;}}
-seedDemoIfEmpty();
+// Demo seed runs only in the Vercel/browser build. The offline desktop build
+// must always start blank for field researchers — never inject fake farmers.
+if (!window.__TAURI__) seedDemoIfEmpty();
 restoreCloudDirtyQueue();
 if (hasSyncInit()) {
   window.syncInit(state, afterRemoteMerge, mayMergeRemote).catch(e => console.warn('initial sync failed:', e));

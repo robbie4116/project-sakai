@@ -7,3 +7,8 @@ Benguet_Sentinel2_Median.tif
 __pycache__/
 *.pyc
 .venv/
+
+# Tauri build artifacts (offline desktop build)
+src-tauri/target/
+src-tauri/node_modules/
+src-tauri/dist-static/

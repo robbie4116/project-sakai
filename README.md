@@ -45,3 +45,19 @@ Use the "Save all (.zip)" button in the app footer. Exports:
 - `labels/plot_NNN.png` - colour-coded label map per plot
 - `labels.csv` - per-cell crop assignments
 - `metadata.json` - farmer names, notes, plot coordinates
+
+## Offline desktop build (Windows)
+
+The repo can be built as a standalone `Taniman.exe` for offline field use.
+
+### One-time setup
+1. Install [Rust via rustup](https://rustup.rs/).
+2. Install Node 18+ (any LTS).
+3. From `src-tauri/`: `npm install`.
+
+### Build
+From `src-tauri/`:
+- `npm run dev`    — hot-reload dev window
+- `npm run build`  — produces `target/release/Taniman.exe`
+
+The Tauri build does not affect the Vercel deployment.
