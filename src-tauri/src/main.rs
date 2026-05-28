@@ -67,21 +67,18 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![get_data_dir, write_photo, save_zip, open_data_dir])
         .setup(|app| {
-            // Resolve <exe_dir>/data
-            let exe = std::env::current_exe()
-                .map_err(|e| format!("cannot resolve current_exe: {e}"))?;
-            let exe_dir = exe
-                .parent()
-                .ok_or("current_exe has no parent")?
-                .to_path_buf();
-            let data_dir = exe_dir.join("data");
+            // Resolve OS-appropriate app data directory:
+            //   Windows: %APPDATA%\ph.cordillera.taniman
+            //   macOS:   ~/Library/Application Support/ph.cordillera.taniman
+            let data_dir = app.path().app_data_dir()
+                .map_err(|e| format!("cannot resolve app_data_dir: {e}"))?;
             let photos_dir = data_dir.join("photos");
 
             // Create dirs (idempotent)
             if let Err(e) = std::fs::create_dir_all(&photos_dir) {
                 use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
                 let msg = format!(
-                    "Cannot create data folder at {:?}.\nPlease move Taniman.exe to a writable location.\n\nDetails: {}",
+                    "Cannot create data folder at {:?}.\nPlease ensure the app has write access to your user data directory.\n\nDetails: {}",
                     data_dir, e
                 );
                 let _ = app

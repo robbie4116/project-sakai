@@ -26,8 +26,8 @@
     try {
       dataDir = await window.__TAURI__.core.invoke('get_data_dir');
       const fs = window.__TAURI__.fs;
-      const stateFile = `${dataDir}\\state.json`;
-      const bakFile = `${dataDir}\\state.json.bak`;
+      const stateFile = `${dataDir}/state.json`;
+      const bakFile = `${dataDir}/state.json.bak`;
       if (await fs.exists(stateFile)) {
         try {
           cachedState = JSON.parse(await fs.readTextFile(stateFile));
@@ -66,9 +66,9 @@
         await window.__TANIMAN_OFFLINE_READY;
         if (!dataDir) throw new Error('offline dataDir unavailable');
         const fs = window.__TAURI__.fs;
-        const stateFile = `${dataDir}\\state.json`;
-        const tmpFile   = `${dataDir}\\state.json.tmp`;
-        const bakFile   = `${dataDir}\\state.json.bak`;
+        const stateFile = `${dataDir}/state.json`;
+        const tmpFile   = `${dataDir}/state.json.tmp`;
+        const bakFile   = `${dataDir}/state.json.bak`;
         await fs.writeTextFile(tmpFile, text);
         if (await fs.exists(stateFile)) {
           if (await fs.exists(bakFile)) await fs.remove(bakFile);
