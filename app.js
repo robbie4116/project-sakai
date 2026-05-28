@@ -1361,8 +1361,8 @@ document.getElementById('btn-save').onclick = async () => {
       binary += String.fromCharCode(...uint8.subarray(i, i + chunk));
     const dataB64 = btoa(binary);
     try {
-      await window.__TAURI__.core.invoke('save_zip', { filename, dataB64 });
-      toast(`Saved to data/exports/${filename}`);
+      const savedPath = await window.__TAURI__.core.invoke('save_zip', { filename, dataB64 });
+      if (savedPath) toast(`Saved to ${savedPath}`);
     } catch (e) {
       console.error('save_zip failed', e);
       toast('Export failed: ' + e);

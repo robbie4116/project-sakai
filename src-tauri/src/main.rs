@@ -28,17 +28,27 @@ fn write_photo(
 
 #[tauri::command]
 fn save_zip(
-    state: tauri::State<DataDir>,
+    app: tauri::AppHandle,
     filename: String,
     data_b64: String,
-) -> Result<String, String> {
+) -> Result<Option<String>, String> {
     use base64::{Engine, engine::general_purpose::STANDARD};
+    use tauri_plugin_dialog::DialogExt;
     let data = STANDARD.decode(&data_b64).map_err(|e| e.to_string())?;
-    let exports_dir = state.0.join("exports");
-    std::fs::create_dir_all(&exports_dir).map_err(|e| e.to_string())?;
-    let abs_path = exports_dir.join(&filename);
-    std::fs::write(&abs_path, &data).map_err(|e| e.to_string())?;
-    Ok(abs_path.to_string_lossy().to_string())
+    let chosen = app
+        .dialog()
+        .file()
+        .add_filter("ZIP Archive", &["zip"])
+        .set_file_name(&filename)
+        .blocking_save_file();
+    match chosen {
+        None => Ok(None),
+        Some(path) => {
+            let abs = path.into_path().map_err(|e| e.to_string())?;
+            std::fs::write(&abs, &data).map_err(|e| e.to_string())?;
+            Ok(Some(abs.to_string_lossy().to_string()))
+        }
+    }
 }
 
 #[tauri::command]
