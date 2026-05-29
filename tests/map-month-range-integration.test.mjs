@@ -87,3 +87,9 @@ test('setViewMonths persists viewMonths and legacy viewMonth mirror', () => {
   assert.match(setViewMonths, /window\.TANIMAN\.saveState\(\)/);
   assert.match(saveState, /JSON\.stringify\(out\)/);
 });
+
+test('app does not seed demo farm data on first load', () => {
+  assert.doesNotMatch(appSource, /seedDemoIfEmpty/);
+  assert.doesNotMatch(appSource, /Manong Andoy|Aling Letty|Manang Rosing/);
+  assert.doesNotMatch(appSource, /Demo seed/i);
+});

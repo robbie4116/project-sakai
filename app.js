@@ -976,6 +976,18 @@ function updateLegend(){
   });
 }
 
+function setLegendCollapsed(collapsed){
+  const legend = document.getElementById('map-legend');
+  const head = document.getElementById('lgd-head');
+  const headText = document.getElementById('lgd-head-txt');
+  if (!legend || !head || !headText) return;
+
+  legend.classList.toggle('collapsed', collapsed);
+  head.setAttribute('aria-expanded', String(!collapsed));
+  head.setAttribute('aria-label', collapsed ? 'Show visible crop coverage' : 'Hide visible crop coverage');
+  headText.textContent = headText.dataset.collapsedLabel;
+}
+
 // ── LANGUAGE ──────────────────────────────────────────────────────
 function applyLang(){
   document.querySelectorAll('.lang-btn').forEach(b=>b.classList.toggle('on', b.dataset.lang===state.lang));
@@ -985,7 +997,7 @@ function applyLang(){
   document.getElementById('lab-crop').textContent = tr('crop');
   document.getElementById('sched-label').textContent = tr('schedule');
   document.getElementById('scrub-label').textContent = tr('showing');
-  document.getElementById('lgd-head-txt').textContent = tr('legendCoverage');
+  setLegendCollapsed(document.getElementById('map-legend').classList.contains('collapsed'));
   document.getElementById('btn-undo-txt').textContent = tr('undo');
   document.getElementById('btn-redo-txt').textContent = tr('redo');
   document.getElementById('btn-clear').textContent = tr('clear');
@@ -1507,7 +1519,8 @@ document.addEventListener('keydown', (e)=>{
 window.addEventListener('resize', ()=>{ fitCanvas(); renderCanvas(); });
 
 document.getElementById('lgd-head').addEventListener('click', ()=>{
-  document.getElementById('map-legend').classList.toggle('collapsed');
+  const legend = document.getElementById('map-legend');
+  setLegendCollapsed(!legend.classList.contains('collapsed'));
 });
 
 // ── INIT ──────────────────────────────────────────────────────────
@@ -1542,55 +1555,6 @@ setInterval(()=>{
   });
 }, 500);
 
-// ── DEMO SEED (so the prototype shows lively data on first open) ──
-function seedDemoIfEmpty(){
-  // Only seed if no plot has any paint.
-  let any = false;
-  Object.keys(state.plots).forEach(k=>{ if (plotHasPaint(+k)) any = true; });
-  if (any) return;
-
-  // Seed 8 plots with varied crop+month patterns + farmer IDs
-  const seeds = [
-    { idx: 18, farmerId:'F-001', farmer:'Manong Andoy', plan:[ {c:0, m:monthsBetween(0,4), n:1100}, {c:1, m:monthsBetween(5,11), n:600} ] },
-    { idx: 19, farmerId:'F-001', farmer:'Manong Andoy', plan:[ {c:0, m:monthsBetween(0,5), n:1300} ] },
-    { idx: 20, farmerId:'F-002', farmer:'Aling Letty',  plan:[ {c:3, m:monthsBetween(10,2), n:900}, {c:2, m:monthsBetween(3,7), n:700} ] },
-    { idx: 26, farmerId:'F-002', farmer:'Aling Letty',  plan:[ {c:1, m:monthsBetween(0,11), n:1700} ] },
-    { idx: 27, farmerId:'F-003', farmer:'',             plan:[ {c:2, m:monthsBetween(1,5), n:1200}, {c:3, m:monthsBetween(6,10), n:600} ] },
-    { idx: 28, farmerId:'F-003', farmer:'',             plan:[ {c:0, m:monthsBetween(7,11), n:1400} ] },
-    { idx: 34, farmerId:'',     farmer:'',              plan:[ {c:1, m:monthsBetween(2,8), n:1600} ] },
-    { idx: 35, farmerId:'F-004', farmer:'Manang Rosing',plan:[ {c:3, m:monthsBetween(0,3), n:900}, {c:0, m:monthsBetween(4,9), n:1000} ] },
-    { idx: 42, farmerId:'F-004', farmer:'Manang Rosing',plan:[ {c:0, m:monthsBetween(0,11), n:1100} ] },
-  ];
-  for (const s of seeds){
-    const p = ensurePlot(s.idx);
-    p.farmerId = s.farmerId;
-    p.farmer = s.farmer;
-    for (const block of s.plan) {
-      // generate a blobby region
-      const rand = mulberry32(s.idx*97 + block.c*7 + 11);
-      const labels = new Uint8Array(GRID*GRID);
-      const blobs = 5;
-      for (let b=0;b<blobs;b++){
-        const cx = Math.floor(rand()*GRID), cy = Math.floor(rand()*GRID);
-        const rad = 4 + Math.floor(rand()*8);
-        for (let r=0;r<GRID;r++) for (let c=0;c<GRID;c++){
-          const dx=c-cx, dy=r-cy;
-          if (dx*dx+dy*dy < rad*rad) labels[r*GRID+c] = 1;
-        }
-      }
-      for (let i=0; i<labels.length; i++) if (labels[i]) p.cells[block.c][i] |= block.m;
-    }
-  }
-  state.plotIdx = 27;
-  saveState();
-  drawPlotsOnMap();
-  renderCanvas();
-  updateProgress();
-  updatePlotHeader();
-}
-function mulberry32(a){return function(){let t=a+=0x6D2B79F5;t=Math.imul(t^t>>>15,t|1);t^=t+Math.imul(t^t>>>7,t|61);return((t^t>>>14)>>>0)/4294967296;}}
-// Demo seed runs only in the Vercel/browser build. The offline desktop build
-// must always start blank for field researchers — never inject fake farmers.
 if (window.__TAURI__) {
   const btnOpenDir = document.getElementById('btn-open-dir');
   btnOpenDir.style.display = '';
@@ -1603,7 +1567,6 @@ if (window.__TAURI__) {
   };
 }
 
-if (!window.__TAURI__) seedDemoIfEmpty();
 restoreCloudDirtyQueue();
 if (hasSyncInit()) {
   window.syncInit(state, afterRemoteMerge, mayMergeRemote).catch(e => console.warn('initial sync failed:', e));

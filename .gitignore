@@ -12,3 +12,6 @@ __pycache__/
 src-tauri/target/
 src-tauri/node_modules/
 src-tauri/dist-static/
+
+# Superpowers visual-companion scratch files
+.superpowers/

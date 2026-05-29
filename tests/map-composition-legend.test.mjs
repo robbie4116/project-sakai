@@ -3,6 +3,9 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 const appSource = await readFile(new URL('../app.js', import.meta.url), 'utf8');
+const htmlSource = await readFile(new URL('../taniman.html', import.meta.url), 'utf8');
+const cssSource = await readFile(new URL('../styles.css', import.meta.url), 'utf8');
+const prepareDistSource = await readFile(new URL('../src-tauri/scripts/prepare-dist.mjs', import.meta.url), 'utf8');
 
 function extractFunctionBlock(source, name) {
   const start = source.indexOf(`function ${name}`);
@@ -89,4 +92,32 @@ test('legend aggregates visible cell coverage rather than dominant plot counts',
   assert.match(legend, /coveragePct/);
   assert.doesNotMatch(legend, /tally\[cropIdx\]\+\+/);
   assert.doesNotMatch(legend, /dominantCropForView\(plot\.idx\)/);
+});
+
+test('coverage legend starts as a compact pull-down tab', () => {
+  assert.match(htmlSource, /class="map-legend collapsed"/);
+  assert.match(htmlSource, /aria-label="Show visible crop coverage"/);
+  assert.match(htmlSource, /<span id="lgd-head-txt"[^>]*>Coverage<\/span>/);
+  assert.match(cssSource, /\.map-legend\.collapsed\{/);
+  assert.match(cssSource, /border-radius:0 0 9px 9px/);
+  assert.match(cssSource, /border-top:0/);
+});
+
+test('expanded coverage legend stays attached to the pull-down tab anchor', () => {
+  const legendCss = cssSource.slice(
+    cssSource.indexOf('.map-legend{'),
+    cssSource.indexOf('.map-legend .lgd-head{'),
+  );
+  const setLegendCollapsed = extractFunctionBlock(appSource, 'setLegendCollapsed');
+
+  assert.match(legendCss, /position:absolute;left:16px;top:55px;bottom:auto/);
+  assert.match(legendCss, /border-top:0/);
+  assert.match(legendCss, /border-radius:0 0 12px 12px/);
+  assert.match(setLegendCollapsed, /headText\.textContent\s*=\s*headText\.dataset\.collapsedLabel/);
+  assert.doesNotMatch(setLegendCollapsed, /headText\.textContent\s*=\s*collapsed\s*\?/);
+});
+
+test('offline desktop staging includes the shared legend source files', () => {
+  assert.match(prepareDistSource, /cpSync\(tanimanSrc, join\(DIST, 'index\.html'\)\)/);
+  assert.match(prepareDistSource, /'app\.js', 'data\.js', 'styles\.css', 'config\.js'/);
 });

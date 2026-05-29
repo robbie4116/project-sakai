@@ -57,11 +57,11 @@
       <div id="map"></div>
 
       <!-- redesigned legend: ALL crops + grey empty -->
-      <div class="map-legend" id="map-legend">
-        <div class="lgd-head" id="lgd-head">
-          <span id="lgd-head-txt">Legend</span>
-          <span class="lgd-chevron">▾</span>
-        </div>
+      <div class="map-legend collapsed" id="map-legend">
+        <button class="lgd-head" id="lgd-head" type="button" aria-expanded="false" aria-label="Show visible crop coverage">
+          <span id="lgd-head-txt" data-collapsed-label="Coverage">Coverage</span>
+          <span class="lgd-chevron" aria-hidden="true">▾</span>
+        </button>
         <div id="map-legend-rows"></div>
       </div>
 
