@@ -46,9 +46,9 @@ Use the "Save all (.zip)" button in the app footer. Exports:
 - `labels.csv` - per-cell crop assignments
 - `metadata.json` - farmer names, notes, plot coordinates
 
-## Offline desktop build (Windows)
+## Offline desktop build (Windows and macOS)
 
-The repo can be built as a standalone `Taniman.exe` for offline field use.
+The repo can be built as a standalone offline field app with Tauri.
 
 ### One-time setup
 1. Install [Rust via rustup](https://rustup.rs/).
@@ -61,3 +61,33 @@ From `src-tauri/`:
 - `npm run build`  — produces `target/release/Taniman.exe`
 
 The Tauri build does not affect the Vercel deployment.
+
+### macOS distribution
+
+The GitHub Actions workflow builds unsigned macOS builds for trusted testers.
+They are free to produce, but macOS Gatekeeper may show warnings such as
+unidentified developer, cannot be opened, or damaged. This is expected because
+the app is not signed with a paid Apple Developer ID certificate or notarized.
+
+Download the artifact that matches the Mac:
+
+- `taniman-macos-arm64-unsigned` - Apple Silicon Macs (M1/M2/M3/M4)
+- `taniman-macos-x64-unsigned` - Intel Macs
+
+To use:
+
+1. Open GitHub `Actions > Build`.
+2. Open the latest successful run.
+3. Download the correct macOS artifact.
+4. Unzip the artifact and open the `.dmg`.
+5. Drag `Taniman.app` to `Applications`.
+6. If macOS blocks the app, run:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/Taniman.app
+open /Applications/Taniman.app
+```
+
+Only use this bypass for builds you trust from this repository. A normal
+double-click download experience requires paid Apple Developer ID signing and
+Apple notarization.

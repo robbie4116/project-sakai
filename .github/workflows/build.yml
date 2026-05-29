@@ -35,11 +35,28 @@ jobs:
           retention-days: 90
 
   build-macos:
-    runs-on: macos-latest
+    name: Build macOS (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: macos-15
+            target: aarch64-apple-darwin
+            lipo_arch: arm64
+            artifact_name: taniman-macos-arm64-unsigned
+          - arch: x64
+            runner: macos-15-intel
+            target: x86_64-apple-darwin
+            lipo_arch: x86_64
+            artifact_name: taniman-macos-x64-unsigned
     steps:
       - uses: actions/checkout@v4
 
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -55,10 +72,27 @@ jobs:
 
       - name: Build macOS DMG
         working-directory: src-tauri
-        run: npm run build -- --bundles dmg
+        run: npm run build -- --target ${{ matrix.target }} --bundles dmg
+
+      - name: Verify macOS architecture
+        working-directory: src-tauri
+        shell: bash
+        run: |
+          set -euo pipefail
+          app_bundle="target/${{ matrix.target }}/release/bundle/macos/Taniman.app"
+          executable="$app_bundle/Contents/MacOS/taniman"
+
+          test -d "$app_bundle"
+          test -x "$executable"
+
+          actual_arch="$(lipo -archs "$executable")"
+          if [ "$actual_arch" != "${{ matrix.lipo_arch }}" ]; then
+            echo "::error title=Wrong macOS architecture::Expected ${{ matrix.lipo_arch }}, got $actual_arch."
+            exit 1
+          fi
 
       - uses: actions/upload-artifact@v4
         with:
-          name: taniman-macos
-          path: src-tauri/target/release/bundle/dmg/
+          name: ${{ matrix.artifact_name }}
+          path: src-tauri/target/${{ matrix.target }}/release/bundle/dmg/
           retention-days: 90
