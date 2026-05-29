@@ -112,7 +112,7 @@ test('expanded coverage legend stays attached to the pull-down tab anchor', () =
 
   assert.match(legendCss, /position:absolute;left:16px;top:55px;bottom:auto/);
   assert.match(legendCss, /border-top:0/);
-  assert.match(legendCss, /border-radius:0 0 12px 12px/);
+  assert.match(legendCss, /border-radius:0 0 9px 9px/);
   assert.match(setLegendCollapsed, /headText\.textContent\s*=\s*headText\.dataset\.collapsedLabel/);
   assert.doesNotMatch(setLegendCollapsed, /headText\.textContent\s*=\s*collapsed\s*\?/);
 });
