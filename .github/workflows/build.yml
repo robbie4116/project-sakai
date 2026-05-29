@@ -79,11 +79,21 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          app_bundle="target/${{ matrix.target }}/release/bundle/macos/Taniman.app"
-          executable="$app_bundle/Contents/MacOS/taniman"
+          app_bundle="$(find target -type d -path '*/release/bundle/macos/Taniman.app' -print -quit)"
+          if [ -z "$app_bundle" ]; then
+            echo "::error title=Missing macOS app bundle::Could not find Taniman.app under src-tauri/target."
+            find target -maxdepth 5 -type d -print
+            exit 1
+          fi
 
-          test -d "$app_bundle"
-          test -x "$executable"
+          executable_name="$(plutil -extract CFBundleExecutable raw "$app_bundle/Contents/Info.plist")"
+          executable="$app_bundle/Contents/MacOS/$executable_name"
+
+          if [ ! -x "$executable" ]; then
+            echo "::error title=Missing macOS executable::Expected executable at $executable."
+            find "$app_bundle/Contents" -maxdepth 3 -print
+            exit 1
+          fi
 
           actual_arch="$(lipo -archs "$executable")"
           if [ "$actual_arch" != "${{ matrix.lipo_arch }}" ]; then
@@ -94,5 +104,5 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact_name }}
-          path: src-tauri/target/${{ matrix.target }}/release/bundle/dmg/
+          path: src-tauri/target/**/release/bundle/dmg/*.dmg
           retention-days: 90

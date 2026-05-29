@@ -13,6 +13,8 @@ test('macOS release workflow builds unsigned Intel and Apple Silicon tester DMGs
   assert.match(workflow, /aarch64-apple-darwin/);
   assert.match(workflow, /artifact_name:\s*taniman-macos-arm64-unsigned/);
   assert.match(workflow, /artifact_name:\s*taniman-macos-x64-unsigned/);
+  assert.match(workflow, /find target -type d -path '\*\/release\/bundle\/macos\/Taniman\.app'/);
+  assert.match(workflow, /plutil -extract CFBundleExecutable raw/);
   assert.match(workflow, /lipo -archs/);
   assert.doesNotMatch(workflow, /APPLE_CERTIFICATE/);
   assert.doesNotMatch(workflow, /APPLE_ID/);
