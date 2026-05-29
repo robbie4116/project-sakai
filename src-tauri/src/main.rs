@@ -27,7 +27,7 @@ fn write_photo(
 }
 
 #[tauri::command]
-fn save_zip(
+async fn save_zip(
     app: tauri::AppHandle,
     filename: String,
     data_b64: String,
