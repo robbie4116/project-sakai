@@ -70,9 +70,9 @@ jobs:
         working-directory: src-tauri
         run: npm ci
 
-      - name: Build macOS DMG
+      - name: Build macOS app and DMG
         working-directory: src-tauri
-        run: npm run build -- --target ${{ matrix.target }} --bundles dmg
+        run: npm run build -- --target ${{ matrix.target }} --bundles app,dmg
 
       - name: Verify macOS architecture
         working-directory: src-tauri
