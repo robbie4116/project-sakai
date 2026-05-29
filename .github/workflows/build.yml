@@ -70,6 +70,9 @@ jobs:
         working-directory: src-tauri
         run: npm ci
 
+      - name: Install create-dmg
+        run: brew install create-dmg
+
       - name: Build macOS app and DMG
         working-directory: src-tauri
         run: npm run build -- --target ${{ matrix.target }} --bundles app,dmg
