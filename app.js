@@ -335,6 +335,66 @@ function plotOverlapsVisiblePlots(plot) {
   return visiblePlots().some(existing => plotOverlapsRect(plot, existing));
 }
 
+function outsidePlotFromCenter(lat, lng, idx = nextCustomOutsidePlotIdx()) {
+  return {
+    idx,
+    latS: lat - AMBASSADOR_PLOT_LAT / 2,
+    latN: lat + AMBASSADOR_PLOT_LAT / 2,
+    lngW: lng - AMBASSADOR_PLOT_LNG / 2,
+    lngE: lng + AMBASSADOR_PLOT_LNG / 2,
+    centerLat: lat,
+    centerLng: lng,
+    r: null,
+    c: null,
+    outsideSeq: null,
+    area: 'outside_tublay',
+    source: 'outside_custom',
+    tilePath: null,
+  };
+}
+
+function distanceToPlotRect(latlng, plot) {
+  const dLat = latlng.lat < plot.latS
+    ? plot.latS - latlng.lat
+    : (latlng.lat > plot.latN ? latlng.lat - plot.latN : 0);
+  const dLng = latlng.lng < plot.lngW
+    ? plot.lngW - latlng.lng
+    : (latlng.lng > plot.lngE ? latlng.lng - plot.lngE : 0);
+  return dLat * dLat + dLng * dLng;
+}
+
+function plotPlacementKey(plot) {
+  return [
+    plot.latS.toFixed(12),
+    plot.latN.toFixed(12),
+    plot.lngW.toFixed(12),
+    plot.lngE.toFixed(12),
+  ].join('|');
+}
+
+function candidateOutsidePlotCenters(latlng) {
+  const halfLat = AMBASSADOR_PLOT_LAT / 2;
+  const halfLng = AMBASSADOR_PLOT_LNG / 2;
+  const centers = [{ lat: latlng.lat, lng: latlng.lng }];
+  visiblePlots().forEach(existing => {
+    const northLat = existing.latN + halfLat;
+    const southLat = existing.latS - halfLat;
+    const eastLng = existing.lngE + halfLng;
+    const westLng = existing.lngW - halfLng;
+    centers.push(
+      { lat: northLat, lng: latlng.lng },
+      { lat: southLat, lng: latlng.lng },
+      { lat: latlng.lat, lng: eastLng },
+      { lat: latlng.lat, lng: westLng },
+      { lat: northLat, lng: eastLng },
+      { lat: northLat, lng: westLng },
+      { lat: southLat, lng: eastLng },
+      { lat: southLat, lng: westLng },
+    );
+  });
+  return centers;
+}
+
 function normalizeCustomOutsidePlot(plot) {
   const idx = Number(plot && plot.idx);
   const latS = Number(plot && plot.latS);
@@ -383,24 +443,18 @@ function registerCustomOutsidePlot(plot) {
 
 function createOutsidePlotAt(latlng) {
   if (!latlng) return null;
-  const candidate = {
-    idx: nextCustomOutsidePlotIdx(),
-    latS: latlng.lat - AMBASSADOR_PLOT_LAT / 2,
-    latN: latlng.lat + AMBASSADOR_PLOT_LAT / 2,
-    lngW: latlng.lng - AMBASSADOR_PLOT_LNG / 2,
-    lngE: latlng.lng + AMBASSADOR_PLOT_LNG / 2,
-    centerLat: latlng.lat,
-    centerLng: latlng.lng,
-    r: null,
-    c: null,
-    outsideSeq: null,
-    area: 'outside_tublay',
-    source: 'outside_custom',
-    tilePath: null,
-  };
-  if (!plotFitsDetailBounds(candidate)) return null;
-  if (plotOverlapsVisiblePlots(candidate)) return null;
-  return candidate;
+  const idx = nextCustomOutsidePlotIdx();
+  const seen = new Set();
+  const candidates = candidateOutsidePlotCenters(latlng)
+    .map(center => outsidePlotFromCenter(center.lat, center.lng, idx))
+    .filter(candidate => {
+      const key = plotPlacementKey(candidate);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return plotFitsDetailBounds(candidate) && !plotOverlapsVisiblePlots(candidate);
+    })
+    .sort((a, b) => distanceToPlotRect(latlng, a) - distanceToPlotRect(latlng, b));
+  return candidates[0] || null;
 }
 
 function setOutsideAddMode(on) {
@@ -455,10 +509,7 @@ function removeOutsidePlot(idx = state.plotIdx) {
 function handleOutsideMapClick(e) {
   if (!outsideAddMode) return;
   const plot = createOutsidePlotAt(e.latlng);
-  if (!plot) {
-    toast(tr('outsidePickHint'));
-    return;
-  }
+  if (!plot) return;
   registerCustomOutsidePlot(plot);
   enableOutsidePlot(plot.idx);
   setOutsideAddMode(false);
@@ -1359,7 +1410,7 @@ function applyLang(){
   document.getElementById('brand-sub').textContent = tr('appSub');
   document.getElementById('map-title').textContent = tr('mapTitle');
   document.getElementById('add-outside-txt').textContent = tr('addOutsideFarm');
-  document.getElementById('add-outside-btn').title = tr('outsidePickHint');
+  document.getElementById('add-outside-btn').title = tr('addOutsideFarm');
   document.getElementById('lab-brush').textContent = tr('brush');
   document.getElementById('lab-crop').textContent = tr('crop');
   document.getElementById('sched-label').textContent = tr('schedule');

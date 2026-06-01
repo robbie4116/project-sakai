@@ -43,6 +43,52 @@ globalThis.__geometry = { AMBASSADOR_GRID_BOUNDS, OUTSIDE_PLOTS };`, sandbox);
   return sandbox.__geometry;
 }
 
+function loadOutsidePlacementRuntime() {
+  const end = appSource.indexOf('// ── PERSISTENCE');
+  assert.notEqual(end, -1, 'outside placement helpers should be defined before persistence');
+  const sandbox = {
+    window: {
+      TANIMAN_MONTH_VIEW: {
+        ALL_MONTHS: 0xfff,
+        monthsBetween: () => [],
+        maskList: () => [],
+        maskIntersects: () => false,
+        maskContains: () => false,
+        normalizeViewMonths: () => 0xfff,
+        viewMonthFromMask: () => -1,
+        maskToDisplayLabel: () => 'all year',
+        shouldAutoSwitchViewMonths: () => false,
+        isBrushHiddenOnMap: () => false,
+      },
+    },
+    location: { search: '' },
+    URLSearchParams,
+    loadState: () => null,
+    localStorage: {
+      _store: new Map(),
+      getItem(key) {
+        return this._store.get(key) ?? null;
+      },
+      setItem(key, value) {
+        this._store.set(key, String(value));
+      },
+    },
+  };
+  vm.runInNewContext(dataSource, sandbox);
+  vm.runInNewContext(`${appSource.slice(0, end)}
+globalThis.__placement = {
+  createOutsidePlotAt,
+  plotOverlapsRect,
+  AMBASSADOR_GRID_BOUNDS,
+  AMBASSADOR_PLOT_LAT,
+  AMBASSADOR_PLOT_LNG,
+  CORE_PLOT_COUNT,
+  PLOTS,
+  state,
+};`, sandbox);
+  return sandbox.__placement;
+}
+
 function nearlyEqual(a, b, epsilon = 1e-9) {
   return Math.abs(a - b) <= epsilon;
 }
@@ -132,10 +178,64 @@ test('outside farm map mode creates a custom plot centered on the clicked locati
   assert.match(clickBlock, /enableOutsidePlot\(plot\.idx\)/);
   assert.doesNotMatch(clickBlock, /outsideCandidateAt\(e\.latlng\)/);
   assert.doesNotMatch(createBlock, /OUTSIDE_PLOTS\.find/);
-  assert.match(createBlock, /centerLat:\s*latlng\.lat/);
-  assert.match(createBlock, /centerLng:\s*latlng\.lng/);
   assert.doesNotMatch(createBlock, /pointInPolygon|plotOverlapsPolygon|POLY/);
   assert.match(registerBlock, /state\.customOutsidePlots\.push/);
+});
+
+test('outside farm placement snaps beside the 8x8 grid without positive overlap', () => {
+  const {
+    createOutsidePlotAt,
+    plotOverlapsRect,
+    AMBASSADOR_GRID_BOUNDS,
+    AMBASSADOR_PLOT_LAT,
+    AMBASSADOR_PLOT_LNG,
+  } = loadOutsidePlacementRuntime();
+
+  const plot = createOutsidePlotAt({
+    lat: (AMBASSADOR_GRID_BOUNDS.latS + AMBASSADOR_GRID_BOUNDS.latN) / 2,
+    lng: AMBASSADOR_GRID_BOUNDS.lngE - AMBASSADOR_PLOT_LNG * 0.2,
+  });
+
+  assert.ok(plot, 'expected a nearby legal outside plot instead of rejecting the click');
+  assert.ok(nearlyEqual(plot.lngW, AMBASSADOR_GRID_BOUNDS.lngE));
+  assert.ok(!plotOverlapsRect(plot, AMBASSADOR_GRID_BOUNDS));
+  assert.ok(nearlyEqual(plot.latN - plot.latS, AMBASSADOR_PLOT_LAT));
+  assert.ok(nearlyEqual(plot.lngE - plot.lngW, AMBASSADOR_PLOT_LNG));
+});
+
+test('outside farm placement snaps beside an existing outside plot without positive overlap', () => {
+  const {
+    createOutsidePlotAt,
+    plotOverlapsRect,
+    AMBASSADOR_GRID_BOUNDS,
+    AMBASSADOR_PLOT_LNG,
+    CORE_PLOT_COUNT,
+    PLOTS,
+    state,
+  } = loadOutsidePlacementRuntime();
+  const existing = PLOTS.find(plot =>
+    plot &&
+    plot.idx >= CORE_PLOT_COUNT &&
+    plot.lngW > AMBASSADOR_GRID_BOUNDS.lngE + AMBASSADOR_PLOT_LNG);
+  assert.ok(existing, 'expected a visible outside plot with room beside it');
+  state.enabledOutsidePlots.push(existing.idx);
+
+  const plot = createOutsidePlotAt({
+    lat: existing.centerLat,
+    lng: existing.lngE - AMBASSADOR_PLOT_LNG * 0.1,
+  });
+
+  assert.ok(plot, 'expected placement to resolve overlap with the existing outside plot');
+  assert.ok(nearlyEqual(plot.lngW, existing.lngE));
+  assert.ok(!plotOverlapsRect(plot, existing));
+});
+
+test('outside farm placement does not show the obsolete outside-Ambassador rejection toast', () => {
+  const clickBlock = extractFunctionBlock(appSource, 'handleOutsideMapClick');
+  const applyLangBlock = extractFunctionBlock(appSource, 'applyLang');
+
+  assert.doesNotMatch(clickBlock, /toast\(tr\('outsidePickHint'\)\)/);
+  assert.doesNotMatch(applyLangBlock, /outsidePickHint/);
 });
 
 test('outside plot labels use the local add order instead of raw candidate sequence numbers', () => {
