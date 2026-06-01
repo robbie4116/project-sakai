@@ -49,9 +49,15 @@
     <div class="map-pane">
       <div class="map-head">
         <h2 id="map-title">Ambassador</h2>
-        <div class="map-zoom">
-          <button id="zoom-out" aria-label="Zoom out">−</button>
-          <button id="zoom-in"  aria-label="Zoom in">+</button>
+        <div class="map-actions">
+          <button class="map-tool-btn" id="add-outside-btn" type="button" aria-pressed="false" title="Click the map to add an outside farm">
+            <span>+</span>
+            <span id="add-outside-txt">Outside farm</span>
+          </button>
+          <div class="map-zoom">
+            <button id="zoom-out" aria-label="Zoom out">−</button>
+            <button id="zoom-in"  aria-label="Zoom in">+</button>
+          </div>
         </div>
       </div>
       <div id="map"></div>
@@ -123,6 +129,8 @@
           <div class="canvas-frame" id="canvas-frame">
             <canvas id="plot-canvas" width="600" height="600"></canvas>
             <div class="brush-cursor" id="brush-cursor"></div>
+          </div>
+          <div class="canvas-status">
             <div class="canvas-corner" id="canvas-corner">50 × 50</div>
             <div class="canvas-view-tag" id="canvas-view-tag">Showing · all year</div>
           </div>
@@ -168,6 +176,7 @@
               </button>
             </div>
             <button class="tool-ghost" id="btn-clear">Clear this plot</button>
+            <button class="tool-danger" id="btn-remove-outside" hidden>Remove outside plot</button>
           </div>
         </aside>
 

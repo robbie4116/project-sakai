@@ -5,10 +5,145 @@
 // ── CONFIG ────────────────────────────────────────────────────────
 const GRID = 50;
 const STORAGE_KEY = 'taniman_v3';
-const PLOTS = window.AMBASSADOR_PLOTS;
+const AMBASSADOR_PLOTS = window.AMBASSADOR_PLOTS;
 const POLY  = window.AMBASSADOR_POLY;
 const CROPS = window.CROPS;
 const T     = window.STRINGS;
+const CORE_PLOT_COUNT = AMBASSADOR_PLOTS.length;
+const TUBLAY_DETAIL_BOUNDS = {
+  n: 16.562492508374877,
+  s: 16.45452471866254,
+  e: 120.706787109375,
+  w: 120.58868408203125,
+};
+const AMBASSADOR_GRID_BOUNDS = AMBASSADOR_PLOTS.reduce((bounds, plot) => ({
+  latS: Math.min(bounds.latS, plot.latS),
+  latN: Math.max(bounds.latN, plot.latN),
+  lngW: Math.min(bounds.lngW, plot.lngW),
+  lngE: Math.max(bounds.lngE, plot.lngE),
+}), {
+  latS: Infinity,
+  latN: -Infinity,
+  lngW: Infinity,
+  lngE: -Infinity,
+});
+
+function pointInPolygon(lat, lng, poly) {
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const yi = poly[i][0], xi = poly[i][1];
+    const yj = poly[j][0], xj = poly[j][1];
+    const intersects = ((yi > lat) !== (yj > lat)) &&
+      (lng < (xj - xi) * (lat - yi) / (yj - yi) + xi);
+    if (intersects) inside = !inside;
+  }
+  return inside;
+}
+
+function pointInRect(lat, lng, rect) {
+  return lat >= rect.latS && lat <= rect.latN && lng >= rect.lngW && lng <= rect.lngE;
+}
+
+function plotOverlapsRect(plot, rect) {
+  return plot.latS <= rect.latN &&
+    plot.latN >= rect.latS &&
+    plot.lngW <= rect.lngE &&
+    plot.lngE >= rect.lngW;
+}
+
+function orientation(a, b, c) {
+  const value = (b.lng - a.lng) * (c.lat - b.lat) - (b.lat - a.lat) * (c.lng - b.lng);
+  if (Math.abs(value) < 1e-12) return 0;
+  return value > 0 ? 1 : 2;
+}
+
+function onSegment(a, b, c) {
+  return b.lng <= Math.max(a.lng, c.lng) + 1e-12 &&
+    b.lng >= Math.min(a.lng, c.lng) - 1e-12 &&
+    b.lat <= Math.max(a.lat, c.lat) + 1e-12 &&
+    b.lat >= Math.min(a.lat, c.lat) - 1e-12;
+}
+
+function segmentsIntersect(a, b, c, d) {
+  const o1 = orientation(a, b, c);
+  const o2 = orientation(a, b, d);
+  const o3 = orientation(c, d, a);
+  const o4 = orientation(c, d, b);
+  if (o1 !== o2 && o3 !== o4) return true;
+  if (o1 === 0 && onSegment(a, c, b)) return true;
+  if (o2 === 0 && onSegment(a, d, b)) return true;
+  if (o3 === 0 && onSegment(c, a, d)) return true;
+  if (o4 === 0 && onSegment(c, b, d)) return true;
+  return false;
+}
+
+function plotCorners(plot) {
+  return [
+    { lat: plot.latN, lng: plot.lngW },
+    { lat: plot.latN, lng: plot.lngE },
+    { lat: plot.latS, lng: plot.lngE },
+    { lat: plot.latS, lng: plot.lngW },
+  ];
+}
+
+function plotOverlapsPolygon(plot, poly) {
+  const corners = plotCorners(plot);
+  if (corners.some(pt => pointInPolygon(pt.lat, pt.lng, poly))) return true;
+  if (poly.some(([lat, lng]) => pointInRect(lat, lng, plot))) return true;
+
+  for (let i = 0; i < corners.length; i++) {
+    const a = corners[i];
+    const b = corners[(i + 1) % corners.length];
+    for (let j = 0; j < poly.length; j++) {
+      const c = { lat: poly[j][0], lng: poly[j][1] };
+      const d = { lat: poly[(j + 1) % poly.length][0], lng: poly[(j + 1) % poly.length][1] };
+      if (segmentsIntersect(a, b, c, d)) return true;
+    }
+  }
+  return false;
+}
+
+function buildOutsidePlots() {
+  const first = AMBASSADOR_PLOTS[0];
+  const plotLat = first.latN - first.latS;
+  const plotLng = first.lngE - first.lngW;
+  const rows = Math.floor((TUBLAY_DETAIL_BOUNDS.n - TUBLAY_DETAIL_BOUNDS.s) / plotLat);
+  const cols = Math.floor((TUBLAY_DETAIL_BOUNDS.e - TUBLAY_DETAIL_BOUNDS.w) / plotLng);
+  const plots = [];
+  for (let r = 0; r < rows; r++) {
+    const latN = TUBLAY_DETAIL_BOUNDS.n - r * plotLat;
+    const latS = latN - plotLat;
+    for (let c = 0; c < cols; c++) {
+      const lngW = TUBLAY_DETAIL_BOUNDS.w + c * plotLng;
+      const lngE = lngW + plotLng;
+      const centerLat = (latN + latS) / 2;
+      const centerLng = (lngW + lngE) / 2;
+      const candidate = { latS, latN, lngW, lngE, centerLat, centerLng };
+      if (plotOverlapsRect(candidate, AMBASSADOR_GRID_BOUNDS)) continue;
+      if (plotOverlapsPolygon(candidate, POLY)) continue;
+      const outsideSeq = plots.length;
+      const idx = CORE_PLOT_COUNT + outsideSeq;
+      plots.push({
+        ...candidate,
+        idx, r, c, outsideSeq,
+        area: 'outside_tublay',
+        source: 'outside_field_report',
+        tilePath: `tiles/plots/outside_${String(outsideSeq).padStart(3, '0')}.jpg`,
+      });
+    }
+  }
+  return plots;
+}
+
+const OUTSIDE_PLOTS = buildOutsidePlots();
+const PLOTS = AMBASSADOR_PLOTS
+  .map(plot => ({
+    ...plot,
+    area: 'ambassador',
+    source: 'field_grid',
+    tilePath: `tiles/plots/plot_${String(plot.idx).padStart(3, '0')}.jpg`,
+  }))
+  .concat(OUTSIDE_PLOTS);
 
 const MONTH_SHORT = ['J','F','M','A','M','J','J','A','S','O','N','D'];
 const MONTH_FULL  = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
@@ -50,6 +185,7 @@ const state = loadState() || {
   viewMonths: ALL_MONTHS,     // mask of months displayed on map/canvas
   mixedStyle: 'diagonal',
   showTweaks: false,
+  enabledOutsidePlots: [],
   version: 3,
 };
 
@@ -61,6 +197,13 @@ if (state.viewMonth === undefined) state.viewMonth = -1;
 state.viewMonths = normalizeViewMonths(state.viewMonths, state.viewMonth);
 state.viewMonth = viewMonthFromMask(state.viewMonths);
 if (!state.mixedStyle) state.mixedStyle = 'diagonal';
+if (!Array.isArray(state.enabledOutsidePlots)) state.enabledOutsidePlots = [];
+state.enabledOutsidePlots = [...new Set(state.enabledOutsidePlots
+  .map(Number)
+  .filter(idx => Number.isInteger(idx) && idx >= CORE_PLOT_COUNT && PLOTS[idx]))];
+if (!PLOTS[state.plotIdx] || (state.plotIdx >= CORE_PLOT_COUNT && !state.enabledOutsidePlots.includes(state.plotIdx))) {
+  state.plotIdx = 0;
+}
 
 // Per-plot data structure:
 //   p.cells   = [ Uint16Array(2500) per crop ]  -- 12-bit month mask per cell
@@ -121,6 +264,118 @@ let painting = false, lastIdx = -1;
 let imgCache = {};
 let lastSaveAt = Date.now();
 let detailDraft = null;
+let outsideAddMode = false;
+
+function isOutsidePlot(plotOrIdx) {
+  const idx = typeof plotOrIdx === 'number' ? plotOrIdx : plotOrIdx && plotOrIdx.idx;
+  return Number.isInteger(idx) && idx >= CORE_PLOT_COUNT;
+}
+
+function isPlotEnabled(plot) {
+  return !isOutsidePlot(plot) || state.enabledOutsidePlots.includes(plot.idx);
+}
+
+function visiblePlots() {
+  return PLOTS.slice(0, CORE_PLOT_COUNT).concat(
+    state.enabledOutsidePlots.map(idx => PLOTS[idx]).filter(Boolean)
+  );
+}
+
+function visiblePlotIndices() {
+  return visiblePlots().map(plot => plot.idx);
+}
+
+function adjacentVisiblePlotIdx(idx, direction) {
+  const indices = visiblePlotIndices();
+  const pos = indices.indexOf(idx);
+  if (pos < 0) return indices[0] ?? 0;
+  return indices[pos + direction] ?? idx;
+}
+
+function plotDisplayLabel(plot) {
+  if (!plot) return '';
+  return isOutsidePlot(plot) ? `O${String(outsideDisplayNumber(plot.idx)).padStart(2, '0')}` : String(plot.idx + 1).padStart(2, '0');
+}
+
+function outsideDisplayNumber(idx) {
+  const pos = state.enabledOutsidePlots.indexOf(idx);
+  return pos >= 0 ? pos + 1 : (PLOTS[idx]?.outsideSeq ?? 0) + 1;
+}
+
+function updateNavButtons() {
+  const indices = visiblePlotIndices();
+  const pos = indices.indexOf(state.plotIdx);
+  document.getElementById('prev-btn').disabled = pos <= 0;
+  document.getElementById('next-btn').disabled = pos < 0 || pos >= indices.length - 1;
+}
+
+function outsideCandidateAt(latlng) {
+  if (!latlng || pointInPolygon(latlng.lat, latlng.lng, POLY)) return null;
+  if (
+    latlng.lat < TUBLAY_DETAIL_BOUNDS.s || latlng.lat > TUBLAY_DETAIL_BOUNDS.n ||
+    latlng.lng < TUBLAY_DETAIL_BOUNDS.w || latlng.lng > TUBLAY_DETAIL_BOUNDS.e
+  ) return null;
+  const containing = OUTSIDE_PLOTS.find(plot =>
+    latlng.lat >= plot.latS && latlng.lat <= plot.latN &&
+    latlng.lng >= plot.lngW && latlng.lng <= plot.lngE
+  );
+  return containing || null;
+}
+
+function setOutsideAddMode(on) {
+  outsideAddMode = !!on;
+  const btn = document.getElementById('add-outside-btn');
+  if (btn) {
+    btn.classList.toggle('on', outsideAddMode);
+    btn.setAttribute('aria-pressed', outsideAddMode ? 'true' : 'false');
+  }
+  if (map) map.getContainer().classList.toggle('adding-outside', outsideAddMode);
+}
+
+function enableOutsidePlot(idx) {
+  if (!PLOTS[idx] || !isOutsidePlot(idx)) return;
+  if (!state.enabledOutsidePlots.includes(idx)) {
+    state.enabledOutsidePlots.push(idx);
+  }
+  ensurePlot(idx);
+  saveState();
+  drawPlotsOnMap();
+  openPlot(idx);
+  updateProgress();
+  toast(tr('outsideAdded'));
+}
+
+function removeOutsidePlot(idx = state.plotIdx) {
+  const plot = PLOTS[idx];
+  if (!plot || !isOutsidePlot(plot) || !state.enabledOutsidePlots.includes(idx)) return;
+  const indices = visiblePlotIndices();
+  const pos = indices.indexOf(idx);
+  const fallbackIdx = indices[pos - 1] ?? indices[pos + 1] ?? 0;
+
+  state.enabledOutsidePlots = state.enabledOutsidePlots.filter(enabledIdx => enabledIdx !== idx);
+  delete state.plots[idx];
+  cloudDirty.delete(idx);
+  setOutsideAddMode(false);
+  saveState();
+  drawPlotsOnMap();
+  openPlot(fallbackIdx);
+  updateProgress();
+  toast(tr('outsideRemoved'));
+  if (typeof window.deletePlot === 'function') {
+    window.deletePlot(idx).catch(e => console.warn('delete plot failed:', e));
+  }
+}
+
+function handleOutsideMapClick(e) {
+  if (!outsideAddMode) return;
+  const candidate = outsideCandidateAt(e.latlng);
+  if (!candidate) {
+    toast(tr('outsidePickHint'));
+    return;
+  }
+  enableOutsidePlot(candidate.idx);
+  setOutsideAddMode(false);
+}
 
 // ── PERSISTENCE ───────────────────────────────────────────────────
 function loadState(){
@@ -190,7 +445,12 @@ function cloudRetryIndices(indices) {
 function afterRemoteMerge(idx) {
   if (isCloudDirty(idx)) return;
   ensurePlot(idx);
-  updateMapPlot(idx);
+  if (isOutsidePlot(idx) && !state.enabledOutsidePlots.includes(idx)) {
+    state.enabledOutsidePlots.push(idx);
+    drawPlotsOnMap();
+  } else {
+    updateMapPlot(idx);
+  }
   if (idx === state.plotIdx) {
     renderCanvas();
     updatePlotHeader();
@@ -470,8 +730,8 @@ const MAP_CONTEXT_BOUNDS = L.latLngBounds(
   [16.93070509876553, 120.9375]
 );
 const MAP_DETAIL_BOUNDS = L.latLngBounds(
-  [16.46141, 120.62388],
-  [16.49551, 120.65667]
+  [TUBLAY_DETAIL_BOUNDS.s, TUBLAY_DETAIL_BOUNDS.w],
+  [TUBLAY_DETAIL_BOUNDS.n, TUBLAY_DETAIL_BOUNDS.e]
 );
 
 function makeContextTileLayer() {
@@ -535,24 +795,33 @@ function initMap(){
   map.fitBounds(L.polygon(POLY).getBounds().pad(0.10));
   document.getElementById('zoom-in').onclick = ()=>map.zoomIn();
   document.getElementById('zoom-out').onclick = ()=>map.zoomOut();
+  document.getElementById('add-outside-btn').onclick = ()=>setOutsideAddMode(!outsideAddMode);
+  map.on('click', handleOutsideMapClick);
 }
 
 function plotStyle(idx){
+  const plot = PLOTS[idx];
   const composition = plotCompositionForView(idx);
   const { crop } = composition;
   const isCurrent = idx === state.plotIdx;
+  const isOutside = plot && isOutsidePlot(plot);
   if (crop){
     return {
       color: isCurrent ? '#F2C84B' : getCss('--mixed-stroke'),
       weight: isCurrent ? 3 : 2,
       fillColor: getCss('--mixed-fill'),
       fillOpacity: 0.46,
-      dashArray: isCurrent ? null : '4,3',
+      dashArray: isCurrent ? null : (isOutside ? '8,4' : '4,3'),
     };
   }
   // EMPTY plot — grey (per requirement) — translucent so satellite shows through
   const greyFill = getCss('--empty-fill');
   const greyStroke = getCss('--empty-stroke');
+  if (isOutside) {
+    return isCurrent
+      ? { color:'#F2C84B', weight:3, fillColor:greyFill, fillOpacity:0.28, dashArray:null }
+      : { color:'#4DB6FF', weight:1.7, fillColor:greyFill, fillOpacity:0.12, dashArray:'8,4' };
+  }
   return isCurrent
     ? { color:'#F2C84B', weight:3, fillColor:greyFill, fillOpacity:0.30, dashArray:null }
     : { color:greyStroke, weight:1.2, fillColor:greyFill, fillOpacity:0.18, dashArray:'4,3' };
@@ -602,13 +871,13 @@ function drawPlotsOnMap(){
   Object.values(plotCompositionBars).forEach(m=>map.removeLayer(m));
   plotRects = {}; plotMarkers = {}; plotCompositionBars = {};
 
-  PLOTS.forEach(plot=>{
+  visiblePlots().forEach(plot=>{
     const style = plotStyle(plot.idx);
     const rect = L.rectangle([[plot.latS, plot.lngW],[plot.latN, plot.lngE]], style).addTo(map);
     const marker = L.marker([plot.centerLat, plot.centerLng], {
       icon: L.divIcon({
         className:'',
-        html:`<div class="plot-num">${plot.idx+1}</div>`,
+        html:`<div class="plot-num${isOutsidePlot(plot) ? ' outside' : ''}">${plotDisplayLabel(plot)}</div>`,
         iconSize:[24,14], iconAnchor:[12,7]
       }),
       interactive:false
@@ -642,8 +911,10 @@ const ctx = canvas.getContext('2d');
 function fitCanvas(){
   const frame = document.getElementById('canvas-frame');
   const zone = document.querySelector('.canvas-zone');
+  const status = document.querySelector('.canvas-status');
   const pad = 36;
-  const size = Math.max(120, Math.min(zone.clientWidth - pad, zone.clientHeight - pad));
+  const statusH = status ? status.offsetHeight + 10 : 0;
+  const size = Math.max(120, Math.min(zone.clientWidth - pad, zone.clientHeight - pad - statusH));
   frame.style.width = size + 'px';
   frame.style.height = size + 'px';
   canvas.width = size;
@@ -652,11 +923,12 @@ function fitCanvas(){
 
 function getPlotTile(idx) {
   if (!imgCache[idx]) {
+    const plot = PLOTS[idx];
     const img = new Image();
     img.onload = () => {
       if (idx === state.plotIdx) renderCanvas();
     };
-    img.src = `tiles/plots/plot_${String(idx).padStart(3, '0')}.jpg`;
+    img.src = plot && plot.tilePath ? plot.tilePath : `tiles/plots/plot_${String(idx).padStart(3, '0')}.jpg`;
     imgCache[idx] = img;
   }
   return imgCache[idx];
@@ -861,7 +1133,7 @@ function updateBrush(){
 
 // ── PLOT NAVIGATION ───────────────────────────────────────────────
 function openPlot(idx){
-  if (idx<0||idx>=PLOTS.length) return;
+  if (!PLOTS[idx] || !isPlotEnabled(PLOTS[idx])) return;
   const prev = state.plotIdx;
   state.plotIdx = idx;
   updatePlotHeader();
@@ -871,8 +1143,7 @@ function openPlot(idx){
   const plot = PLOTS[idx];
   const bounds = L.latLngBounds([[plot.latS,plot.lngW],[plot.latN,plot.lngE]]);
   if (!map.getBounds().contains(bounds)) map.panTo([plot.centerLat,plot.centerLng], {animate:true});
-  document.getElementById('prev-btn').disabled = idx===0;
-  document.getElementById('next-btn').disabled = idx===PLOTS.length-1;
+  updateNavButtons();
   if (drawer.classList.contains('on')) loadMetadataIntoDrawer();
   else detailDraft = null;
   refreshMetaToggle();
@@ -885,9 +1156,14 @@ function updatePlotHeader(){
   const plot = PLOTS[state.plotIdx];
   if (!plot) return;
   const p = state.plots[state.plotIdx];
-  document.getElementById('plot-name').textContent = tr('plotN').replace('{n}', String(state.plotIdx+1).padStart(2,'0'));
-  document.getElementById('plot-loc').textContent =
-    `R${plot.r} · C${plot.c} · ${plot.centerLat.toFixed(4)}°N, ${plot.centerLng.toFixed(4)}°E`;
+  document.getElementById('plot-name').textContent = isOutsidePlot(plot)
+    ? tr('outsidePlotN').replace('{n}', plotDisplayLabel(plot))
+    : tr('plotN').replace('{n}', plotDisplayLabel(plot));
+  document.getElementById('plot-loc').textContent = isOutsidePlot(plot)
+    ? `${tr('outsideArea')} · ${plot.centerLat.toFixed(4)}°N, ${plot.centerLng.toFixed(4)}°E`
+    : `R${plot.r} · C${plot.c} · ${plot.centerLat.toFixed(4)}°N, ${plot.centerLng.toFixed(4)}°E`;
+  const removeOutsideBtn = document.getElementById('btn-remove-outside');
+  if (removeOutsideBtn) removeOutsideBtn.hidden = !isOutsidePlot(plot);
   // farmer chip
   const chip = document.getElementById('ed-farmer-chip');
   if (p && p.farmerId) {
@@ -898,7 +1174,8 @@ function updatePlotHeader(){
     chip.innerHTML = `<span class="ddot"></span>${tr('noFarmer')}`;
   }
   document.getElementById('dr-title').textContent =
-    tr('plotN').replace('{n}', String(state.plotIdx+1).padStart(2,'0')) + ' — ' + tr('plotSection').toLowerCase();
+    document.getElementById('plot-name').textContent + ' — ' + tr('plotSection').toLowerCase();
+  updateNavButtons();
 }
 function refreshMetaToggle() {
   const p = state.plots[state.plotIdx];
@@ -945,7 +1222,7 @@ function updateLegend(){
   const plotsContainingCrop = new Array(CROPS.length).fill(0);
   let emptyVisibleCells = 0;
   let totalVisibleCells = 0;
-  PLOTS.forEach(plot=>{
+  visiblePlots().forEach(plot=>{
     const composition = plotCompositionForView(plot.idx);
     totalVisibleCells += GRID * GRID;
     emptyVisibleCells += composition.emptyCells;
@@ -992,7 +1269,9 @@ function setLegendCollapsed(collapsed){
 function applyLang(){
   document.querySelectorAll('.lang-btn').forEach(b=>b.classList.toggle('on', b.dataset.lang===state.lang));
   document.getElementById('brand-sub').textContent = tr('appSub');
-  document.getElementById('map-title').textContent = 'Ambassador';
+  document.getElementById('map-title').textContent = tr('mapTitle');
+  document.getElementById('add-outside-txt').textContent = tr('addOutsideFarm');
+  document.getElementById('add-outside-btn').title = tr('outsidePickHint');
   document.getElementById('lab-brush').textContent = tr('brush');
   document.getElementById('lab-crop').textContent = tr('crop');
   document.getElementById('sched-label').textContent = tr('schedule');
@@ -1001,6 +1280,7 @@ function applyLang(){
   document.getElementById('btn-undo-txt').textContent = tr('undo');
   document.getElementById('btn-redo-txt').textContent = tr('redo');
   document.getElementById('btn-clear').textContent = tr('clear');
+  document.getElementById('btn-remove-outside').textContent = tr('removeOutsidePlot');
   document.getElementById('btn-save-txt').textContent = tr('saveAll');
   document.getElementById('meta-toggle-txt').textContent = tr('plotDetails');
   document.getElementById('roster-btn-txt').textContent = tr('roster');
@@ -1203,6 +1483,7 @@ document.getElementById('btn-clear').onclick = ()=>{
   savePlotChange(state.plotIdx);
   toast(tr('cleared'));
 };
+document.getElementById('btn-remove-outside').onclick = () => removeOutsidePlot();
 document.getElementById('btn-undo').onclick = undo;
 document.getElementById('btn-redo').onclick = redo;
 
@@ -1231,10 +1512,10 @@ document.getElementById('btn-save').onclick = async () => {
 
   // headers
   let labelsCsv =
-    'plot_idx,plot_row,plot_col,centerLat,centerLng,farmer_id,crop_id,crop_en,patch_row,patch_col,' +
+    'plot_idx,plot_area,plot_source,plot_row,plot_col,centerLat,centerLng,farmer_id,crop_id,crop_en,patch_row,patch_col,' +
     'jan,feb,mar,apr,may,jun,jul,aug,sep,oct,nov,dec,month_count\n';
   let plotsCsv =
-    'plot_idx,plot_row,plot_col,centerLat,centerLng,farmer_id,farmer_name,note,photo_count,' +
+    'plot_idx,plot_area,plot_source,plot_row,plot_col,centerLat,centerLng,farmer_id,farmer_name,note,photo_count,' +
     CROPS.map(c=>`${c.id}_cells`).join(',') + ',' +
     CROPS.map(c=>`${c.id}_months_mask`).join(',') + '\n';
   const farmerMap = new Map(); // farmer_id -> { name, plots:[], patches }
@@ -1248,6 +1529,9 @@ document.getElementById('btn-save').onclick = async () => {
   for (const idx of indices) {
     const p = state.plots[idx];
     const plot = PLOTS[idx];
+    if (!plot) continue;
+    const plotArea = plot.area || 'ambassador';
+    const plotSource = plot.source || 'field_grid';
     const farmerId = (p.farmerId || '').trim();
     const farmerName = (p.farmer || '').trim();
     const note = (p.note || '').replaceAll('"', '""').replaceAll('\n', ' ');
@@ -1280,7 +1564,7 @@ document.getElementById('btn-save').onclick = async () => {
           monthBits.push(bit);
           monthCount += bit;
         }
-        labelsCsv += `${idx},${plot.r},${plot.c},${plot.centerLat},${plot.centerLng},` +
+        labelsCsv += `${idx},${plotArea},${plotSource},${plot.r},${plot.c},${plot.centerLat},${plot.centerLng},` +
           `${farmerId},${CROPS[ci].id},${CROPS[ci].name.en},${r},${c},` +
           `${monthBits.join(',')},${monthCount}\n`;
       }
@@ -1294,7 +1578,7 @@ document.getElementById('btn-save').onclick = async () => {
       let mm = 0; for (let i=0; i<p.cells[ci].length; i++) mm |= p.cells[ci][i]; return mm;
     });
     const photos = (p.photos || []).filter(ph => ph && (ph.url || ph.dataUrl));
-    plotsCsv += `${idx},${plot.r},${plot.c},${plot.centerLat},${plot.centerLng},` +
+    plotsCsv += `${idx},${plotArea},${plotSource},${plot.r},${plot.c},${plot.centerLat},${plot.centerLng},` +
       `${farmerId},"${farmerName}","${note}",${photos.length},` +
       `${cellCounts.join(',')},${monthMasks.join(',')}\n`;
 
@@ -1319,6 +1603,8 @@ document.getElementById('btn-save').onclick = async () => {
     // metadata
     metaPlots.push({
       plot_idx: idx,
+      area: plot.area || 'ambassador',
+      source: plot.source || 'field_grid',
       row: plot.r, col: plot.c,
       centerLat: plot.centerLat, centerLng: plot.centerLng,
       farmer_id: farmerId,
@@ -1394,7 +1680,7 @@ document.getElementById('btn-save').onclick = async () => {
 function buildRosterData(){
   // group plots by farmerId. Include an "unassigned with paint" bucket too.
   const map = new Map();
-  PLOTS.forEach(plot=>{
+  visiblePlots().forEach(plot=>{
     const p = state.plots[plot.idx];
     if (!p || !plotHasPaint(plot.idx) && !p.farmerId && !p.farmer) return;
     const key = p.farmerId || '__unassigned__';
@@ -1446,7 +1732,7 @@ function renderRoster(q){
   root.innerHTML = filtered.map(r=>{
     const isU = !r.id;
     const cropTags = r.cropTotals.map((n,i)=> n>0 ? `<span class="crop-tag"><span class="cdot" style="background:${CROPS[i].hex}"></span>${(CROPS[i].name[state.lang]||CROPS[i].name.en)}</span>` : '').join('');
-    const plotList = r.plots.slice(0,12).map(i=>String(i+1).padStart(2,'0')).join(', ') + (r.plots.length>12?' …':'');
+    const plotList = r.plots.slice(0,12).map(i=>plotDisplayLabel(PLOTS[i])).join(', ') + (r.plots.length>12?' …':'');
     return `<div class="roster-card${isU?' unassigned':''}" data-plot="${r.plots[0]}">
       <div class="roster-id">${r.id || tr('rosterNoId')}</div>
       <div class="roster-mid">
@@ -1497,15 +1783,15 @@ document.querySelectorAll('.brush-btn').forEach(b=>{
     saveState();
   };
 });
-document.getElementById('prev-btn').onclick = ()=>openPlot(state.plotIdx-1);
-document.getElementById('next-btn').onclick = ()=>openPlot(state.plotIdx+1);
+document.getElementById('prev-btn').onclick = ()=>openPlot(adjacentVisiblePlotIdx(state.plotIdx, -1));
+document.getElementById('next-btn').onclick = ()=>openPlot(adjacentVisiblePlotIdx(state.plotIdx, 1));
 
 document.addEventListener('keydown', (e)=>{
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
   if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'z' || e.key === 'Z')) { e.preventDefault(); redo(); return; }
   if ((e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'Z')){ e.preventDefault(); undo(); return; }
-  if (e.key === 'ArrowLeft') openPlot(state.plotIdx-1);
-  if (e.key === 'ArrowRight') openPlot(state.plotIdx+1);
+  if (e.key === 'ArrowLeft') openPlot(adjacentVisiblePlotIdx(state.plotIdx, -1));
+  if (e.key === 'ArrowRight') openPlot(adjacentVisiblePlotIdx(state.plotIdx, 1));
   if (e.key === '1' || e.key === '2' || e.key === '3' || e.key === '4'){
     state.crop = +e.key - 1; buildPalette(); updateScheduleReadout();
   }
@@ -1536,8 +1822,7 @@ updateProgress();
 updatePlotHeader();
 updateAutosave();
 refreshMetaToggle();
-document.getElementById('prev-btn').disabled = state.plotIdx===0;
-document.getElementById('next-btn').disabled = state.plotIdx===PLOTS.length-1;
+updateNavButtons();
 
 const _ro = new ResizeObserver(()=>{ fitCanvas(); renderCanvas(); });
 _ro.observe(document.querySelector('.canvas-zone'));
@@ -1579,5 +1864,5 @@ window.TANIMAN = {
   normalizeViewMonths, viewMonthFromMask, maskToDisplayLabel,
   shouldAutoSwitchViewMonths, isBrushHiddenOnMap,
   renderCanvas, drawPlotsOnMap, updateMapPlot, updateLegend, updatePlotHeader,
-  saveState, tr, schedSave,
+  saveState, tr, schedSave, visiblePlots, enableOutsidePlot,
 };

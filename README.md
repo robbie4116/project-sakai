@@ -22,6 +22,12 @@ Tile outputs:
 - `tiles/map/` — high-detail offline map tiles for the Ambassador work area
 - `tiles/context/` — wider low-zoom offline satellite context tiles for zoomed-out orientation
 
+The app now includes hidden Tublay candidate plots outside the Ambassador outline.
+Use the **Outside farm** button, then click a farm location outside the outlined
+Ambassador area. The selected outside plot is added to the map and can be painted
+with the same 50 x 50 crop grid. Regenerating tiles creates both the 64 planned
+Ambassador plot images and the outside candidate plot images.
+
 ### 2. Configure Supabase
 
 Edit `config.js` with your Supabase project URL and anon key.
@@ -45,6 +51,10 @@ Use the "Save all (.zip)" button in the app footer. Exports:
 - `labels/plot_NNN.png` - colour-coded label map per plot
 - `labels.csv` - per-cell crop assignments
 - `metadata.json` - farmer names, notes, plot coordinates
+
+Outside-farm records are exported with `plot_area` and `plot_source` columns so
+they can be separated from the planned Ambassador field-work plots during model
+training.
 
 ## Offline desktop build (Windows and macOS)
 

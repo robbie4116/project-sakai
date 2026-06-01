@@ -146,6 +146,26 @@
     }
   };
 
+  window.deletePlot = async function (idx) {
+    if (!isOnline()) return false;
+    const client = initClient();
+    if (!client) return false;
+    try {
+      const { error } = await client
+        .from('plots')
+        .delete()
+        .eq('plot_idx', idx);
+      if (error) {
+        console.warn('deletePlot error:', error.message);
+        return false;
+      }
+      return true;
+    } catch (e) {
+      console.warn('deletePlot error:', e);
+      return false;
+    }
+  };
+
   window.uploadPhoto = async function (plotIdx, dataUrl, suffix) {
     if (!isOnline()) return null;
     const client = initClient();

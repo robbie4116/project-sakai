@@ -6,7 +6,8 @@ Sources:
   benguet_satellite.tif  - Benguet province context imagery (wide coverage)
 
 Outputs:
-  tiles/plots/plot_000.jpg ... plot_063.jpg  (64 cropped plot images)
+  tiles/plots/plot_000.jpg ... plot_063.jpg  (64 Ambassador plot images)
+  tiles/plots/outside_000.jpg ...            (hidden Tublay outside plot images)
   tiles/map/{z}/{x}/{y}.jpg                  (XYZ detail tiles, zoom 12-16)
   tiles/map/empty.jpg                        (fallback tile)
   tiles/context/{z}/{x}/{y}.jpg              (XYZ context tiles, zoom 10-13)
@@ -31,6 +32,7 @@ CONTEXT_SOURCE_TIF = "benguet_satellite.tif"
 PLOT_OUT_DIR = Path("tiles/plots")
 DETAIL_MAP_OUT_DIR = Path("tiles/map")
 CONTEXT_MAP_OUT_DIR = Path("tiles/context")
+OUTSIDE_PLOT_PREFIX = "outside_"
 PLOT_SIZE = 512
 MAP_TILE_PX = 256
 JPEG_QUALITY = 85
@@ -42,18 +44,23 @@ CONTEXT_MIN_ZOOM = 10
 CONTEXT_MAX_ZOOM = 13
 OUTSIDE_TILE_FILL = (14, 26, 14)
 
-# Ambassador bounding box + 20% padding (from data.js AMBASSADOR_PLOTS)
+# High-resolution Tublay source bounds from tublay_satellite.tif.
+TUBLAY_BBOX_N = 16.562492508374877
+TUBLAY_BBOX_S = 16.45452471866254
+TUBLAY_BBOX_E = 120.706787109375
+TUBLAY_BBOX_W = 120.58868408203125
+
+# Ambassador bounding box (from data.js AMBASSADOR_PLOTS)
 BBOX_N = 16.49551
 BBOX_S = 16.46141
 BBOX_E = 120.65667
 BBOX_W = 120.62388
-PAD = 0.20
-LAT_PAD = (BBOX_N - BBOX_S) * PAD
-LNG_PAD = (BBOX_E - BBOX_W) * PAD
-TILE_BBOX_N = BBOX_N + LAT_PAD
-TILE_BBOX_S = BBOX_S - LAT_PAD
-TILE_BBOX_E = BBOX_E + LNG_PAD
-TILE_BBOX_W = BBOX_W - LNG_PAD
+TILE_BBOX_N = TUBLAY_BBOX_N
+TILE_BBOX_S = TUBLAY_BBOX_S
+TILE_BBOX_E = TUBLAY_BBOX_E
+TILE_BBOX_W = TUBLAY_BBOX_W
+
+AMBASSADOR_POLY = [[16.47974,120.62619],[16.48212,120.62477],[16.48323,120.62388],[16.48656,120.62922],[16.48843,120.63073],[16.49014,120.63064],[16.4938,120.63286],[16.49551,120.63446],[16.49253,120.63659],[16.49125,120.63872],[16.4898,120.64086],[16.4875,120.64201],[16.48588,120.64334],[16.48485,120.64414],[16.48366,120.64503],[16.4811,120.64725],[16.48016,120.65205],[16.47829,120.65569],[16.47667,120.65667],[16.47548,120.65374],[16.47207,120.65374],[16.46951,120.65481],[16.46814,120.65258],[16.46704,120.64956],[16.46618,120.64716],[16.46414,120.64343],[16.46311,120.6413],[16.46201,120.63881],[16.46141,120.63748],[16.46797,120.63588],[16.46831,120.63526],[16.47147,120.63472],[16.47369,120.63419],[16.47369,120.63215],[16.47565,120.63099],[16.47641,120.62975],[16.47769,120.62806],[16.47974,120.62619]]
 
 # Wider satellite-looking context bounds from benguet_satellite.tif.
 # At zooms 10-13 this is about 346 tiles, which is practical for an
@@ -131,6 +138,13 @@ PLOTS = [
     {"idx": 63, "latS": 16.46141, "latN": 16.465673, "lngW": 120.652571, "lngE": 120.65667},
 ]
 
+AMBASSADOR_GRID_BOUNDS = {
+    "latS": min(p["latS"] for p in PLOTS),
+    "latN": max(p["latN"] for p in PLOTS),
+    "lngW": min(p["lngW"] for p in PLOTS),
+    "lngE": max(p["lngE"] for p in PLOTS),
+}
+
 
 def lat_lng_to_pixel(src, lat, lng):
     """Convert WGS84 lat/lng to pixel row/col in the source raster."""
@@ -206,25 +220,148 @@ def tile_bounds(x, y, zoom):
     return lat_n, lat_s, lng_w, lng_e
 
 
+def point_in_polygon(lat, lng, poly):
+    inside = False
+    j = len(poly) - 1
+    for i in range(len(poly)):
+        yi, xi = poly[i]
+        yj, xj = poly[j]
+        if ((yi > lat) != (yj > lat)) and (lng < (xj - xi) * (lat - yi) / (yj - yi) + xi):
+            inside = not inside
+        j = i
+    return inside
+
+
+def point_in_rect(lat, lng, rect):
+    return rect["latS"] <= lat <= rect["latN"] and rect["lngW"] <= lng <= rect["lngE"]
+
+
+def plot_overlaps_rect(plot, rect):
+    return (
+        plot["latS"] <= rect["latN"]
+        and plot["latN"] >= rect["latS"]
+        and plot["lngW"] <= rect["lngE"]
+        and plot["lngE"] >= rect["lngW"]
+    )
+
+
+def orientation(a, b, c):
+    value = (b["lng"] - a["lng"]) * (c["lat"] - b["lat"]) - (b["lat"] - a["lat"]) * (c["lng"] - b["lng"])
+    if abs(value) < 1e-12:
+        return 0
+    return 1 if value > 0 else 2
+
+
+def on_segment(a, b, c):
+    return (
+        b["lng"] <= max(a["lng"], c["lng"]) + 1e-12
+        and b["lng"] >= min(a["lng"], c["lng"]) - 1e-12
+        and b["lat"] <= max(a["lat"], c["lat"]) + 1e-12
+        and b["lat"] >= min(a["lat"], c["lat"]) - 1e-12
+    )
+
+
+def segments_intersect(a, b, c, d):
+    o1 = orientation(a, b, c)
+    o2 = orientation(a, b, d)
+    o3 = orientation(c, d, a)
+    o4 = orientation(c, d, b)
+    if o1 != o2 and o3 != o4:
+        return True
+    if o1 == 0 and on_segment(a, c, b):
+        return True
+    if o2 == 0 and on_segment(a, d, b):
+        return True
+    if o3 == 0 and on_segment(c, a, d):
+        return True
+    if o4 == 0 and on_segment(c, b, d):
+        return True
+    return False
+
+
+def plot_corners(plot):
+    return [
+        {"lat": plot["latN"], "lng": plot["lngW"]},
+        {"lat": plot["latN"], "lng": plot["lngE"]},
+        {"lat": plot["latS"], "lng": plot["lngE"]},
+        {"lat": plot["latS"], "lng": plot["lngW"]},
+    ]
+
+
+def plot_overlaps_polygon(plot, poly):
+    corners = plot_corners(plot)
+    if any(point_in_polygon(pt["lat"], pt["lng"], poly) for pt in corners):
+        return True
+    if any(point_in_rect(lat, lng, plot) for lat, lng in poly):
+        return True
+
+    for i, a in enumerate(corners):
+        b = corners[(i + 1) % len(corners)]
+        for j in range(len(poly)):
+            c = {"lat": poly[j][0], "lng": poly[j][1]}
+            d = {"lat": poly[(j + 1) % len(poly)][0], "lng": poly[(j + 1) % len(poly)][1]}
+            if segments_intersect(a, b, c, d):
+                return True
+    return False
+
+
+def build_outside_plots():
+    first = PLOTS[0]
+    plot_lat = first["latN"] - first["latS"]
+    plot_lng = first["lngE"] - first["lngW"]
+    rows = math.floor((TUBLAY_BBOX_N - TUBLAY_BBOX_S) / plot_lat)
+    cols = math.floor((TUBLAY_BBOX_E - TUBLAY_BBOX_W) / plot_lng)
+    plots = []
+    for r in range(rows):
+        lat_n = TUBLAY_BBOX_N - r * plot_lat
+        lat_s = lat_n - plot_lat
+        for c in range(cols):
+            lng_w = TUBLAY_BBOX_W + c * plot_lng
+            lng_e = lng_w + plot_lng
+            center_lat = (lat_n + lat_s) / 2
+            center_lng = (lng_w + lng_e) / 2
+            candidate = {
+                "latS": lat_s,
+                "latN": lat_n,
+                "lngW": lng_w,
+                "lngE": lng_e,
+                "centerLat": center_lat,
+                "centerLng": center_lng,
+            }
+            if plot_overlaps_rect(candidate, AMBASSADOR_GRID_BOUNDS):
+                continue
+            if plot_overlaps_polygon(candidate, AMBASSADOR_POLY):
+                continue
+            outside_seq = len(plots)
+            plots.append({
+                **candidate,
+                "idx": len(PLOTS) + outside_seq,
+                "outsideSeq": outside_seq,
+            })
+    return plots
+
+
 def generate_plot_crops(src):
     # Tiles are sampled directly from the EPSG:4326 source raster by converting
     # lat/lng bounds to pixel coordinates. At latitude ~16.5 and zoom 12-16,
     # the distortion is small enough for this field app.
     PLOT_OUT_DIR.mkdir(parents=True, exist_ok=True)
-    for p in PLOTS:
+    plot_jobs = [(p, "plot_", p["idx"]) for p in PLOTS]
+    plot_jobs += [(p, OUTSIDE_PLOT_PREFIX, p["outsideSeq"]) for p in build_outside_plots()]
+    for p, prefix, file_idx in plot_jobs:
         row0, col0 = lat_lng_to_pixel(src, p["latN"], p["lngW"])
         row1, col1 = lat_lng_to_pixel(src, p["latS"], p["lngE"])
         row0, row1 = max(0, min(row0, row1)), min(src.height, max(row0, row1))
         col0, col1 = max(0, min(col0, col1)), min(src.width, max(col0, col1))
         if row1 - row0 < 2 or col1 - col0 < 2:
-            print(f"  WARNING: plot_{p['idx']:03d} has insufficient coverage in TIF - skipping")
+            print(f"  WARNING: {prefix}{file_idx:03d} has insufficient coverage in TIF - skipping")
             continue
         arr = crop_band(src, row0, col0, row1, col1)
         img = arr_to_pil(arr).resize((PLOT_SIZE, PLOT_SIZE), Image.LANCZOS)
-        out = PLOT_OUT_DIR / f"plot_{p['idx']:03d}.jpg"
+        out = PLOT_OUT_DIR / f"{prefix}{file_idx:03d}.jpg"
         img.save(out, "JPEG", quality=JPEG_QUALITY)
-        print(f"  plot_{p['idx']:03d}.jpg  {img.size}")
-    print(f"Done: {len(PLOTS)} plot images -> {PLOT_OUT_DIR}/")
+        print(f"  {prefix}{file_idx:03d}.jpg  {img.size}")
+    print(f"Done: {len(plot_jobs)} plot images -> {PLOT_OUT_DIR}/")
 
 
 def generate_map_tiles(src, out_dir, min_zoom, max_zoom, bounds, quality, label):
