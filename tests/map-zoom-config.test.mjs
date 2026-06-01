@@ -108,10 +108,14 @@ test('tile generator defines separate context and detail map outputs', () => {
 
 test('plot canvas draws the selected plot crop before label overlays', () => {
   const renderCanvasBlock = extractFunctionBlock('renderCanvas');
+  const getPlotTileBlock = extractFunctionBlock('getPlotTile');
 
   assert.match(appSource, /function\s+getPlotTile\s*\(\s*idx\s*\)/);
-  assert.match(appSource, /tiles\/plots\/plot_\$\{String\(idx\)\.padStart\(3,\s*'0'\)\}\.jpg/);
+  assert.match(appSource, /tilePath:\s*`tiles\/plots\/plot_\$\{String\(plot\.idx\)\.padStart\(3,\s*'0'\)\}\.jpg`/);
+  assert.match(getPlotTileBlock, /if\s*\(\s*!plot\s*\|\|\s*!plot\.tilePath\s*\)\s*return\s+null/);
+  assert.match(getPlotTileBlock, /img\.src\s*=\s*plot\.tilePath/);
   assert.match(renderCanvasBlock, /const\s+tile\s*=\s*getPlotTile\(state\.plotIdx\)/);
+  assert.match(renderCanvasBlock, /if\s*\(\s*tile\s*&&\s*tile\.complete\s*&&\s*tile\.naturalWidth\s*>\s*0\s*\)/);
   assert.match(renderCanvasBlock, /ctx\.drawImage\(tile,\s*0,\s*0,\s*w,\s*h\)/);
 });
 

@@ -115,18 +115,27 @@ test('outside candidates can sit directly beside the 8x8 grid without overlappin
   );
 });
 
-test('outside farm map mode enables and opens the selected outside candidate plot', () => {
+test('outside farm map mode creates a custom plot centered on the clicked location', () => {
   assert.match(htmlSource, /id="add-outside-btn"/);
   assert.match(cssSource, /\.map-tool-btn/);
 
   const enableBlock = extractFunctionBlock(appSource, 'enableOutsidePlot');
   const clickBlock = extractFunctionBlock(appSource, 'handleOutsideMapClick');
+  const createBlock = extractFunctionBlock(appSource, 'createOutsidePlotAt');
+  const registerBlock = extractFunctionBlock(appSource, 'registerCustomOutsidePlot');
 
   assert.match(enableBlock, /state\.enabledOutsidePlots\.push\(idx\)/);
   assert.match(enableBlock, /drawPlotsOnMap\(\)/);
   assert.match(enableBlock, /openPlot\(idx\)/);
-  assert.match(clickBlock, /outsideCandidateAt\(e\.latlng\)/);
-  assert.match(clickBlock, /enableOutsidePlot\(candidate\.idx\)/);
+  assert.match(clickBlock, /createOutsidePlotAt\(e\.latlng\)/);
+  assert.match(clickBlock, /registerCustomOutsidePlot\(plot\)/);
+  assert.match(clickBlock, /enableOutsidePlot\(plot\.idx\)/);
+  assert.doesNotMatch(clickBlock, /outsideCandidateAt\(e\.latlng\)/);
+  assert.doesNotMatch(createBlock, /OUTSIDE_PLOTS\.find/);
+  assert.match(createBlock, /centerLat:\s*latlng\.lat/);
+  assert.match(createBlock, /centerLng:\s*latlng\.lng/);
+  assert.doesNotMatch(createBlock, /pointInPolygon|plotOverlapsPolygon|POLY/);
+  assert.match(registerBlock, /state\.customOutsidePlots\.push/);
 });
 
 test('outside plot labels use the local add order instead of raw candidate sequence numbers', () => {

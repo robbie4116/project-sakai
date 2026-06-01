@@ -29,6 +29,8 @@ const AMBASSADOR_GRID_BOUNDS = AMBASSADOR_PLOTS.reduce((bounds, plot) => ({
 });
 const AMBASSADOR_GRID_ROWS = Math.max(...AMBASSADOR_PLOTS.map(plot => plot.r)) + 1;
 const AMBASSADOR_GRID_COLS = Math.max(...AMBASSADOR_PLOTS.map(plot => plot.c)) + 1;
+const AMBASSADOR_PLOT_LAT = (AMBASSADOR_GRID_BOUNDS.latN - AMBASSADOR_GRID_BOUNDS.latS) / AMBASSADOR_GRID_ROWS;
+const AMBASSADOR_PLOT_LNG = (AMBASSADOR_GRID_BOUNDS.lngE - AMBASSADOR_GRID_BOUNDS.lngW) / AMBASSADOR_GRID_COLS;
 const GEOMETRY_EPSILON = 1e-12;
 
 function pointInPolygon(lat, lng, poly) {
@@ -107,8 +109,8 @@ function plotOverlapsPolygon(plot, poly) {
 }
 
 function buildOutsidePlots() {
-  const plotLat = (AMBASSADOR_GRID_BOUNDS.latN - AMBASSADOR_GRID_BOUNDS.latS) / AMBASSADOR_GRID_ROWS;
-  const plotLng = (AMBASSADOR_GRID_BOUNDS.lngE - AMBASSADOR_GRID_BOUNDS.lngW) / AMBASSADOR_GRID_COLS;
+  const plotLat = AMBASSADOR_PLOT_LAT;
+  const plotLng = AMBASSADOR_PLOT_LNG;
   const rowStart = Math.ceil((AMBASSADOR_GRID_BOUNDS.latN - TUBLAY_DETAIL_BOUNDS.n) / plotLat);
   const rowEnd = Math.floor((AMBASSADOR_GRID_BOUNDS.latN - TUBLAY_DETAIL_BOUNDS.s) / plotLat);
   const colStart = Math.ceil((TUBLAY_DETAIL_BOUNDS.w - AMBASSADOR_GRID_BOUNDS.lngW) / plotLng);
@@ -190,6 +192,7 @@ const state = loadState() || {
   mixedStyle: 'diagonal',
   showTweaks: false,
   enabledOutsidePlots: [],
+  customOutsidePlots: [],
   version: 3,
 };
 
@@ -202,6 +205,8 @@ state.viewMonths = normalizeViewMonths(state.viewMonths, state.viewMonth);
 state.viewMonth = viewMonthFromMask(state.viewMonths);
 if (!state.mixedStyle) state.mixedStyle = 'diagonal';
 if (!Array.isArray(state.enabledOutsidePlots)) state.enabledOutsidePlots = [];
+if (!Array.isArray(state.customOutsidePlots)) state.customOutsidePlots = [];
+restoreCustomOutsidePlots();
 state.enabledOutsidePlots = [...new Set(state.enabledOutsidePlots
   .map(Number)
   .filter(idx => Number.isInteger(idx) && idx >= CORE_PLOT_COUNT && PLOTS[idx]))];
@@ -313,17 +318,89 @@ function updateNavButtons() {
   document.getElementById('next-btn').disabled = pos < 0 || pos >= indices.length - 1;
 }
 
-function outsideCandidateAt(latlng) {
-  if (!latlng || pointInPolygon(latlng.lat, latlng.lng, POLY)) return null;
-  if (
-    latlng.lat < TUBLAY_DETAIL_BOUNDS.s || latlng.lat > TUBLAY_DETAIL_BOUNDS.n ||
-    latlng.lng < TUBLAY_DETAIL_BOUNDS.w || latlng.lng > TUBLAY_DETAIL_BOUNDS.e
-  ) return null;
-  const containing = OUTSIDE_PLOTS.find(plot =>
-    latlng.lat >= plot.latS && latlng.lat <= plot.latN &&
-    latlng.lng >= plot.lngW && latlng.lng <= plot.lngE
-  );
-  return containing || null;
+function nextCustomOutsidePlotIdx() {
+  const customMax = state.customOutsidePlots.reduce((max, plot) => Math.max(max, Number(plot.idx) || -1), -1);
+  const enabledMax = state.enabledOutsidePlots.reduce((max, idx) => Math.max(max, idx), -1);
+  return Math.max(PLOTS.length - 1, customMax, enabledMax, CORE_PLOT_COUNT - 1) + 1;
+}
+
+function plotFitsDetailBounds(plot) {
+  return plot.latS >= TUBLAY_DETAIL_BOUNDS.s &&
+    plot.latN <= TUBLAY_DETAIL_BOUNDS.n &&
+    plot.lngW >= TUBLAY_DETAIL_BOUNDS.w &&
+    plot.lngE <= TUBLAY_DETAIL_BOUNDS.e;
+}
+
+function plotOverlapsVisiblePlots(plot) {
+  return visiblePlots().some(existing => plotOverlapsRect(plot, existing));
+}
+
+function normalizeCustomOutsidePlot(plot) {
+  const idx = Number(plot && plot.idx);
+  const latS = Number(plot && plot.latS);
+  const latN = Number(plot && plot.latN);
+  const lngW = Number(plot && plot.lngW);
+  const lngE = Number(plot && plot.lngE);
+  if (!Number.isInteger(idx) || idx < CORE_PLOT_COUNT) return null;
+  if (![latS, latN, lngW, lngE].every(Number.isFinite)) return null;
+  const centerLat = Number.isFinite(Number(plot.centerLat)) ? Number(plot.centerLat) : (latS + latN) / 2;
+  const centerLng = Number.isFinite(Number(plot.centerLng)) ? Number(plot.centerLng) : (lngW + lngE) / 2;
+  return {
+    idx,
+    latS,
+    latN,
+    lngW,
+    lngE,
+    centerLat,
+    centerLng,
+    r: plot.r ?? null,
+    c: plot.c ?? null,
+    outsideSeq: plot.outsideSeq ?? null,
+    area: 'outside_tublay',
+    source: 'outside_custom',
+    tilePath: plot.tilePath || null,
+  };
+}
+
+function restoreCustomOutsidePlots() {
+  state.customOutsidePlots = state.customOutsidePlots
+    .map(normalizeCustomOutsidePlot)
+    .filter(Boolean);
+  state.customOutsidePlots.forEach(plot => {
+    PLOTS[plot.idx] = plot;
+  });
+}
+
+function registerCustomOutsidePlot(plot) {
+  const normalized = normalizeCustomOutsidePlot(plot);
+  if (!normalized) return null;
+  PLOTS[normalized.idx] = normalized;
+  if (!state.customOutsidePlots.some(existing => existing.idx === normalized.idx)) {
+    state.customOutsidePlots.push(normalized);
+  }
+  return normalized;
+}
+
+function createOutsidePlotAt(latlng) {
+  if (!latlng) return null;
+  const candidate = {
+    idx: nextCustomOutsidePlotIdx(),
+    latS: latlng.lat - AMBASSADOR_PLOT_LAT / 2,
+    latN: latlng.lat + AMBASSADOR_PLOT_LAT / 2,
+    lngW: latlng.lng - AMBASSADOR_PLOT_LNG / 2,
+    lngE: latlng.lng + AMBASSADOR_PLOT_LNG / 2,
+    centerLat: latlng.lat,
+    centerLng: latlng.lng,
+    r: null,
+    c: null,
+    outsideSeq: null,
+    area: 'outside_tublay',
+    source: 'outside_custom',
+    tilePath: null,
+  };
+  if (!plotFitsDetailBounds(candidate)) return null;
+  if (plotOverlapsVisiblePlots(candidate)) return null;
+  return candidate;
 }
 
 function setOutsideAddMode(on) {
@@ -357,6 +434,11 @@ function removeOutsidePlot(idx = state.plotIdx) {
   const fallbackIdx = indices[pos - 1] ?? indices[pos + 1] ?? 0;
 
   state.enabledOutsidePlots = state.enabledOutsidePlots.filter(enabledIdx => enabledIdx !== idx);
+  if (plot.source === 'outside_custom') {
+    state.customOutsidePlots = state.customOutsidePlots.filter(customPlot => customPlot.idx !== idx);
+    delete PLOTS[idx];
+    delete imgCache[idx];
+  }
   delete state.plots[idx];
   cloudDirty.delete(idx);
   setOutsideAddMode(false);
@@ -372,12 +454,13 @@ function removeOutsidePlot(idx = state.plotIdx) {
 
 function handleOutsideMapClick(e) {
   if (!outsideAddMode) return;
-  const candidate = outsideCandidateAt(e.latlng);
-  if (!candidate) {
+  const plot = createOutsidePlotAt(e.latlng);
+  if (!plot) {
     toast(tr('outsidePickHint'));
     return;
   }
-  enableOutsidePlot(candidate.idx);
+  registerCustomOutsidePlot(plot);
+  enableOutsidePlot(plot.idx);
   setOutsideAddMode(false);
 }
 
@@ -926,13 +1009,14 @@ function fitCanvas(){
 }
 
 function getPlotTile(idx) {
+  const plot = PLOTS[idx];
+  if (!plot || !plot.tilePath) return null;
   if (!imgCache[idx]) {
-    const plot = PLOTS[idx];
     const img = new Image();
     img.onload = () => {
       if (idx === state.plotIdx) renderCanvas();
     };
-    img.src = plot && plot.tilePath ? plot.tilePath : `tiles/plots/plot_${String(idx).padStart(3, '0')}.jpg`;
+    img.src = plot.tilePath;
     imgCache[idx] = img;
   }
   return imgCache[idx];
@@ -944,7 +1028,7 @@ function renderCanvas(){
   ctx.clearRect(0,0,w,h);
 
   const tile = getPlotTile(state.plotIdx);
-  if (tile.complete && tile.naturalWidth > 0) {
+  if (tile && tile.complete && tile.naturalWidth > 0) {
     ctx.drawImage(tile, 0, 0, w, h);
   } else {
     ctx.fillStyle = getCss('--canvas-bg');
