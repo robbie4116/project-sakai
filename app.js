@@ -27,6 +27,9 @@ const AMBASSADOR_GRID_BOUNDS = AMBASSADOR_PLOTS.reduce((bounds, plot) => ({
   lngW: Infinity,
   lngE: -Infinity,
 });
+const AMBASSADOR_GRID_ROWS = Math.max(...AMBASSADOR_PLOTS.map(plot => plot.r)) + 1;
+const AMBASSADOR_GRID_COLS = Math.max(...AMBASSADOR_PLOTS.map(plot => plot.c)) + 1;
+const GEOMETRY_EPSILON = 1e-12;
 
 function pointInPolygon(lat, lng, poly) {
   let inside = false;
@@ -45,10 +48,10 @@ function pointInRect(lat, lng, rect) {
 }
 
 function plotOverlapsRect(plot, rect) {
-  return plot.latS <= rect.latN &&
-    plot.latN >= rect.latS &&
-    plot.lngW <= rect.lngE &&
-    plot.lngE >= rect.lngW;
+  return plot.latS < rect.latN - GEOMETRY_EPSILON &&
+    plot.latN > rect.latS + GEOMETRY_EPSILON &&
+    plot.lngW < rect.lngE - GEOMETRY_EPSILON &&
+    plot.lngE > rect.lngW + GEOMETRY_EPSILON;
 }
 
 function orientation(a, b, c) {
@@ -104,17 +107,18 @@ function plotOverlapsPolygon(plot, poly) {
 }
 
 function buildOutsidePlots() {
-  const first = AMBASSADOR_PLOTS[0];
-  const plotLat = first.latN - first.latS;
-  const plotLng = first.lngE - first.lngW;
-  const rows = Math.floor((TUBLAY_DETAIL_BOUNDS.n - TUBLAY_DETAIL_BOUNDS.s) / plotLat);
-  const cols = Math.floor((TUBLAY_DETAIL_BOUNDS.e - TUBLAY_DETAIL_BOUNDS.w) / plotLng);
+  const plotLat = (AMBASSADOR_GRID_BOUNDS.latN - AMBASSADOR_GRID_BOUNDS.latS) / AMBASSADOR_GRID_ROWS;
+  const plotLng = (AMBASSADOR_GRID_BOUNDS.lngE - AMBASSADOR_GRID_BOUNDS.lngW) / AMBASSADOR_GRID_COLS;
+  const rowStart = Math.ceil((AMBASSADOR_GRID_BOUNDS.latN - TUBLAY_DETAIL_BOUNDS.n) / plotLat);
+  const rowEnd = Math.floor((AMBASSADOR_GRID_BOUNDS.latN - TUBLAY_DETAIL_BOUNDS.s) / plotLat);
+  const colStart = Math.ceil((TUBLAY_DETAIL_BOUNDS.w - AMBASSADOR_GRID_BOUNDS.lngW) / plotLng);
+  const colEnd = Math.floor((TUBLAY_DETAIL_BOUNDS.e - AMBASSADOR_GRID_BOUNDS.lngW) / plotLng);
   const plots = [];
-  for (let r = 0; r < rows; r++) {
-    const latN = TUBLAY_DETAIL_BOUNDS.n - r * plotLat;
+  for (let r = rowStart; r < rowEnd; r++) {
+    const latN = AMBASSADOR_GRID_BOUNDS.latN - r * plotLat;
     const latS = latN - plotLat;
-    for (let c = 0; c < cols; c++) {
-      const lngW = TUBLAY_DETAIL_BOUNDS.w + c * plotLng;
+    for (let c = colStart; c < colEnd; c++) {
+      const lngW = AMBASSADOR_GRID_BOUNDS.lngW + c * plotLng;
       const lngE = lngW + plotLng;
       const centerLat = (latN + latS) / 2;
       const centerLng = (lngW + lngE) / 2;

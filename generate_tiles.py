@@ -144,6 +144,9 @@ AMBASSADOR_GRID_BOUNDS = {
     "lngW": min(p["lngW"] for p in PLOTS),
     "lngE": max(p["lngE"] for p in PLOTS),
 }
+AMBASSADOR_GRID_ROWS = 8
+AMBASSADOR_GRID_COLS = 8
+GEOMETRY_EPSILON = 1e-12
 
 
 def lat_lng_to_pixel(src, lat, lng):
@@ -238,10 +241,10 @@ def point_in_rect(lat, lng, rect):
 
 def plot_overlaps_rect(plot, rect):
     return (
-        plot["latS"] <= rect["latN"]
-        and plot["latN"] >= rect["latS"]
-        and plot["lngW"] <= rect["lngE"]
-        and plot["lngE"] >= rect["lngW"]
+        plot["latS"] < rect["latN"] - GEOMETRY_EPSILON
+        and plot["latN"] > rect["latS"] + GEOMETRY_EPSILON
+        and plot["lngW"] < rect["lngE"] - GEOMETRY_EPSILON
+        and plot["lngE"] > rect["lngW"] + GEOMETRY_EPSILON
     )
 
 
@@ -306,17 +309,18 @@ def plot_overlaps_polygon(plot, poly):
 
 
 def build_outside_plots():
-    first = PLOTS[0]
-    plot_lat = first["latN"] - first["latS"]
-    plot_lng = first["lngE"] - first["lngW"]
-    rows = math.floor((TUBLAY_BBOX_N - TUBLAY_BBOX_S) / plot_lat)
-    cols = math.floor((TUBLAY_BBOX_E - TUBLAY_BBOX_W) / plot_lng)
+    plot_lat = (AMBASSADOR_GRID_BOUNDS["latN"] - AMBASSADOR_GRID_BOUNDS["latS"]) / AMBASSADOR_GRID_ROWS
+    plot_lng = (AMBASSADOR_GRID_BOUNDS["lngE"] - AMBASSADOR_GRID_BOUNDS["lngW"]) / AMBASSADOR_GRID_COLS
+    row_start = math.ceil((AMBASSADOR_GRID_BOUNDS["latN"] - TUBLAY_BBOX_N) / plot_lat)
+    row_end = math.floor((AMBASSADOR_GRID_BOUNDS["latN"] - TUBLAY_BBOX_S) / plot_lat)
+    col_start = math.ceil((TUBLAY_BBOX_W - AMBASSADOR_GRID_BOUNDS["lngW"]) / plot_lng)
+    col_end = math.floor((TUBLAY_BBOX_E - AMBASSADOR_GRID_BOUNDS["lngW"]) / plot_lng)
     plots = []
-    for r in range(rows):
-        lat_n = TUBLAY_BBOX_N - r * plot_lat
+    for r in range(row_start, row_end):
+        lat_n = AMBASSADOR_GRID_BOUNDS["latN"] - r * plot_lat
         lat_s = lat_n - plot_lat
-        for c in range(cols):
-            lng_w = TUBLAY_BBOX_W + c * plot_lng
+        for c in range(col_start, col_end):
+            lng_w = AMBASSADOR_GRID_BOUNDS["lngW"] + c * plot_lng
             lng_e = lng_w + plot_lng
             center_lat = (lat_n + lat_s) / 2
             center_lng = (lng_w + lng_e) / 2

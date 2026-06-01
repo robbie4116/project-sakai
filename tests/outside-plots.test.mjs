@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
+import vm from 'node:vm';
 
 const appSource = await readFile(new URL('../app.js', import.meta.url), 'utf8');
+const dataSource = await readFile(new URL('../data.js', import.meta.url), 'utf8');
 const htmlSource = await readFile(new URL('../taniman.html', import.meta.url), 'utf8');
 const cssSource = await readFile(new URL('../styles.css', import.meta.url), 'utf8');
 const generatorSource = await readFile(new URL('../generate_tiles.py', import.meta.url), 'utf8');
@@ -31,6 +33,27 @@ function extractFunctionBlock(source, name) {
   throw new Error(`${name} block was not closed`);
 }
 
+function loadOutsideGeometry() {
+  const end = appSource.indexOf('const PLOTS = AMBASSADOR_PLOTS');
+  assert.notEqual(end, -1, 'outside geometry should be defined before PLOTS');
+  const sandbox = { window: {} };
+  vm.runInNewContext(dataSource, sandbox);
+  vm.runInNewContext(`${appSource.slice(0, end)}
+globalThis.__geometry = { AMBASSADOR_GRID_BOUNDS, OUTSIDE_PLOTS };`, sandbox);
+  return sandbox.__geometry;
+}
+
+function nearlyEqual(a, b, epsilon = 1e-9) {
+  return Math.abs(a - b) <= epsilon;
+}
+
+function hasPositiveOverlap(plot, rect) {
+  return plot.latS < rect.latN &&
+    plot.latN > rect.latS &&
+    plot.lngW < rect.lngE &&
+    plot.lngE > rect.lngW;
+}
+
 test('app builds hidden Tublay outside candidate plots separately from Ambassador plots', () => {
   assert.match(appSource, /const\s+CORE_PLOT_COUNT\s*=\s*AMBASSADOR_PLOTS\.length/);
   assert.match(appSource, /function\s+buildOutsidePlots\s*\(/);
@@ -54,7 +77,7 @@ test('outside candidate generation excludes any plot rectangle that overlaps Amb
   assert.doesNotMatch(generatorBlock, /point_in_polygon\(center_lat,\s*center_lng,\s*AMBASSADOR_POLY\)/);
 });
 
-test('outside candidate generation excludes plots touching the full 8x8 Ambassador grid', () => {
+test('outside candidate generation excludes plots overlapping the full 8x8 Ambassador grid', () => {
   const buildBlock = extractFunctionBlock(appSource, 'buildOutsidePlots');
   const generatorBlock = generatorSource.slice(
     generatorSource.indexOf('def build_outside_plots'),
@@ -67,6 +90,29 @@ test('outside candidate generation excludes plots touching the full 8x8 Ambassad
   assert.match(generatorSource, /AMBASSADOR_GRID_BOUNDS\s*=/);
   assert.match(generatorSource, /def plot_overlaps_rect/);
   assert.match(generatorBlock, /plot_overlaps_rect\(candidate,\s*AMBASSADOR_GRID_BOUNDS\)/);
+});
+
+test('outside candidates can sit directly beside the 8x8 grid without overlapping it', () => {
+  const { AMBASSADOR_GRID_BOUNDS, OUTSIDE_PLOTS } = loadOutsideGeometry();
+
+  assert.ok(
+    OUTSIDE_PLOTS.some(plot =>
+      nearlyEqual(plot.lngE, AMBASSADOR_GRID_BOUNDS.lngW) &&
+      plot.latS < AMBASSADOR_GRID_BOUNDS.latN &&
+      plot.latN > AMBASSADOR_GRID_BOUNDS.latS),
+    'expected at least one outside candidate touching the west edge of the 8x8 grid',
+  );
+  assert.ok(
+    OUTSIDE_PLOTS.some(plot =>
+      nearlyEqual(plot.lngW, AMBASSADOR_GRID_BOUNDS.lngE) &&
+      plot.latS < AMBASSADOR_GRID_BOUNDS.latN &&
+      plot.latN > AMBASSADOR_GRID_BOUNDS.latS),
+    'expected at least one outside candidate touching the east edge of the 8x8 grid',
+  );
+  assert.ok(
+    OUTSIDE_PLOTS.every(plot => !hasPositiveOverlap(plot, AMBASSADOR_GRID_BOUNDS)),
+    'outside candidates must not overlap the 8x8 grid with positive area',
+  );
 });
 
 test('outside farm map mode enables and opens the selected outside candidate plot', () => {
