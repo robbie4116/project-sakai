@@ -83,6 +83,7 @@ globalThis.__placement = {
   AMBASSADOR_PLOT_LAT,
   AMBASSADOR_PLOT_LNG,
   CORE_PLOT_COUNT,
+  OUTSIDE_PLOTS,
   PLOTS,
   state,
 };`, sandbox);
@@ -210,6 +211,7 @@ test('outside farm placement snaps beside an existing outside plot without posit
     AMBASSADOR_GRID_BOUNDS,
     AMBASSADOR_PLOT_LNG,
     CORE_PLOT_COUNT,
+    OUTSIDE_PLOTS,
     PLOTS,
     state,
   } = loadOutsidePlacementRuntime();
@@ -228,6 +230,15 @@ test('outside farm placement snaps beside an existing outside plot without posit
   assert.ok(plot, 'expected placement to resolve overlap with the existing outside plot');
   assert.ok(nearlyEqual(plot.lngW, existing.lngE));
   assert.ok(!plotOverlapsRect(plot, existing));
+  assert.ok(
+    OUTSIDE_PLOTS.some(candidate =>
+      nearlyEqual(candidate.latS, plot.latS) &&
+      nearlyEqual(candidate.latN, plot.latN) &&
+      nearlyEqual(candidate.lngW, plot.lngW) &&
+      nearlyEqual(candidate.lngE, plot.lngE) &&
+      candidate.tilePath === plot.tilePath),
+    'expected snapped outside plot to reuse its matching generated tile',
+  );
 });
 
 test('outside farm placement does not show the obsolete outside-Ambassador rejection toast', () => {

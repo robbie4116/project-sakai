@@ -274,6 +274,7 @@ let imgCache = {};
 let lastSaveAt = Date.now();
 let detailDraft = null;
 let outsideAddMode = false;
+let mapTileCache = {};
 
 function isOutsidePlot(plotOrIdx) {
   const idx = typeof plotOrIdx === 'number' ? plotOrIdx : plotOrIdx && plotOrIdx.idx;
@@ -336,7 +337,7 @@ function plotOverlapsVisiblePlots(plot) {
 }
 
 function outsidePlotFromCenter(lat, lng, idx = nextCustomOutsidePlotIdx()) {
-  return {
+  const plot = {
     idx,
     latS: lat - AMBASSADOR_PLOT_LAT / 2,
     latN: lat + AMBASSADOR_PLOT_LAT / 2,
@@ -350,6 +351,15 @@ function outsidePlotFromCenter(lat, lng, idx = nextCustomOutsidePlotIdx()) {
     area: 'outside_tublay',
     source: 'outside_custom',
     tilePath: null,
+  };
+  const generated = generatedOutsidePlotFor(plot);
+  if (!generated) return plot;
+  return {
+    ...plot,
+    r: generated.r,
+    c: generated.c,
+    outsideSeq: generated.outsideSeq,
+    tilePath: generated.tilePath,
   };
 }
 
@@ -370,6 +380,14 @@ function plotPlacementKey(plot) {
     plot.lngW.toFixed(12),
     plot.lngE.toFixed(12),
   ].join('|');
+}
+
+function generatedOutsidePlotFor(plot) {
+  return OUTSIDE_PLOTS.find(candidate =>
+    Math.abs(candidate.latS - plot.latS) <= 1e-9 &&
+    Math.abs(candidate.latN - plot.latN) <= 1e-9 &&
+    Math.abs(candidate.lngW - plot.lngW) <= 1e-9 &&
+    Math.abs(candidate.lngE - plot.lngE) <= 1e-9);
 }
 
 function candidateOutsidePlotCenters(latlng) {
@@ -1073,17 +1091,100 @@ function getPlotTile(idx) {
   return imgCache[idx];
 }
 
+function latLngToGlobalPixel(lat, lng, zoom) {
+  const tileSize = 256;
+  const scale = tileSize * Math.pow(2, zoom);
+  const sinLat = Math.sin(lat * Math.PI / 180);
+  const clamped = Math.min(0.9999, Math.max(-0.9999, sinLat));
+  return {
+    x: (lng + 180) / 360 * scale,
+    y: (0.5 - Math.log((1 + clamped) / (1 - clamped)) / (4 * Math.PI)) * scale,
+  };
+}
+
+function getMapTileImage(z, x, y, idx) {
+  const key = `${z}/${x}/${y}`;
+  if (!mapTileCache[key]) {
+    const img = new Image();
+    img.onload = () => {
+      if (idx === state.plotIdx) renderCanvas();
+    };
+    img.onerror = () => {
+      img.failed = true;
+    };
+    img.src = `tiles/map/${z}/${x}/${y}.jpg?v=${MAP_TILE_VERSION}`;
+    mapTileCache[key] = img;
+  }
+  return mapTileCache[key];
+}
+
+function drawMapTileBackground(plot, w, h) {
+  if (!plot) return false;
+  const zoom = MAP_DETAIL_MAX_ZOOM;
+  const tileSize = 256;
+  const nw = latLngToGlobalPixel(plot.latN, plot.lngW, zoom);
+  const se = latLngToGlobalPixel(plot.latS, plot.lngE, zoom);
+  const sourceW = se.x - nw.x;
+  const sourceH = se.y - nw.y;
+  if (sourceW <= 0 || sourceH <= 0) return false;
+
+  const minTileX = Math.floor(nw.x / tileSize);
+  const maxTileX = Math.floor((se.x - GEOMETRY_EPSILON) / tileSize);
+  const minTileY = Math.floor(nw.y / tileSize);
+  const maxTileY = Math.floor((se.y - GEOMETRY_EPSILON) / tileSize);
+  let hasBackground = false;
+
+  for (let tx = minTileX; tx <= maxTileX; tx++) {
+    for (let ty = minTileY; ty <= maxTileY; ty++) {
+      const img = getMapTileImage(zoom, tx, ty, plot.idx);
+      if (!img.complete || img.naturalWidth <= 0 || img.failed) {
+        hasBackground = true;
+        continue;
+      }
+
+      const tileLeft = tx * tileSize;
+      const tileTop = ty * tileSize;
+      const sx0 = Math.max(nw.x, tileLeft);
+      const sy0 = Math.max(nw.y, tileTop);
+      const sx1 = Math.min(se.x, tileLeft + tileSize);
+      const sy1 = Math.min(se.y, tileTop + tileSize);
+      if (sx1 <= sx0 || sy1 <= sy0) continue;
+
+      const dx = (sx0 - nw.x) / sourceW * w;
+      const dy = (sy0 - nw.y) / sourceH * h;
+      const dw = (sx1 - sx0) / sourceW * w;
+      const dh = (sy1 - sy0) / sourceH * h;
+      ctx.drawImage(
+        img,
+        sx0 - tileLeft,
+        sy0 - tileTop,
+        sx1 - sx0,
+        sy1 - sy0,
+        dx,
+        dy,
+        dw,
+        dh,
+      );
+      hasBackground = true;
+    }
+  }
+
+  return hasBackground;
+}
+
 function renderCanvas(){
   const w = canvas.width, h = canvas.height;
   if (!w || !h) return;
   ctx.clearRect(0,0,w,h);
+  ctx.fillStyle = getCss('--canvas-bg');
+  ctx.fillRect(0, 0, w, h);
 
+  const plot = PLOTS[state.plotIdx];
   const tile = getPlotTile(state.plotIdx);
   if (tile && tile.complete && tile.naturalWidth > 0) {
     ctx.drawImage(tile, 0, 0, w, h);
-  } else {
-    ctx.fillStyle = getCss('--canvas-bg');
-    ctx.fillRect(0, 0, w, h);
+  } else if (plot && drawMapTileBackground(plot, w, h)) {
+    // Background is drawn asynchronously as map tiles load.
   }
 
   if (state.theme === 'dark'){

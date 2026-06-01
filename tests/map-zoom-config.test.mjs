@@ -119,6 +119,20 @@ test('plot canvas draws the selected plot crop before label overlays', () => {
   assert.match(renderCanvasBlock, /ctx\.drawImage\(tile,\s*0,\s*0,\s*w,\s*h\)/);
 });
 
+test('plot canvas falls back to offline detail map tiles for custom outside plots without plot crops', () => {
+  const renderCanvasBlock = extractFunctionBlock('renderCanvas');
+  const drawMapTileBlock = extractFunctionBlock('drawMapTileBackground');
+
+  assert.match(appSource, /function\s+drawMapTileBackground\s*\(/);
+  assert.match(appSource, /function\s+getMapTileImage\s*\(/);
+  assert.match(appSource, /function\s+latLngToGlobalPixel\s*\(/);
+  assert.match(appSource, /tiles\/map\/\$\{z\}\/\$\{x\}\/\$\{y\}\.jpg/);
+  assert.match(renderCanvasBlock, /const\s+plot\s*=\s*PLOTS\[state\.plotIdx\]/);
+  assert.match(renderCanvasBlock, /drawMapTileBackground\(plot,\s*w,\s*h\)/);
+  assert.match(drawMapTileBlock, /MAP_DETAIL_MAX_ZOOM/);
+  assert.match(drawMapTileBlock, /ctx\.drawImage\(/);
+});
+
 test('cloud sync waits four seconds after the latest dirty plot action', () => {
   assert.equal(readNumericConstant(appSource, 'CLOUD_SYNC_DELAY'), 4000);
   assert.match(appSource, /setTimeout\(\(\)\s*=>\s*\{\s*flushCloudSync\(\)\.catch\(e\s*=>\s*console\.warn\('cloud sync failed:',\s*e\)\);\s*\},\s*CLOUD_SYNC_DELAY\)/);
