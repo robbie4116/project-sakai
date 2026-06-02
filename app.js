@@ -927,7 +927,7 @@ function drawMixedCell(ctx, x0, y0, w, h, cropIdxs, style){
 let contextTileLayerRef = null;
 let esriTileLayerRef = null;
 let detailTileLayerRef = null;
-const MAP_TILE_VERSION = '20260602-tublay';
+const MAP_TILE_VERSION = '20260603-ambassador';
 const MAP_CONTEXT_MIN_ZOOM = 10;
 const MAP_CONTEXT_MAX_ZOOM = 13;
 const MAP_DETAIL_MIN_ZOOM = 12;
