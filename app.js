@@ -579,7 +579,9 @@ async function handleOutsideMapClick(e) {
     return;
   }
   // zone === 'ambassador' or 'tublay': existing creation logic
-  const plot = createOutsidePlotAt(e.latlng);
+  let plot = createOutsidePlotAt(e.latlng);
+  // Near the Tublay boundary, the best snap may straddle the edge; allow it
+  if (!plot && zone === 'tublay') plot = createOutsidePlotAt(e.latlng, true);
   if (!plot) return;
   registerCustomOutsidePlot(plot);
   enableOutsidePlot(plot.idx);
@@ -932,6 +934,8 @@ const MAP_CONTEXT_MIN_ZOOM = 10;
 const MAP_CONTEXT_MAX_ZOOM = 13;
 const MAP_DETAIL_MIN_ZOOM = 12;
 const MAP_DETAIL_MAX_ZOOM = 16;
+const CANVAS_ESRI_ZOOM = 18;
+const LABELS_MIN_ZOOM = 14;
 const MAP_APP_MIN_ZOOM = 10;
 const MAP_APP_MAX_ZOOM = 16;
 const MAP_CONTEXT_BOUNDS = L.latLngBounds(
@@ -1023,6 +1027,11 @@ function initMap(){
   document.getElementById('zoom-out').onclick = ()=>map.zoomOut();
   document.getElementById('add-outside-btn').onclick = ()=>setOutsideAddMode(!outsideAddMode);
   map.on('click', handleOutsideMapClick);
+  function updateLabelVisibility() {
+    map.getContainer().classList.toggle('labels-visible', map.getZoom() >= LABELS_MIN_ZOOM);
+  }
+  map.on('zoomend', updateLabelVisibility);
+  updateLabelVisibility();
 }
 
 function plotStyle(idx){
@@ -1181,6 +1190,7 @@ function getMapTileImage(z, x, y, idx, urlTemplate = 'tiles/map/{z}/{x}/{y}.jpg'
     };
     img.onerror = () => {
       img.failed = true;
+      if (idx === state.plotIdx) renderCanvas();
     };
     const url = urlTemplate.replace('{z}', z).replace('{x}', x).replace('{y}', y);
     const isExternal = urlTemplate.startsWith('http');
@@ -1190,9 +1200,8 @@ function getMapTileImage(z, x, y, idx, urlTemplate = 'tiles/map/{z}/{x}/{y}.jpg'
   return mapTileCache[key];
 }
 
-function drawMapTileBackground(plot, w, h, urlTemplate = 'tiles/map/{z}/{x}/{y}.jpg') {
+function drawMapTileBackground(plot, w, h, urlTemplate = 'tiles/map/{z}/{x}/{y}.jpg', zoom = MAP_DETAIL_MAX_ZOOM) {
   if (!plot) return false;
-  const zoom = MAP_DETAIL_MAX_ZOOM;
   const tileSize = 256;
   const nw = latLngToGlobalPixel(plot.latN, plot.lngW, zoom);
   const se = latLngToGlobalPixel(plot.latS, plot.lngE, zoom);
@@ -1209,7 +1218,8 @@ function drawMapTileBackground(plot, w, h, urlTemplate = 'tiles/map/{z}/{x}/{y}.
   for (let tx = minTileX; tx <= maxTileX; tx++) {
     for (let ty = minTileY; ty <= maxTileY; ty++) {
       const img = getMapTileImage(zoom, tx, ty, plot.idx, urlTemplate);
-      if (!img.complete || img.naturalWidth <= 0 || img.failed) {
+      if (img.failed) continue;
+      if (!img.complete || img.naturalWidth <= 0) {
         hasBackground = true;
         continue;
       }
@@ -1254,13 +1264,16 @@ function renderCanvas(){
   const plot = PLOTS[state.plotIdx];
   const zone = plot ? classifyZone(plot.centerLat, plot.centerLng) : null;
   if (zone === 'outside') {
-    if (plot) drawMapTileBackground(plot, w, h, ESRI_TILE_TEMPLATE);
+    if (plot) drawMapTileBackground(plot, w, h, ESRI_TILE_TEMPLATE, CANVAS_ESRI_ZOOM);
   } else {
     const tile = getPlotTile(state.plotIdx);
     if (tile && tile.complete && tile.naturalWidth > 0) {
       ctx.drawImage(tile, 0, 0, w, h);
-    } else if (plot && drawMapTileBackground(plot, w, h)) {
-      // Background is drawn asynchronously as map tiles load.
+    } else if (plot) {
+      // No pre-generated tile: fetch ESRI at high zoom for sharpness, fall back to local zoom 16
+      if (!drawMapTileBackground(plot, w, h, ESRI_TILE_TEMPLATE, CANVAS_ESRI_ZOOM)) {
+        drawMapTileBackground(plot, w, h);
+      }
     }
   }
 

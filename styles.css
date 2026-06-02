@@ -1021,6 +1021,7 @@ input,textarea{font:inherit;color:inherit;background:none;border:none;outline:no
 .toast .ico{width:8px;height:8px;border-radius:50%;background:var(--accent)}
 
 /* tiny plot-number labels on the map */
+.leaflet-container:not(.labels-visible) .plot-num { display: none; }
 .plot-num{
   font-family:'IBM Plex Mono',monospace;font-size:9px;font-weight:600;
   background:rgba(0,0,0,.55);color:#fff;
