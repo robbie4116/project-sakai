@@ -58,6 +58,13 @@ function pointInRect(lat, lng, rect) {
   return lat >= rect.latS && lat <= rect.latN && lng >= rect.lngW && lng <= rect.lngE;
 }
 
+function classifyZone(lat, lng) {
+  if (pointInRect(lat, lng, AMBASSADOR_GRID_BOUNDS)) return 'ambassador';
+  if (!pointInRect(lat, lng, TUBLAY_BBOX)) return 'outside';
+  if (pointInPolygon(lat, lng, TUBLAY_POLY)) return 'tublay';
+  return 'outside';
+}
+
 function plotOverlapsRect(plot, rect) {
   return plot.latS < rect.latN - GEOMETRY_EPSILON &&
     plot.latN > rect.latS + GEOMETRY_EPSILON &&
