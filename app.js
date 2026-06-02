@@ -141,7 +141,7 @@ function buildOutsidePlots() {
       plots.push({
         ...candidate,
         idx, r, c, outsideSeq,
-        area: 'outside_tublay',
+        area: 'tublay',
         source: 'outside_field_report',
         tilePath: `tiles/plots/outside_${String(outsideSeq).padStart(3, '0')}.jpg`,
       });
@@ -150,7 +150,7 @@ function buildOutsidePlots() {
   return plots;
 }
 
-const OUTSIDE_PLOTS = buildOutsidePlots();
+const TUBLAY_PLOTS = buildOutsidePlots();
 const PLOTS = AMBASSADOR_PLOTS
   .map(plot => ({
     ...plot,
@@ -158,7 +158,7 @@ const PLOTS = AMBASSADOR_PLOTS
     source: 'field_grid',
     tilePath: `tiles/plots/plot_${String(plot.idx).padStart(3, '0')}.jpg`,
   }))
-  .concat(OUTSIDE_PLOTS);
+  .concat(TUBLAY_PLOTS);
 
 const MONTH_SHORT = ['J','F','M','A','M','J','J','A','S','O','N','D'];
 const MONTH_FULL  = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
@@ -285,13 +285,13 @@ let detailDraft = null;
 let outsideAddMode = false;
 let mapTileCache = {};
 
-function isOutsidePlot(plotOrIdx) {
+function isTublayPlot(plotOrIdx) {
   const idx = typeof plotOrIdx === 'number' ? plotOrIdx : plotOrIdx && plotOrIdx.idx;
   return Number.isInteger(idx) && idx >= CORE_PLOT_COUNT;
 }
 
 function isPlotEnabled(plot) {
-  return !isOutsidePlot(plot) || state.enabledOutsidePlots.includes(plot.idx);
+  return !isTublayPlot(plot) || state.enabledOutsidePlots.includes(plot.idx);
 }
 
 function visiblePlots() {
@@ -313,7 +313,7 @@ function adjacentVisiblePlotIdx(idx, direction) {
 
 function plotDisplayLabel(plot) {
   if (!plot) return '';
-  return isOutsidePlot(plot) ? `O${String(outsideDisplayNumber(plot.idx)).padStart(2, '0')}` : String(plot.idx + 1).padStart(2, '0');
+  return isTublayPlot(plot) ? `O${String(outsideDisplayNumber(plot.idx)).padStart(2, '0')}` : String(plot.idx + 1).padStart(2, '0');
 }
 
 function outsideDisplayNumber(idx) {
@@ -357,7 +357,7 @@ function outsidePlotFromCenter(lat, lng, idx = nextCustomOutsidePlotIdx()) {
     r: null,
     c: null,
     outsideSeq: null,
-    area: 'outside_tublay',
+    area: 'tublay',
     source: 'outside_custom',
     tilePath: null,
   };
@@ -392,7 +392,7 @@ function plotPlacementKey(plot) {
 }
 
 function generatedOutsidePlotFor(plot) {
-  return OUTSIDE_PLOTS.find(candidate =>
+  return TUBLAY_PLOTS.find(candidate =>
     Math.abs(candidate.latS - plot.latS) <= 1e-9 &&
     Math.abs(candidate.latN - plot.latN) <= 1e-9 &&
     Math.abs(candidate.lngW - plot.lngW) <= 1e-9 &&
@@ -443,7 +443,7 @@ function normalizeCustomOutsidePlot(plot) {
     r: plot.r ?? null,
     c: plot.c ?? null,
     outsideSeq: plot.outsideSeq ?? null,
-    area: 'outside_tublay',
+    area: 'tublay',
     source: 'outside_custom',
     tilePath: plot.tilePath || null,
   };
@@ -495,7 +495,7 @@ function setOutsideAddMode(on) {
 }
 
 function enableOutsidePlot(idx) {
-  if (!PLOTS[idx] || !isOutsidePlot(idx)) return;
+  if (!PLOTS[idx] || !isTublayPlot(idx)) return;
   if (!state.enabledOutsidePlots.includes(idx)) {
     state.enabledOutsidePlots.push(idx);
   }
@@ -509,7 +509,7 @@ function enableOutsidePlot(idx) {
 
 function removeOutsidePlot(idx = state.plotIdx) {
   const plot = PLOTS[idx];
-  if (!plot || !isOutsidePlot(plot) || !state.enabledOutsidePlots.includes(idx)) return;
+  if (!plot || !isTublayPlot(plot) || !state.enabledOutsidePlots.includes(idx)) return;
   const indices = visiblePlotIndices();
   const pos = indices.indexOf(idx);
   const fallbackIdx = indices[pos - 1] ?? indices[pos + 1] ?? 0;
@@ -610,7 +610,7 @@ function cloudRetryIndices(indices) {
 function afterRemoteMerge(idx) {
   if (isCloudDirty(idx)) return;
   ensurePlot(idx);
-  if (isOutsidePlot(idx) && !state.enabledOutsidePlots.includes(idx)) {
+  if (isTublayPlot(idx) && !state.enabledOutsidePlots.includes(idx)) {
     state.enabledOutsidePlots.push(idx);
     drawPlotsOnMap();
   } else {
@@ -969,7 +969,7 @@ function plotStyle(idx){
   const composition = plotCompositionForView(idx);
   const { crop } = composition;
   const isCurrent = idx === state.plotIdx;
-  const isOutside = plot && isOutsidePlot(plot);
+  const isOutside = plot && isTublayPlot(plot);
   if (crop){
     return {
       color: isCurrent ? '#F2C84B' : getCss('--mixed-stroke'),
@@ -1042,7 +1042,7 @@ function drawPlotsOnMap(){
     const marker = L.marker([plot.centerLat, plot.centerLng], {
       icon: L.divIcon({
         className:'',
-        html:`<div class="plot-num${isOutsidePlot(plot) ? ' outside' : ''}">${plotDisplayLabel(plot)}</div>`,
+        html:`<div class="plot-num${isTublayPlot(plot) ? ' outside' : ''}">${plotDisplayLabel(plot)}</div>`,
         iconSize:[24,14], iconAnchor:[12,7]
       }),
       interactive:false
@@ -1405,14 +1405,14 @@ function updatePlotHeader(){
   const plot = PLOTS[state.plotIdx];
   if (!plot) return;
   const p = state.plots[state.plotIdx];
-  document.getElementById('plot-name').textContent = isOutsidePlot(plot)
+  document.getElementById('plot-name').textContent = isTublayPlot(plot)
     ? tr('outsidePlotN').replace('{n}', plotDisplayLabel(plot))
     : tr('plotN').replace('{n}', plotDisplayLabel(plot));
-  document.getElementById('plot-loc').textContent = isOutsidePlot(plot)
+  document.getElementById('plot-loc').textContent = isTublayPlot(plot)
     ? `${tr('outsideArea')} · ${plot.centerLat.toFixed(4)}°N, ${plot.centerLng.toFixed(4)}°E`
     : `R${plot.r} · C${plot.c} · ${plot.centerLat.toFixed(4)}°N, ${plot.centerLng.toFixed(4)}°E`;
   const removeOutsideBtn = document.getElementById('btn-remove-outside');
-  if (removeOutsideBtn) removeOutsideBtn.hidden = !isOutsidePlot(plot);
+  if (removeOutsideBtn) removeOutsideBtn.hidden = !isTublayPlot(plot);
   // farmer chip
   const chip = document.getElementById('ed-farmer-chip');
   if (p && p.farmerId) {
