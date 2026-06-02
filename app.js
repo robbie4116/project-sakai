@@ -1135,8 +1135,8 @@ function latLngToGlobalPixel(lat, lng, zoom) {
   };
 }
 
-function getMapTileImage(z, x, y, idx) {
-  const key = `${z}/${x}/${y}`;
+function getMapTileImage(z, x, y, idx, urlTemplate = 'tiles/map/{z}/{x}/{y}.jpg') {
+  const key = `${urlTemplate}:${z}/${x}/${y}`;
   if (!mapTileCache[key]) {
     const img = new Image();
     img.onload = () => {
@@ -1145,13 +1145,15 @@ function getMapTileImage(z, x, y, idx) {
     img.onerror = () => {
       img.failed = true;
     };
-    img.src = `tiles/map/${z}/${x}/${y}.jpg?v=${MAP_TILE_VERSION}`;
+    const url = urlTemplate.replace('{z}', z).replace('{x}', x).replace('{y}', y);
+    const isExternal = urlTemplate.startsWith('http');
+    img.src = isExternal ? url : `${url}?v=${MAP_TILE_VERSION}`;
     mapTileCache[key] = img;
   }
   return mapTileCache[key];
 }
 
-function drawMapTileBackground(plot, w, h) {
+function drawMapTileBackground(plot, w, h, urlTemplate = 'tiles/map/{z}/{x}/{y}.jpg') {
   if (!plot) return false;
   const zoom = MAP_DETAIL_MAX_ZOOM;
   const tileSize = 256;
@@ -1169,7 +1171,7 @@ function drawMapTileBackground(plot, w, h) {
 
   for (let tx = minTileX; tx <= maxTileX; tx++) {
     for (let ty = minTileY; ty <= maxTileY; ty++) {
-      const img = getMapTileImage(zoom, tx, ty, plot.idx);
+      const img = getMapTileImage(zoom, tx, ty, plot.idx, urlTemplate);
       if (!img.complete || img.naturalWidth <= 0 || img.failed) {
         hasBackground = true;
         continue;
