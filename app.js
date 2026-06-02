@@ -11,10 +11,10 @@ const CROPS = window.CROPS;
 const T     = window.STRINGS;
 const CORE_PLOT_COUNT = AMBASSADOR_PLOTS.length;
 const TUBLAY_DETAIL_BOUNDS = {
-  n: 16.562492508374877,
-  s: 16.45452471866254,
-  e: 120.706787109375,
-  w: 120.58868408203125,
+  n: 16.5514979,
+  s: 16.4547903,
+  e: 120.7004932,
+  w: 120.5665814,
 };
 const AMBASSADOR_GRID_BOUNDS = AMBASSADOR_PLOTS.reduce((bounds, plot) => ({
   latS: Math.min(bounds.latS, plot.latS),
@@ -32,6 +32,15 @@ const AMBASSADOR_GRID_COLS = Math.max(...AMBASSADOR_PLOTS.map(plot => plot.c)) +
 const AMBASSADOR_PLOT_LAT = (AMBASSADOR_GRID_BOUNDS.latN - AMBASSADOR_GRID_BOUNDS.latS) / AMBASSADOR_GRID_ROWS;
 const AMBASSADOR_PLOT_LNG = (AMBASSADOR_GRID_BOUNDS.lngE - AMBASSADOR_GRID_BOUNDS.lngW) / AMBASSADOR_GRID_COLS;
 const GEOMETRY_EPSILON = 1e-12;
+const TUBLAY_POLY = window.TUBLAY_POLY;
+const TUBLAY_BBOX = {
+  latS: TUBLAY_DETAIL_BOUNDS.s,
+  latN: TUBLAY_DETAIL_BOUNDS.n,
+  lngW: TUBLAY_DETAIL_BOUNDS.w,
+  lngE: TUBLAY_DETAIL_BOUNDS.e,
+};
+// ESRI uses {z}/{y}/{x} order (y before x) — different from local tiles {z}/{x}/{y}
+const ESRI_TILE_TEMPLATE = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}';
 
 function pointInPolygon(lat, lng, poly) {
   let inside = false;
