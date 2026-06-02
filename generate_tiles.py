@@ -2,8 +2,8 @@
 generate_tiles.py - one-time asset generation from source rasters
 
 Sources:
-  tublay_satellite.tif   - Ambassador/Tublay detail imagery (high resolution)
-  benguet_satellite.tif  - Benguet province context imagery (wide coverage)
+  tublay_satellite-highres.tif   - Full Tublay municipality detail imagery (high resolution)
+  benguet_satellite.tif          - Benguet province context imagery (wide coverage)
 
 Outputs:
   tiles/plots/plot_000.jpg ... plot_063.jpg  (64 Ambassador plot images)
@@ -27,7 +27,7 @@ from rasterio.enums import Resampling
 from rasterio.windows import Window
 
 # CONFIG
-DETAIL_SOURCE_TIF = "tublay_satellite.tif"
+DETAIL_SOURCE_TIF = "tublay_satellite-highres.tif"
 CONTEXT_SOURCE_TIF = "benguet_satellite.tif"
 PLOT_OUT_DIR = Path("tiles/plots")
 DETAIL_MAP_OUT_DIR = Path("tiles/map")
@@ -44,11 +44,11 @@ CONTEXT_MIN_ZOOM = 10
 CONTEXT_MAX_ZOOM = 13
 OUTSIDE_TILE_FILL = (14, 26, 14)
 
-# High-resolution Tublay source bounds from tublay_satellite.tif.
-TUBLAY_BBOX_N = 16.562492508374877
-TUBLAY_BBOX_S = 16.45452471866254
-TUBLAY_BBOX_E = 120.706787109375
-TUBLAY_BBOX_W = 120.58868408203125
+# Authoritative bounds from Benguet_Tublay_boundary.geojson
+TUBLAY_BBOX_N = 16.5514979
+TUBLAY_BBOX_S = 16.4547903
+TUBLAY_BBOX_E = 120.7004932
+TUBLAY_BBOX_W = 120.5665814
 
 # Ambassador bounding box (from data.js AMBASSADOR_PLOTS)
 BBOX_N = 16.49551
