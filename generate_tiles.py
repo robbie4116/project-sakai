@@ -39,7 +39,7 @@ JPEG_QUALITY = 85
 DETAIL_TILE_QUALITY = 80
 CONTEXT_TILE_QUALITY = 74
 DETAIL_MIN_ZOOM = 12
-DETAIL_MAX_ZOOM = 16
+DETAIL_MAX_ZOOM = 17
 CONTEXT_MIN_ZOOM = 10
 CONTEXT_MAX_ZOOM = 13
 OUTSIDE_TILE_FILL = (14, 26, 14)
@@ -579,6 +579,8 @@ def generate_map_tiles(src, out_dir, min_zoom, max_zoom, bounds, quality, label)
             for ty in range(y0, y1 + 1):
                 out_path = out_dir / str(zoom) / str(tx) / f"{ty}.jpg"
                 out_path.parent.mkdir(parents=True, exist_ok=True)
+                if out_path.exists():
+                    continue
                 tile_lat_n, tile_lat_s, tile_lng_w, tile_lng_e = tile_bounds(tx, ty, zoom)
                 arr = read_xyz_tile(src, tile_lat_n, tile_lat_s, tile_lng_w, tile_lng_e)
                 img = arr_to_pil(arr)

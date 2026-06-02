@@ -929,12 +929,13 @@ function drawMixedCell(ctx, x0, y0, w, h, cropIdxs, style){
 let contextTileLayerRef = null;
 let esriTileLayerRef = null;
 let detailTileLayerRef = null;
-const MAP_TILE_VERSION = '20260603-ambassador';
+const MAP_TILE_VERSION = '20260603-z17';
 const MAP_CONTEXT_MIN_ZOOM = 10;
 const MAP_CONTEXT_MAX_ZOOM = 13;
 const MAP_DETAIL_MIN_ZOOM = 12;
 const MAP_DETAIL_MAX_ZOOM = 16;
 const CANVAS_ESRI_ZOOM = 18;
+const CANVAS_DETAIL_ZOOM = 17;
 const LABELS_MIN_ZOOM = 14;
 const MAP_APP_MIN_ZOOM = 10;
 const MAP_APP_MAX_ZOOM = 16;
@@ -1270,8 +1271,8 @@ function renderCanvas(){
     if (tile && tile.complete && tile.naturalWidth > 0) {
       ctx.drawImage(tile, 0, 0, w, h);
     } else if (plot) {
-      // No pre-generated tile: fetch ESRI at high zoom for sharpness, fall back to local zoom 16
-      if (!drawMapTileBackground(plot, w, h, ESRI_TILE_TEMPLATE, CANVAS_ESRI_ZOOM)) {
+      // No pre-generated tile: use local high-res tiles (zoom 17), fall back to zoom 16
+      if (!drawMapTileBackground(plot, w, h, 'tiles/map/{z}/{x}/{y}.jpg', CANVAS_DETAIL_ZOOM)) {
         drawMapTileBackground(plot, w, h);
       }
     }
