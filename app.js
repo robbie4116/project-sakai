@@ -42,6 +42,21 @@ const TUBLAY_BBOX = {
 // ESRI uses {z}/{y}/{x} order (y before x) — different from local tiles {z}/{x}/{y}
 const ESRI_TILE_TEMPLATE = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}';
 
+async function checkConnectivity(timeoutMs = 3000) {
+  try {
+    const controller = new AbortController();
+    const id = setTimeout(() => controller.abort(), timeoutMs);
+    await fetch(
+      'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/7/57/119',
+      { signal: controller.signal, mode: 'no-cors' }
+    );
+    clearTimeout(id);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function pointInPolygon(lat, lng, poly) {
   let inside = false;
   for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
@@ -475,7 +490,7 @@ function registerCustomOutsidePlot(plot) {
   return normalized;
 }
 
-function createOutsidePlotAt(latlng) {
+function createOutsidePlotAt(latlng, forceCreate = false) {
   if (!latlng) return null;
   const idx = nextCustomOutsidePlotIdx();
   const seen = new Set();
@@ -485,7 +500,7 @@ function createOutsidePlotAt(latlng) {
       const key = plotPlacementKey(candidate);
       if (seen.has(key)) return false;
       seen.add(key);
-      return plotFitsDetailBounds(candidate) && !plotOverlapsVisiblePlots(candidate);
+      return (forceCreate || plotFitsDetailBounds(candidate)) && !plotOverlapsVisiblePlots(candidate);
     })
     .sort((a, b) => distanceToPlotRect(latlng, a) - distanceToPlotRect(latlng, b));
   return candidates[0] || null;
@@ -499,6 +514,10 @@ function setOutsideAddMode(on) {
     btn.setAttribute('aria-pressed', outsideAddMode ? 'true' : 'false');
   }
   if (map) map.getContainer().classList.toggle('adding-outside', outsideAddMode);
+}
+
+function showOutsideZoneMessage() {
+  toast('This area is outside Tublay. An internet connection is required to view satellite imagery here.');
 }
 
 function enableOutsidePlot(idx) {
@@ -540,8 +559,26 @@ function removeOutsidePlot(idx = state.plotIdx) {
   }
 }
 
-function handleOutsideMapClick(e) {
+async function handleOutsideMapClick(e) {
   if (!outsideAddMode) return;
+  const { lat, lng } = e.latlng;
+  const zone = classifyZone(lat, lng);
+
+  if (zone === 'outside') {
+    const online = await checkConnectivity();
+    if (!online) {
+      showOutsideZoneMessage();
+      return;
+    }
+    // Online + outside Tublay: bypass bounds gate
+    const plot = createOutsidePlotAt(e.latlng, true);
+    if (!plot) return;
+    registerCustomOutsidePlot(plot);
+    enableOutsidePlot(plot.idx);
+    setOutsideAddMode(false);
+    return;
+  }
+  // zone === 'ambassador' or 'tublay': existing creation logic
   const plot = createOutsidePlotAt(e.latlng);
   if (!plot) return;
   registerCustomOutsidePlot(plot);
@@ -1215,11 +1252,16 @@ function renderCanvas(){
   ctx.fillRect(0, 0, w, h);
 
   const plot = PLOTS[state.plotIdx];
-  const tile = getPlotTile(state.plotIdx);
-  if (tile && tile.complete && tile.naturalWidth > 0) {
-    ctx.drawImage(tile, 0, 0, w, h);
-  } else if (plot && drawMapTileBackground(plot, w, h)) {
-    // Background is drawn asynchronously as map tiles load.
+  const zone = plot ? classifyZone(plot.centerLat, plot.centerLng) : null;
+  if (zone === 'outside') {
+    if (plot) drawMapTileBackground(plot, w, h, ESRI_TILE_TEMPLATE);
+  } else {
+    const tile = getPlotTile(state.plotIdx);
+    if (tile && tile.complete && tile.naturalWidth > 0) {
+      ctx.drawImage(tile, 0, 0, w, h);
+    } else if (plot && drawMapTileBackground(plot, w, h)) {
+      // Background is drawn asynchronously as map tiles load.
+    }
   }
 
   if (state.theme === 'dark'){
