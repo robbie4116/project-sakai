@@ -959,12 +959,29 @@ function initMap(){
   contextTileLayerRef = makeContextTileLayer().addTo(map);
   detailTileLayerRef  = makeDetailTileLayer().addTo(map);
   esriTileLayerRef    = makeEsriTileLayer().addTo(map);
+  // Tublay outer bounding rectangle — thin white border, no fill
+  L.rectangle(
+    [[TUBLAY_DETAIL_BOUNDS.s, TUBLAY_DETAIL_BOUNDS.w],
+     [TUBLAY_DETAIL_BOUNDS.n, TUBLAY_DETAIL_BOUNDS.e]],
+    { color: '#FFFFFF', weight: 1.5, fill: false, interactive: false }
+  ).addTo(map);
+
+  // Tublay municipality polygon — dashed light-blue, no fill
+  L.polygon(TUBLAY_POLY, {
+    color: '#64B5F6', weight: 2, dashArray: '6,4',
+    fill: false, interactive: false
+  }).addTo(map);
+
+  // Ambassador polygon — unchanged, renders on top of Tublay layers
   L.polygon(POLY, {
     color:'#F2C84B', weight:2.5, dashArray:'7,5',
     fillColor:'#F2C84B', fillOpacity:0.04, interactive:false
   }).addTo(map);
   drawPlotsOnMap();
-  map.fitBounds(L.polygon(POLY).getBounds().pad(0.10));
+  map.fitBounds([
+    [TUBLAY_DETAIL_BOUNDS.s, TUBLAY_DETAIL_BOUNDS.w],
+    [TUBLAY_DETAIL_BOUNDS.n, TUBLAY_DETAIL_BOUNDS.e]
+  ]);
   document.getElementById('zoom-in').onclick = ()=>map.zoomIn();
   document.getElementById('zoom-out').onclick = ()=>map.zoomOut();
   document.getElementById('add-outside-btn').onclick = ()=>setOutsideAddMode(!outsideAddMode);
