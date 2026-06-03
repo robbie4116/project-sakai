@@ -362,6 +362,16 @@ function plotFitsDetailBounds(plot) {
     plot.lngE <= TUBLAY_DETAIL_BOUNDS.e;
 }
 
+// Center inside Tublay tile coverage but rect crosses the boundary — canvas would
+// show a seam. Prefer non-straddling snap positions; fall back to this only if
+// no other candidate exists (canvas will use ESRI in that case).
+function plotStraddlesTuplayBounds(plot) {
+  const d = TUBLAY_DETAIL_BOUNDS;
+  const centerIn = plot.centerLat >= d.s && plot.centerLat <= d.n &&
+                   plot.centerLng >= d.w && plot.centerLng <= d.e;
+  return centerIn && !plotFitsDetailBounds(plot);
+}
+
 function plotOverlapsVisiblePlots(plot) {
   return visiblePlots().some(existing => plotOverlapsRect(plot, existing));
 }
@@ -498,7 +508,10 @@ function createOutsidePlotAt(latlng, forceCreate = false) {
       return (forceCreate || plotFitsDetailBounds(candidate)) && !plotOverlapsVisiblePlots(candidate);
     })
     .sort((a, b) => distanceToPlotCenter(latlng, a) - distanceToPlotCenter(latlng, b));
-  return candidates[0] || null;
+  // Prefer non-straddling candidates; straddling ones are valid fallback but
+  // will use ESRI canvas which requires internet.
+  const nonStraddling = candidates.filter(c => !plotStraddlesTuplayBounds(c));
+  return nonStraddling[0] ?? candidates[0] ?? null;
 }
 
 function setOutsideAddMode(on) {
@@ -1262,7 +1275,10 @@ function renderCanvas(){
 
   const plot = PLOTS[state.plotIdx];
   const zone = plot ? classifyZone(plot.centerLat, plot.centerLng) : null;
-  if (zone === 'outside') {
+  // Use ESRI when the plot is outside Tublay OR when it straddles the Tublay
+  // boundary (center inside but rect crosses it — local tiles would show a seam).
+  const useEsri = zone === 'outside' || (zone === 'tublay' && plot && plotStraddlesTuplayBounds(plot));
+  if (useEsri) {
     if (plot) drawMapTileBackground(plot, w, h, ESRI_TILE_TEMPLATE, CANVAS_ESRI_ZOOM);
   } else {
     const tile = getPlotTile(state.plotIdx);
