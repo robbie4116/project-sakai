@@ -452,14 +452,14 @@ function candidateOutsidePlotCenters(latlng) {
     const eastLng = existing.lngE + halfLng;
     const westLng = existing.lngW - halfLng;
     centers.push(
-      { lat: northLat, lng: latlng.lng, fromPlot: true },
-      { lat: southLat, lng: latlng.lng, fromPlot: true },
-      { lat: latlng.lat, lng: eastLng, fromPlot: true },
-      { lat: latlng.lat, lng: westLng, fromPlot: true },
-      { lat: northLat, lng: eastLng, fromPlot: true },
-      { lat: northLat, lng: westLng, fromPlot: true },
-      { lat: southLat, lng: eastLng, fromPlot: true },
-      { lat: southLat, lng: westLng, fromPlot: true },
+      { lat: northLat, lng: latlng.lng },
+      { lat: southLat, lng: latlng.lng },
+      { lat: latlng.lat, lng: eastLng },
+      { lat: latlng.lat, lng: westLng },
+      { lat: northLat, lng: eastLng },
+      { lat: northLat, lng: westLng },
+      { lat: southLat, lng: eastLng },
+      { lat: southLat, lng: westLng },
     );
   });
   return centers;
@@ -515,16 +515,8 @@ function createOutsidePlotAt(latlng, forceCreate = false) {
   if (!latlng) return null;
   const idx = nextCustomOutsidePlotIdx();
   const seen = new Set();
-  // Track whether each unique snap position is reachable via a plot-adjacent
-  // candidate. If reachable both ways, plot-adjacent wins (upgrade to true).
-  const fromPlotByKey = new Map();
   const candidates = candidateOutsidePlotCenters(latlng)
-    .map(center => {
-      const plot = outsidePlotFromCenter(center.lat, center.lng, idx);
-      const key = plotPlacementKey(plot);
-      if (!fromPlotByKey.has(key) || center.fromPlot) fromPlotByKey.set(key, !!center.fromPlot);
-      return plot;
-    })
+    .map(center => outsidePlotFromCenter(center.lat, center.lng, idx))
     .filter(candidate => {
       const key = plotPlacementKey(candidate);
       if (seen.has(key)) return false;
@@ -532,23 +524,9 @@ function createOutsidePlotAt(latlng, forceCreate = false) {
       return (forceCreate || plotFitsDetailBounds(candidate)) && !plotOverlapsVisiblePlots(candidate);
     })
     .sort((a, b) => distanceToPlotCenter(latlng, a) - distanceToPlotCenter(latlng, b));
-
-  // Default: non-straddling first (ESRI not needed), then straddling fallback.
+  // Prefer non-straddling candidates; straddling ones are valid fallback but
+  // will use ESRI canvas which requires internet.
   const nonStraddling = candidates.filter(c => !plotStraddlesTuplayBounds(c));
-
-  // Gap-zone override: when clicking inside TUBLAY_DETAIL_BOUNDS but outside the
-  // Ambassador grid, a straddling plot-adjacent candidate (flush to the grid edge,
-  // ESRI required) should beat a non-straddling boundary-wall candidate. This fixes
-  // the strip between the bottom grid row and the white boundary: clicks there should
-  // snap to the grid edge, not the boundary wall. Only applies in the gap zone to
-  // avoid affecting clicks outside the white boundary (where wall snapping is correct).
-  const clickInGap = classifyZone(latlng.lat, latlng.lng) === 'tublay';
-  if (clickInGap) {
-    const isFromPlot = c => fromPlotByKey.get(plotPlacementKey(c)) ?? false;
-    const straddlingPlotAdj = candidates.filter(c => plotStraddlesTuplayBounds(c) && isFromPlot(c));
-    if (straddlingPlotAdj.length > 0) return straddlingPlotAdj[0];
-  }
-
   return nonStraddling[0] ?? candidates[0] ?? null;
 }
 
