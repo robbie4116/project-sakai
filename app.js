@@ -1893,7 +1893,8 @@ document.getElementById('btn-save').onclick = async () => {
     const p = state.plots[idx];
     const plot = PLOTS[idx];
     if (!plot) continue;
-    const plotArea = plot.area || 'ambassador';
+    const _zone = classifyZone(plot.centerLat, plot.centerLng);
+    const plotArea = _zone === 'outside' ? 'outside_custom' : _zone;
     const plotSource = plot.source || 'field_grid';
     const farmerId = (p.farmerId || '').trim();
     const farmerName = (p.farmer || '').trim();
@@ -1966,7 +1967,7 @@ document.getElementById('btn-save').onclick = async () => {
     // metadata
     metaPlots.push({
       plot_idx: idx,
-      area: plot.area || 'ambassador',
+      area: plotArea,
       source: plot.source || 'field_grid',
       row: plot.r, col: plot.c,
       centerLat: plot.centerLat, centerLng: plot.centerLng,
