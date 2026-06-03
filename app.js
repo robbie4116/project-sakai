@@ -362,14 +362,16 @@ function plotFitsDetailBounds(plot) {
     plot.lngE <= TUBLAY_DETAIL_BOUNDS.e;
 }
 
-// Center inside Tublay tile coverage but rect crosses the boundary — canvas would
-// show a seam. Prefer non-straddling snap positions; fall back to this only if
-// no other candidate exists (canvas will use ESRI in that case).
+// Plot rect overlaps the Tublay tile-coverage boundary (straddles it from either
+// side). Prefer non-straddling snap positions; fall back to this only if no
+// other candidate exists (canvas will use ESRI in that case).
 function plotStraddlesTuplayBounds(plot) {
   const d = TUBLAY_DETAIL_BOUNDS;
-  const centerIn = plot.centerLat >= d.s && plot.centerLat <= d.n &&
-                   plot.centerLng >= d.w && plot.centerLng <= d.e;
-  return centerIn && !plotFitsDetailBounds(plot);
+  const overlaps = plot.latS < d.n - GEOMETRY_EPSILON &&
+                   plot.latN > d.s + GEOMETRY_EPSILON &&
+                   plot.lngW < d.e - GEOMETRY_EPSILON &&
+                   plot.lngE > d.w + GEOMETRY_EPSILON;
+  return overlaps && !plotFitsDetailBounds(plot);
 }
 
 function plotOverlapsVisiblePlots(plot) {
@@ -430,6 +432,20 @@ function candidateOutsidePlotCenters(latlng) {
   const halfLat = AMBASSADOR_PLOT_LAT / 2;
   const halfLng = AMBASSADOR_PLOT_LNG / 2;
   const centers = [{ lat: latlng.lat, lng: latlng.lng }];
+  // Boundary-wall candidates: plots that sit flush just inside or just outside
+  // each edge of TUBLAY_DETAIL_BOUNDS. These ensure that clicks within halfPlot
+  // of the white boundary always snap to a non-straddling position.
+  const d = TUBLAY_DETAIL_BOUNDS;
+  centers.push(
+    { lat: latlng.lat, lng: d.e - halfLng },  // flush inside east wall
+    { lat: latlng.lat, lng: d.e + halfLng },  // flush outside east wall
+    { lat: latlng.lat, lng: d.w + halfLng },  // flush inside west wall
+    { lat: latlng.lat, lng: d.w - halfLng },  // flush outside west wall
+    { lat: d.n - halfLat, lng: latlng.lng },  // flush inside north wall
+    { lat: d.n + halfLat, lng: latlng.lng },  // flush outside north wall
+    { lat: d.s + halfLat, lng: latlng.lng },  // flush inside south wall
+    { lat: d.s - halfLat, lng: latlng.lng },  // flush outside south wall
+  );
   visiblePlots().forEach(existing => {
     const northLat = existing.latN + halfLat;
     const southLat = existing.latS - halfLat;
@@ -1040,7 +1056,9 @@ function initMap(){
   document.getElementById('add-outside-btn').onclick = ()=>setOutsideAddMode(!outsideAddMode);
   map.on('click', handleOutsideMapClick);
   function updateLabelVisibility() {
-    map.getContainer().classList.toggle('labels-visible', map.getZoom() >= LABELS_MIN_ZOOM);
+    const zoom = map.getZoom();
+    map.getContainer().classList.toggle('labels-visible', zoom >= LABELS_MIN_ZOOM);
+    map.getContainer().classList.toggle('bars-visible', zoom >= LABELS_MIN_ZOOM);
   }
   map.on('zoomend', updateLabelVisibility);
   updateLabelVisibility();
