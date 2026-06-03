@@ -393,13 +393,9 @@ function outsidePlotFromCenter(lat, lng, idx = nextCustomOutsidePlotIdx()) {
   };
 }
 
-function distanceToPlotRect(latlng, plot) {
-  const dLat = latlng.lat < plot.latS
-    ? plot.latS - latlng.lat
-    : (latlng.lat > plot.latN ? latlng.lat - plot.latN : 0);
-  const dLng = latlng.lng < plot.lngW
-    ? plot.lngW - latlng.lng
-    : (latlng.lng > plot.lngE ? latlng.lng - plot.lngE : 0);
+function distanceToPlotCenter(latlng, plot) {
+  const dLat = latlng.lat - plot.centerLat;
+  const dLng = latlng.lng - plot.centerLng;
   return dLat * dLat + dLng * dLng;
 }
 
@@ -501,7 +497,7 @@ function createOutsidePlotAt(latlng, forceCreate = false) {
       seen.add(key);
       return (forceCreate || plotFitsDetailBounds(candidate)) && !plotOverlapsVisiblePlots(candidate);
     })
-    .sort((a, b) => distanceToPlotRect(latlng, a) - distanceToPlotRect(latlng, b));
+    .sort((a, b) => distanceToPlotCenter(latlng, a) - distanceToPlotCenter(latlng, b));
   return candidates[0] || null;
 }
 
@@ -565,11 +561,7 @@ async function handleOutsideMapClick(e) {
 
   if (zone === 'outside') {
     const online = await checkConnectivity();
-    if (!online) {
-      showOutsideZoneMessage();
-      return;
-    }
-    // Online + outside Tublay: bypass bounds gate
+    if (!online) { showOutsideZoneMessage(); return; }
     const plot = createOutsidePlotAt(e.latlng, true);
     if (!plot) return;
     registerCustomOutsidePlot(plot);
@@ -577,13 +569,20 @@ async function handleOutsideMapClick(e) {
     setOutsideAddMode(false);
     return;
   }
-  // zone === 'ambassador' or 'tublay': existing creation logic
-  let plot = createOutsidePlotAt(e.latlng);
-  // Near the Tublay boundary, the best snap may straddle the edge; allow it
-  if (!plot && zone === 'tublay') plot = createOutsidePlotAt(e.latlng, true);
-  if (!plot) return;
-  registerCustomOutsidePlot(plot);
-  enableOutsidePlot(plot.idx);
+
+  // zone === 'ambassador' or 'tublay'
+  // Find nearest snap by center-distance, ignoring Tublay tile-coverage bounds
+  const bestPlot = createOutsidePlotAt(e.latlng, true);
+  if (!bestPlot) return;
+
+  if (!plotFitsDetailBounds(bestPlot)) {
+    // Nearest snap falls outside local tile coverage — ESRI needed
+    const online = await checkConnectivity();
+    if (!online) { showOutsideZoneMessage(); return; }
+  }
+
+  registerCustomOutsidePlot(bestPlot);
+  enableOutsidePlot(bestPlot.idx);
   setOutsideAddMode(false);
 }
 
