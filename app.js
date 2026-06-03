@@ -75,8 +75,7 @@ function pointInRect(lat, lng, rect) {
 
 function classifyZone(lat, lng) {
   if (pointInRect(lat, lng, AMBASSADOR_GRID_BOUNDS)) return 'ambassador';
-  if (!pointInRect(lat, lng, TUBLAY_BBOX)) return 'outside';
-  if (pointInPolygon(lat, lng, TUBLAY_POLY)) return 'tublay';
+  if (pointInRect(lat, lng, TUBLAY_BBOX)) return 'tublay';
   return 'outside';
 }
 
