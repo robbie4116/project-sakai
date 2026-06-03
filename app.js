@@ -452,14 +452,14 @@ function candidateOutsidePlotCenters(latlng) {
     const eastLng = existing.lngE + halfLng;
     const westLng = existing.lngW - halfLng;
     centers.push(
-      { lat: northLat, lng: latlng.lng },
-      { lat: southLat, lng: latlng.lng },
-      { lat: latlng.lat, lng: eastLng },
-      { lat: latlng.lat, lng: westLng },
-      { lat: northLat, lng: eastLng },
-      { lat: northLat, lng: westLng },
-      { lat: southLat, lng: eastLng },
-      { lat: southLat, lng: westLng },
+      { lat: northLat, lng: latlng.lng, fromPlot: true },
+      { lat: southLat, lng: latlng.lng, fromPlot: true },
+      { lat: latlng.lat, lng: eastLng, fromPlot: true },
+      { lat: latlng.lat, lng: westLng, fromPlot: true },
+      { lat: northLat, lng: eastLng, fromPlot: true },
+      { lat: northLat, lng: westLng, fromPlot: true },
+      { lat: southLat, lng: eastLng, fromPlot: true },
+      { lat: southLat, lng: westLng, fromPlot: true },
     );
   });
   return centers;
@@ -515,8 +515,16 @@ function createOutsidePlotAt(latlng, forceCreate = false) {
   if (!latlng) return null;
   const idx = nextCustomOutsidePlotIdx();
   const seen = new Set();
+  // Track whether each unique position was reachable via a plot-adjacent candidate.
+  // If a position is reachable both ways, plot-adjacent wins (upgrade to true).
+  const fromPlotByKey = new Map();
   const candidates = candidateOutsidePlotCenters(latlng)
-    .map(center => outsidePlotFromCenter(center.lat, center.lng, idx))
+    .map(center => {
+      const plot = outsidePlotFromCenter(center.lat, center.lng, idx);
+      const key = plotPlacementKey(plot);
+      if (!fromPlotByKey.has(key) || center.fromPlot) fromPlotByKey.set(key, !!center.fromPlot);
+      return plot;
+    })
     .filter(candidate => {
       const key = plotPlacementKey(candidate);
       if (seen.has(key)) return false;
@@ -524,10 +532,20 @@ function createOutsidePlotAt(latlng, forceCreate = false) {
       return (forceCreate || plotFitsDetailBounds(candidate)) && !plotOverlapsVisiblePlots(candidate);
     })
     .sort((a, b) => distanceToPlotCenter(latlng, a) - distanceToPlotCenter(latlng, b));
-  // Prefer non-straddling candidates; straddling ones are valid fallback but
-  // will use ESRI canvas which requires internet.
-  const nonStraddling = candidates.filter(c => !plotStraddlesTuplayBounds(c));
-  return nonStraddling[0] ?? candidates[0] ?? null;
+
+  // 4-tier priority (candidates already sorted closest-first within each tier):
+  //   1. Non-straddling + plot-adjacent — ideal: grid-snapped, local tiles
+  //   2. Non-straddling + boundary-wall — fallback when no plot neighbour available
+  //   3. Straddling    + plot-adjacent  — gap below/above/beside grid → needs ESRI
+  //   4. Straddling    + boundary-wall  — last resort
+  // Tier 3 beats tier 2: a click in the gap between the grid and the white
+  // boundary box should snap flush to the grid (ESRI), not to the boundary wall.
+  const isFromPlot = c => fromPlotByKey.get(plotPlacementKey(c)) ?? false;
+  const nonStraddlingPlotAdj = candidates.filter(c => !plotStraddlesTuplayBounds(c) &&  isFromPlot(c));
+  const nonStraddlingWall    = candidates.filter(c => !plotStraddlesTuplayBounds(c) && !isFromPlot(c));
+  const straddlingPlotAdj    = candidates.filter(c =>  plotStraddlesTuplayBounds(c) &&  isFromPlot(c));
+  const straddlingWall       = candidates.filter(c =>  plotStraddlesTuplayBounds(c) && !isFromPlot(c));
+  return nonStraddlingPlotAdj[0] ?? nonStraddlingWall[0] ?? straddlingPlotAdj[0] ?? straddlingWall[0] ?? null;
 }
 
 function setOutsideAddMode(on) {
