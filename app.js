@@ -515,8 +515,8 @@ function createOutsidePlotAt(latlng, forceCreate = false) {
   if (!latlng) return null;
   const idx = nextCustomOutsidePlotIdx();
   const seen = new Set();
-  // Track whether each unique position was reachable via a plot-adjacent candidate.
-  // If a position is reachable both ways, plot-adjacent wins (upgrade to true).
+  // Track whether each unique snap position is reachable via a plot-adjacent
+  // candidate. If reachable both ways, plot-adjacent wins (upgrade to true).
   const fromPlotByKey = new Map();
   const candidates = candidateOutsidePlotCenters(latlng)
     .map(center => {
@@ -533,19 +533,23 @@ function createOutsidePlotAt(latlng, forceCreate = false) {
     })
     .sort((a, b) => distanceToPlotCenter(latlng, a) - distanceToPlotCenter(latlng, b));
 
-  // 4-tier priority (candidates already sorted closest-first within each tier):
-  //   1. Non-straddling + plot-adjacent — ideal: grid-snapped, local tiles
-  //   2. Non-straddling + boundary-wall — fallback when no plot neighbour available
-  //   3. Straddling    + plot-adjacent  — gap below/above/beside grid → needs ESRI
-  //   4. Straddling    + boundary-wall  — last resort
-  // Tier 3 beats tier 2: a click in the gap between the grid and the white
-  // boundary box should snap flush to the grid (ESRI), not to the boundary wall.
-  const isFromPlot = c => fromPlotByKey.get(plotPlacementKey(c)) ?? false;
-  const nonStraddlingPlotAdj = candidates.filter(c => !plotStraddlesTuplayBounds(c) &&  isFromPlot(c));
-  const nonStraddlingWall    = candidates.filter(c => !plotStraddlesTuplayBounds(c) && !isFromPlot(c));
-  const straddlingPlotAdj    = candidates.filter(c =>  plotStraddlesTuplayBounds(c) &&  isFromPlot(c));
-  const straddlingWall       = candidates.filter(c =>  plotStraddlesTuplayBounds(c) && !isFromPlot(c));
-  return nonStraddlingPlotAdj[0] ?? nonStraddlingWall[0] ?? straddlingPlotAdj[0] ?? straddlingWall[0] ?? null;
+  // Default: non-straddling first (ESRI not needed), then straddling fallback.
+  const nonStraddling = candidates.filter(c => !plotStraddlesTuplayBounds(c));
+
+  // Gap-zone override: when clicking inside TUBLAY_DETAIL_BOUNDS but outside the
+  // Ambassador grid, a straddling plot-adjacent candidate (flush to the grid edge,
+  // ESRI required) should beat a non-straddling boundary-wall candidate. This fixes
+  // the strip between the bottom grid row and the white boundary: clicks there should
+  // snap to the grid edge, not the boundary wall. Only applies in the gap zone to
+  // avoid affecting clicks outside the white boundary (where wall snapping is correct).
+  const clickInGap = classifyZone(latlng.lat, latlng.lng) === 'tublay';
+  if (clickInGap) {
+    const isFromPlot = c => fromPlotByKey.get(plotPlacementKey(c)) ?? false;
+    const straddlingPlotAdj = candidates.filter(c => plotStraddlesTuplayBounds(c) && isFromPlot(c));
+    if (straddlingPlotAdj.length > 0) return straddlingPlotAdj[0];
+  }
+
+  return nonStraddling[0] ?? candidates[0] ?? null;
 }
 
 function setOutsideAddMode(on) {
