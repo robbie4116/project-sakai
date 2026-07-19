@@ -40,8 +40,9 @@ The boundary must be sourced or extracted by PSGC where possible:
 
 Preferred source order:
 
-1. HDX COD-AB Philippines admin level 4 boundary dataset, because it is barangay-level and includes admin hierarchy fields.
-2. Another barangay-level public GeoJSON dataset with PSGC fields and clear provenance.
+1. `faeldon/philippines-json-maps` 2019 Atok barangay GeoJSON, because it provides a small direct municipality-level file containing Paoay with admin hierarchy fields and source p-code `PH141101005`.
+2. HDX COD-AB Philippines admin level 4 boundary dataset, because it is barangay-level and includes admin hierarchy fields, but the national GeoJSON archive is much larger and should be used as fallback.
+3. Another barangay-level public GeoJSON dataset with PSGC fields and clear provenance.
 
 Approximation is not in scope for this implementation plan. If no barangay polygon can be extracted from a credible source, implementation must stop and report the failed sources instead of generating an approximate Paoay boundary.
 
@@ -191,7 +192,7 @@ Exports should identify the new study area:
 
 Remove or replace exported `ambassador`, `tublay`, and `outside_tublay` area labels unless explicitly retained for legacy-import compatibility.
 
-## Persistence and Sync Isolation
+## Persistence and Sync Clean Slate
 
 Do not reuse the existing local storage namespace for the new study area.
 
@@ -199,11 +200,30 @@ Required local storage key:
 
 - `taniman_v4_atok_paoay`
 
-On app start, old `taniman_v3` local data must not be loaded into the Atok/Paoay app. It may be left in local storage or explicitly removed, but it must not merge into `PAOAY_PLOTS`.
+On app start, old `taniman_v3` local data must not be loaded into the Atok/Paoay app. It may be left in local storage or explicitly removed, but it must not hydrate labels, farmer IDs, farmer names, notes, photos, sync timestamps, or sync payloads into the Atok/Paoay app state.
 
-Supabase currently keys rows by `plot_idx`. Reusing plot indices for Paoay can collide with existing Ambassador/Tublay rows. Supabase sync must be disabled for the Atok/Paoay migration until a separate future schema change adds a study-area key.
+Supabase currently keys rows by `plot_idx`. The user confirmed the existing Supabase data is not important and may be rewritten or deleted. The implementation may keep the existing Supabase schema and sync behavior if it performs a clean reset before the Atok/Paoay app is used.
 
-Remote schema changes are out of scope for this plan. If online sync is needed later, create a separate plan to add a `study_area` column and composite conflict target such as `study_area, plot_idx`.
+Required remote reset:
+
+- remove all rows from `public.plots`
+- remove existing objects from the `photos` storage bucket if credentials/policies allow it
+- recreate missing table, bucket, or policies from `docs/supabase-setup.sql` if needed
+
+The implementation thread should attempt the reset itself when the available credentials allow it. If the Supabase project requires owner-only SQL dashboard access or service-role credentials that are not available locally, stop and ask the user to run the exact SQL rather than silently leaving stale remote data in place.
+
+Fallback SQL for the user to run in the Supabase SQL editor if local credentials are insufficient:
+
+```sql
+delete from public.plots;
+
+delete from storage.objects
+where bucket_id = 'photos';
+```
+
+The `storage.objects` deletion may require project-owner or service-role privileges. If photo cleanup cannot be performed but `public.plots` is empty, old photo objects are unreferenced by the app and may remain as storage debris. In that case, record the skipped photo cleanup in the implementation handoff.
+
+Remote schema changes are still out of scope. If online sync later needs to preserve multiple study areas at once, create a separate plan to add a `study_area` column and composite conflict target such as `study_area, plot_idx`.
 
 ## UI Copy
 
@@ -237,7 +257,8 @@ Automated checks should cover:
 - exports use `Paoay, Atok, Benguet`
 - UI strings no longer show Ambassador/Tublay for the active study area
 - local storage uses `taniman_v4_atok_paoay`, not `taniman_v3`
-- Supabase sync is disabled
+- Supabase `public.plots` is empty before first Atok/Paoay sync, or sync is disabled until it can be reset
+- the `photos` bucket is emptied, or old photo objects are explicitly recorded as unreferenced debris after `public.plots` reset
 - no runtime metadata references `outside_*.jpg`
 
 Manual/browser checks should cover:
