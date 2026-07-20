@@ -36,10 +36,10 @@ function readBoundsConstant(source, constantName) {
 }
 
 function extractFunctionBlock(name) {
-  const start = appSource.indexOf(`function ${name}`);
-  assert.notEqual(start, -1, `${name} should exist`);
+  const match = appSource.match(new RegExp(`function\\s+${name}\\s*\\([^)]*\\)\\s*\\{`));
+  assert.ok(match, `${name} should exist`);
 
-  const openBrace = appSource.indexOf('{', start);
+  const openBrace = match.index + match[0].length - 1;
   let depth = 0;
   for (let i = openBrace; i < appSource.length; i += 1) {
     if (appSource[i] === '{') depth += 1;
@@ -111,7 +111,7 @@ test('plot canvas draws the selected plot crop before label overlays', () => {
   const getPlotTileBlock = extractFunctionBlock('getPlotTile');
 
   assert.match(appSource, /function\s+getPlotTile\s*\(\s*idx\s*\)/);
-  assert.match(appSource, /tilePath:\s*`tiles\/plots\/plot_\$\{String\(plot\.idx\)\.padStart\(3,\s*'0'\)\}\.jpg`/);
+  assert.match(appSource, /const\s+PLOTS\s*=\s*PAOAY_PLOTS/);
   assert.match(getPlotTileBlock, /if\s*\(\s*!plot\s*\|\|\s*!plot\.tilePath\s*\)\s*return\s+null/);
   assert.match(getPlotTileBlock, /img\.src\s*=\s*plot\.tilePath/);
   assert.match(renderCanvasBlock, /const\s+tile\s*=\s*getPlotTile\(state\.plotIdx\)/);
@@ -119,18 +119,20 @@ test('plot canvas draws the selected plot crop before label overlays', () => {
   assert.match(renderCanvasBlock, /ctx\.drawImage\(tile,\s*0,\s*0,\s*w,\s*h\)/);
 });
 
-test('plot canvas falls back to offline detail map tiles for custom outside plots without plot crops', () => {
+test('plot canvas falls back to offline Atok detail map tiles when a Paoay plot crop is not loaded', () => {
   const renderCanvasBlock = extractFunctionBlock('renderCanvas');
   const drawMapTileBlock = extractFunctionBlock('drawMapTileBackground');
 
   assert.match(appSource, /function\s+drawMapTileBackground\s*\(/);
   assert.match(appSource, /function\s+getMapTileImage\s*\(/);
   assert.match(appSource, /function\s+latLngToGlobalPixel\s*\(/);
-  assert.match(appSource, /tiles\/map\/\$\{z\}\/\$\{x\}\/\$\{y\}\.jpg/);
+  assert.match(appSource, /tiles\/map\/\{z\}\/\{x\}\/\{y\}\.jpg/);
   assert.match(renderCanvasBlock, /const\s+plot\s*=\s*PLOTS\[state\.plotIdx\]/);
+  assert.match(renderCanvasBlock, /drawMapTileBackground\(plot,\s*w,\s*h,\s*'tiles\/map\/\{z\}\/\{x\}\/\{y\}\.jpg',\s*CANVAS_DETAIL_ZOOM\)/);
   assert.match(renderCanvasBlock, /drawMapTileBackground\(plot,\s*w,\s*h\)/);
-  assert.match(drawMapTileBlock, /MAP_DETAIL_MAX_ZOOM/);
+  assert.match(appSource, /function\s+drawMapTileBackground\s*\([^)]*zoom\s*=\s*MAP_DETAIL_MAX_ZOOM/);
   assert.match(drawMapTileBlock, /ctx\.drawImage\(/);
+  assert.doesNotMatch(renderCanvasBlock, /ESRI|outside_custom|tublay/i);
 });
 
 test('cloud sync waits four seconds after the latest dirty plot action', () => {

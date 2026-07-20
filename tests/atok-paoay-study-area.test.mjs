@@ -50,7 +50,7 @@ test('app uses the Atok/Paoay storage namespace and zone names', () => {
 });
 
 test('classifyZone returns paoay, atok, and outside for known coordinates', () => {
-  const end = appSource.indexOf('// ── STATE');
+  const end = appSource.indexOf('// month mask helpers');
   assert.notEqual(end, -1, 'classifyZone must appear before state setup');
   const sandbox = { window: loadData() };
   vm.runInNewContext(`${appSource.slice(0, end)}
@@ -59,7 +59,7 @@ globalThis.__zones = [
   classifyZone(16.570, 120.690),
   classifyZone(16.700, 120.900),
 ];`, sandbox);
-  assert.deepEqual(sandbox.__zones, ['paoay', 'atok', 'outside']);
+  assert.deepEqual(Array.from(sandbox.__zones), ['paoay', 'atok', 'outside']);
 });
 
 test('active app no longer references Ambassador/Tublay plot models', () => {
@@ -84,9 +84,9 @@ test('exports and UI copy use Paoay, Atok, Benguet', () => {
   assert.match(appSource, /survey_area:\s*'Paoay, Atok, Benguet'/);
   assert.match(dataSource, /mapTitle:\s*'Paoay'/);
   assert.doesNotMatch(dataSource, /Ambassador|Tublay/);
-  const exportStart = appSource.indexOf('async function exportAll');
-  assert.notEqual(exportStart, -1, 'exportAll should exist');
-  const exportBlock = appSource.slice(exportStart, appSource.indexOf('// ── BOOT', exportStart));
+  const exportStart = appSource.indexOf("document.getElementById('btn-save').onclick");
+  assert.notEqual(exportStart, -1, 'save export handler should exist');
+  const exportBlock = appSource.slice(exportStart, appSource.indexOf('// ── ROSTER', exportStart));
   assert.match(exportBlock, /plotArea[^\n]+paoay|plot_area,plot_source/);
   assert.doesNotMatch(exportBlock, /ambassador|tublay|outside_tublay|outside_custom/i);
 });

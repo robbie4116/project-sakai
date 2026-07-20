@@ -1,42 +1,57 @@
-# Taniman - Ambassador Crop Map
+# Taniman - Paoay Crop Map
 
-Field data collection app for ground-truth crop mapping in Ambassador, Tublay, Benguet.
+Field data collection app for ground-truth crop mapping in Paoay, Atok, Benguet.
 
 ## Setup (one-time, before first deploy)
 
-### 1. Generate tile assets
+### 1. Generate the Paoay boundary
+
+```bash
+python scripts/extract_paoay_boundary.py
+```
+
+This extracts the Paoay barangay boundary from the faeldon Philippines JSON maps
+2019 barangay hires GeoJSON source and writes:
+
+- `boundaries/Benguet_Atok_Paoay_boundary.geojson`
+
+The existing Atok municipality boundary remains the outer offline boundary.
+Paoay is the only plotting boundary.
+
+### 2. Generate tile assets
 
 ```bash
 pip install rasterio Pillow numpy
 python generate_tiles.py
 ```
 
-Requires these source rasters in the project root (not committed - ask a team member):
+Requires these source rasters in the project root (not committed):
 
-- `tublay_satellite.tif` — high-detail plot crops and Ambassador/Tublay detail map tiles
-- `benguet_satellite.tif` — wider low-zoom satellite context map tiles
+- `atok_satellite.tif` - high-detail Atok satellite raster for offline map tiles and Paoay plot crops
+- `benguet_satellite.tif` - wider low-zoom satellite context map tiles
 
 Tile outputs:
 
-- `tiles/plots/` — plot crop JPEGs used by the labeling canvas
-- `tiles/map/` — high-detail offline map tiles for the Ambassador work area
-- `tiles/context/` — wider low-zoom offline satellite context tiles for zoomed-out orientation
+- `tiles/plots/` - generated Paoay plot crop JPEGs used by the labeling canvas
+- `tiles/map/` - high-detail offline Atok map tiles
+- `tiles/context/` - wider low-zoom offline satellite context tiles for zoomed-out orientation
 
-The app now includes hidden Tublay candidate plots outside the Ambassador outline.
-Use the **Outside farm** button, then click a farm location outside the outlined
-Ambassador area. The selected outside plot is added to the map and can be painted
-with the same 50 x 50 crop grid. Regenerating tiles creates both the 64 planned
-Ambassador plot images and the outside candidate plot images.
+After tile generation, the static web app and downloadable Tauri app can render
+Atok/Paoay locally. Plotting is fixed to the generated Paoay plots only; there
+is no Add Plot workflow.
 
-### 2. Configure Supabase
+### 3. Configure Supabase
 
 Edit `config.js` with your Supabase project URL and anon key.
 
-Run the SQL in `docs/supabase-setup.sql` in the Supabase SQL editor.
+Run the SQL in `docs/supabase-setup.sql` in the Supabase SQL editor. For the
+Atok/Paoay migration, run the clean-slate reset block before first sync if old
+study-area data exists.
 
-### 3. Deploy to Vercel
+### 4. Deploy to Vercel
 
-Push to GitHub. Connect the repo in Vercel - no build settings needed, it's a static site.
+Push to GitHub. Connect the repo in Vercel; no build settings are needed because
+the app is static.
 
 ## Local development
 
@@ -48,27 +63,33 @@ python -m http.server 8080
 ## Data export
 
 Use the "Save all (.zip)" button in the app footer. Exports:
-- `labels/plot_NNN.png` - colour-coded label map per plot
-- `labels.csv` - per-cell crop assignments
-- `metadata.json` - farmer names, notes, plot coordinates
 
-Outside-farm records are exported with `plot_area` and `plot_source` columns so
-they can be separated from the planned Ambassador field-work plots during model
-training.
+- `labels/plot_NNN.png` - color-coded label map per plot
+- `labels.csv` - per-cell crop assignments
+- `plots.csv` - Paoay plot metadata and crop month masks
+- `farmers.csv` - farmer IDs and plot lists
+- `metadata.json` - survey area, farmer names, notes, plot coordinates, and crop summaries
+
+All exported plot records are generated Paoay plots with `plot_area=paoay` and
+`plot_source=field_grid`.
 
 ## Offline desktop build (Windows and macOS)
 
 The repo can be built as a standalone offline field app with Tauri.
 
 ### One-time setup
+
 1. Install [Rust via rustup](https://rustup.rs/).
 2. Install Node 18+ (any LTS).
 3. From `src-tauri/`: `npm install`.
 
 ### Build
+
 From `src-tauri/`:
-- `npm run dev`    — hot-reload dev window
-- `npm run build`  — produces `target/release/Taniman.exe`
+
+- `npm run prepare-dist` - stages the static offline bundle in `src-tauri/dist-static`
+- `npm run dev` - hot-reload dev window
+- `npm run build` - produces the desktop app binary
 
 The Tauri build does not affect the Vercel deployment.
 

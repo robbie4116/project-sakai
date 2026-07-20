@@ -160,7 +160,6 @@ input,textarea{font:inherit;color:inherit;background:none;border:none;outline:no
 }
 #map{flex:1;min-height:0;z-index:1}
 .leaflet-container{background:var(--bg) !important;font-family:inherit !important}
-.leaflet-container.adding-outside{cursor:crosshair}
 
 :root[data-theme="dark"] .leaflet-tile-pane{
   filter: brightness(.92) saturate(.88) contrast(.95);
@@ -1029,9 +1028,7 @@ input,textarea{font:inherit;color:inherit;background:none;border:none;outline:no
   padding:1px 5px;border-radius:3px;pointer-events:none;
   white-space:nowrap;
 }
-.plot-num.outside{background:rgba(35,101,145,.82);color:#fff}
 :root[data-theme="light"] .plot-num{background:rgba(255,255,255,.85);color:#1F2A1A}
-:root[data-theme="light"] .plot-num.outside{background:#DDF0FF;color:#16415E;border:1px solid #4DB6FF}
 :root[data-theme="contrast"] .plot-num{background:#fff;color:#000;border:1px solid #000}
 .mix-bar{
   width:44px;height:8px;

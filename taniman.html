@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-<title>Taniman — v3 redesign</title>
+<title>Taniman - Paoay</title>
 
 <link rel="stylesheet" href="vendor/leaflet.css">
 <link rel="stylesheet" href="fonts/fonts.css">
@@ -21,7 +21,7 @@
   <header class="hdr">
     <div class="hdr-l">
       <div class="brand"><span class="brand-mark"></span>Taniman</div>
-      <div class="brand-sub" id="brand-sub">Ambassador · Tublay · Benguet</div>
+      <div class="brand-sub" id="brand-sub">Paoay · Atok · Benguet</div>
     </div>
     <div class="hdr-r">
       <button class="hdr-action" id="roster-btn">
@@ -48,12 +48,8 @@
     <!-- MAP -->
     <div class="map-pane">
       <div class="map-head">
-        <h2 id="map-title">Ambassador</h2>
+        <h2 id="map-title">Paoay</h2>
         <div class="map-actions">
-          <button class="map-tool-btn" id="add-outside-btn" type="button" aria-pressed="false" title="Add plot">
-            <span>+</span>
-            <span id="add-outside-txt">Add plot</span>
-          </button>
           <div class="map-zoom">
             <button id="zoom-out" aria-label="Zoom out">−</button>
             <button id="zoom-in"  aria-label="Zoom in">+</button>
@@ -97,7 +93,7 @@
               <span class="ddot"></span>No farmer assigned
             </span>
           </div>
-          <div class="ed-loc" id="plot-loc">R0 · C0 · 16.4934°N, 120.6259°E</div>
+          <div class="ed-loc" id="plot-loc">R0 · C0 · 16.6245°N, 120.7329°E</div>
         </div>
         <button class="nav-btn" id="next-btn" aria-label="Next plot">›</button>
         <button class="ed-meta-toggle" id="meta-toggle">
@@ -176,7 +172,6 @@
               </button>
             </div>
             <button class="tool-ghost" id="btn-clear">Clear this plot</button>
-            <button class="tool-danger" id="btn-remove-outside" hidden>Remove outside plot</button>
           </div>
         </aside>
 

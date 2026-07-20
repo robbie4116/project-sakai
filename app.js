@@ -4,19 +4,15 @@
 
 // ── CONFIG ────────────────────────────────────────────────────────
 const GRID = 50;
-const STORAGE_KEY = 'taniman_v3';
-const AMBASSADOR_PLOTS = window.AMBASSADOR_PLOTS;
-const POLY  = window.AMBASSADOR_POLY;
+const STORAGE_KEY = 'taniman_v4_atok_paoay';
+const ATOK_POLY = window.ATOK_POLY;
+const PAOAY_POLY = window.PAOAY_POLY;
+const PAOAY_PLOTS = window.PAOAY_PLOTS;
 const CROPS = window.CROPS;
 const T     = window.STRINGS;
-const CORE_PLOT_COUNT = AMBASSADOR_PLOTS.length;
-const TUBLAY_DETAIL_BOUNDS = {
-  n: 16.5514979,
-  s: 16.4547903,
-  e: 120.7004932,
-  w: 120.5665814,
-};
-const AMBASSADOR_GRID_BOUNDS = AMBASSADOR_PLOTS.reduce((bounds, plot) => ({
+const PLOTS = PAOAY_PLOTS;
+const CORE_PLOT_COUNT = PAOAY_PLOTS.length;
+const PAOAY_GRID_BOUNDS = PAOAY_PLOTS.reduce((bounds, plot) => ({
   latS: Math.min(bounds.latS, plot.latS),
   latN: Math.max(bounds.latN, plot.latN),
   lngW: Math.min(bounds.lngW, plot.lngW),
@@ -27,35 +23,18 @@ const AMBASSADOR_GRID_BOUNDS = AMBASSADOR_PLOTS.reduce((bounds, plot) => ({
   lngW: Infinity,
   lngE: -Infinity,
 });
-const AMBASSADOR_GRID_ROWS = Math.max(...AMBASSADOR_PLOTS.map(plot => plot.r)) + 1;
-const AMBASSADOR_GRID_COLS = Math.max(...AMBASSADOR_PLOTS.map(plot => plot.c)) + 1;
-const AMBASSADOR_PLOT_LAT = (AMBASSADOR_GRID_BOUNDS.latN - AMBASSADOR_GRID_BOUNDS.latS) / AMBASSADOR_GRID_ROWS;
-const AMBASSADOR_PLOT_LNG = (AMBASSADOR_GRID_BOUNDS.lngE - AMBASSADOR_GRID_BOUNDS.lngW) / AMBASSADOR_GRID_COLS;
+const ATOK_DETAIL_BOUNDS = ATOK_POLY.reduce((bounds, [lat, lng]) => ({
+  n: Math.max(bounds.n, lat),
+  s: Math.min(bounds.s, lat),
+  e: Math.max(bounds.e, lng),
+  w: Math.min(bounds.w, lng),
+}), {
+  n: -Infinity,
+  s: Infinity,
+  e: -Infinity,
+  w: Infinity,
+});
 const GEOMETRY_EPSILON = 1e-12;
-const TUBLAY_POLY = window.TUBLAY_POLY;
-const TUBLAY_BBOX = {
-  latS: TUBLAY_DETAIL_BOUNDS.s,
-  latN: TUBLAY_DETAIL_BOUNDS.n,
-  lngW: TUBLAY_DETAIL_BOUNDS.w,
-  lngE: TUBLAY_DETAIL_BOUNDS.e,
-};
-// ESRI uses {z}/{y}/{x} order (y before x) — different from local tiles {z}/{x}/{y}
-const ESRI_TILE_TEMPLATE = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}';
-
-async function checkConnectivity(timeoutMs = 3000) {
-  try {
-    const controller = new AbortController();
-    const id = setTimeout(() => controller.abort(), timeoutMs);
-    await fetch(
-      'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/7/57/119',
-      { signal: controller.signal, mode: 'no-cors' }
-    );
-    clearTimeout(id);
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 function pointInPolygon(lat, lng, poly) {
   let inside = false;
@@ -74,112 +53,10 @@ function pointInRect(lat, lng, rect) {
 }
 
 function classifyZone(lat, lng) {
-  if (pointInRect(lat, lng, AMBASSADOR_GRID_BOUNDS)) return 'ambassador';
-  if (pointInRect(lat, lng, TUBLAY_BBOX)) return 'tublay';
+  if (pointInPolygon(lat, lng, PAOAY_POLY)) return 'paoay';
+  if (pointInPolygon(lat, lng, ATOK_POLY)) return 'atok';
   return 'outside';
 }
-
-function plotOverlapsRect(plot, rect) {
-  return plot.latS < rect.latN - GEOMETRY_EPSILON &&
-    plot.latN > rect.latS + GEOMETRY_EPSILON &&
-    plot.lngW < rect.lngE - GEOMETRY_EPSILON &&
-    plot.lngE > rect.lngW + GEOMETRY_EPSILON;
-}
-
-function orientation(a, b, c) {
-  const value = (b.lng - a.lng) * (c.lat - b.lat) - (b.lat - a.lat) * (c.lng - b.lng);
-  if (Math.abs(value) < 1e-12) return 0;
-  return value > 0 ? 1 : 2;
-}
-
-function onSegment(a, b, c) {
-  return b.lng <= Math.max(a.lng, c.lng) + 1e-12 &&
-    b.lng >= Math.min(a.lng, c.lng) - 1e-12 &&
-    b.lat <= Math.max(a.lat, c.lat) + 1e-12 &&
-    b.lat >= Math.min(a.lat, c.lat) - 1e-12;
-}
-
-function segmentsIntersect(a, b, c, d) {
-  const o1 = orientation(a, b, c);
-  const o2 = orientation(a, b, d);
-  const o3 = orientation(c, d, a);
-  const o4 = orientation(c, d, b);
-  if (o1 !== o2 && o3 !== o4) return true;
-  if (o1 === 0 && onSegment(a, c, b)) return true;
-  if (o2 === 0 && onSegment(a, d, b)) return true;
-  if (o3 === 0 && onSegment(c, a, d)) return true;
-  if (o4 === 0 && onSegment(c, b, d)) return true;
-  return false;
-}
-
-function plotCorners(plot) {
-  return [
-    { lat: plot.latN, lng: plot.lngW },
-    { lat: plot.latN, lng: plot.lngE },
-    { lat: plot.latS, lng: plot.lngE },
-    { lat: plot.latS, lng: plot.lngW },
-  ];
-}
-
-function plotOverlapsPolygon(plot, poly) {
-  const corners = plotCorners(plot);
-  if (corners.some(pt => pointInPolygon(pt.lat, pt.lng, poly))) return true;
-  if (poly.some(([lat, lng]) => pointInRect(lat, lng, plot))) return true;
-
-  for (let i = 0; i < corners.length; i++) {
-    const a = corners[i];
-    const b = corners[(i + 1) % corners.length];
-    for (let j = 0; j < poly.length; j++) {
-      const c = { lat: poly[j][0], lng: poly[j][1] };
-      const d = { lat: poly[(j + 1) % poly.length][0], lng: poly[(j + 1) % poly.length][1] };
-      if (segmentsIntersect(a, b, c, d)) return true;
-    }
-  }
-  return false;
-}
-
-function buildOutsidePlots() {
-  const plotLat = AMBASSADOR_PLOT_LAT;
-  const plotLng = AMBASSADOR_PLOT_LNG;
-  const rowStart = Math.ceil((AMBASSADOR_GRID_BOUNDS.latN - TUBLAY_DETAIL_BOUNDS.n) / plotLat);
-  const rowEnd = Math.floor((AMBASSADOR_GRID_BOUNDS.latN - TUBLAY_DETAIL_BOUNDS.s) / plotLat);
-  const colStart = Math.ceil((TUBLAY_DETAIL_BOUNDS.w - AMBASSADOR_GRID_BOUNDS.lngW) / plotLng);
-  const colEnd = Math.floor((TUBLAY_DETAIL_BOUNDS.e - AMBASSADOR_GRID_BOUNDS.lngW) / plotLng);
-  const plots = [];
-  for (let r = rowStart; r < rowEnd; r++) {
-    const latN = AMBASSADOR_GRID_BOUNDS.latN - r * plotLat;
-    const latS = latN - plotLat;
-    for (let c = colStart; c < colEnd; c++) {
-      const lngW = AMBASSADOR_GRID_BOUNDS.lngW + c * plotLng;
-      const lngE = lngW + plotLng;
-      const centerLat = (latN + latS) / 2;
-      const centerLng = (lngW + lngE) / 2;
-      const candidate = { latS, latN, lngW, lngE, centerLat, centerLng };
-      if (plotOverlapsRect(candidate, AMBASSADOR_GRID_BOUNDS)) continue;
-      if (plotOverlapsPolygon(candidate, POLY)) continue;
-      const outsideSeq = plots.length;
-      const idx = CORE_PLOT_COUNT + outsideSeq;
-      plots.push({
-        ...candidate,
-        idx, r, c, outsideSeq,
-        area: 'tublay',
-        source: 'outside_field_report',
-        tilePath: `tiles/plots/outside_${String(outsideSeq).padStart(3, '0')}.jpg`,
-      });
-    }
-  }
-  return plots;
-}
-
-const TUBLAY_PLOTS = buildOutsidePlots();
-const PLOTS = AMBASSADOR_PLOTS
-  .map(plot => ({
-    ...plot,
-    area: 'ambassador',
-    source: 'field_grid',
-    tilePath: `tiles/plots/plot_${String(plot.idx).padStart(3, '0')}.jpg`,
-  }))
-  .concat(TUBLAY_PLOTS);
 
 const MONTH_SHORT = ['J','F','M','A','M','J','J','A','S','O','N','D'];
 const MONTH_FULL  = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
@@ -221,9 +98,7 @@ const state = loadState() || {
   viewMonths: ALL_MONTHS,     // mask of months displayed on map/canvas
   mixedStyle: 'diagonal',
   showTweaks: false,
-  enabledOutsidePlots: [],
-  customOutsidePlots: [],
-  version: 3,
+  version: 4,
 };
 
 // fill in any missing keys (state was loaded from a previous version)
@@ -234,15 +109,7 @@ if (state.viewMonth === undefined) state.viewMonth = -1;
 state.viewMonths = normalizeViewMonths(state.viewMonths, state.viewMonth);
 state.viewMonth = viewMonthFromMask(state.viewMonths);
 if (!state.mixedStyle) state.mixedStyle = 'diagonal';
-if (!Array.isArray(state.enabledOutsidePlots)) state.enabledOutsidePlots = [];
-if (!Array.isArray(state.customOutsidePlots)) state.customOutsidePlots = [];
-restoreCustomOutsidePlots();
-state.enabledOutsidePlots = [...new Set(state.enabledOutsidePlots
-  .map(Number)
-  .filter(idx => Number.isInteger(idx) && idx >= CORE_PLOT_COUNT && PLOTS[idx]))];
-if (!PLOTS[state.plotIdx] || (state.plotIdx >= CORE_PLOT_COUNT && !state.enabledOutsidePlots.includes(state.plotIdx))) {
-  state.plotIdx = 0;
-}
+if (!PLOTS[state.plotIdx]) state.plotIdx = 0;
 
 // Per-plot data structure:
 //   p.cells   = [ Uint16Array(2500) per crop ]  -- 12-bit month mask per cell
@@ -303,26 +170,14 @@ let painting = false, lastIdx = -1;
 let imgCache = {};
 let lastSaveAt = Date.now();
 let detailDraft = null;
-let outsideAddMode = false;
 let mapTileCache = {};
 
-function isTublayPlot(plotOrIdx) {
-  const idx = typeof plotOrIdx === 'number' ? plotOrIdx : plotOrIdx && plotOrIdx.idx;
-  return Number.isInteger(idx) && idx >= CORE_PLOT_COUNT;
-}
-
-function isPlotEnabled(plot) {
-  return !isTublayPlot(plot) || state.enabledOutsidePlots.includes(plot.idx);
-}
-
 function visiblePlots() {
-  return PLOTS.slice(0, CORE_PLOT_COUNT).concat(
-    state.enabledOutsidePlots.map(idx => PLOTS[idx]).filter(Boolean)
-  );
+  return PLOTS;
 }
 
 function visiblePlotIndices() {
-  return visiblePlots().map(plot => plot.idx);
+  return PLOTS.map(plot => plot.idx);
 }
 
 function adjacentVisiblePlotIdx(idx, direction) {
@@ -334,12 +189,7 @@ function adjacentVisiblePlotIdx(idx, direction) {
 
 function plotDisplayLabel(plot) {
   if (!plot) return '';
-  return isTublayPlot(plot) ? `O${String(outsideDisplayNumber(plot.idx)).padStart(2, '0')}` : String(plot.idx + 1).padStart(2, '0');
-}
-
-function outsideDisplayNumber(idx) {
-  const pos = state.enabledOutsidePlots.indexOf(idx);
-  return pos >= 0 ? pos + 1 : (PLOTS[idx]?.outsideSeq ?? 0) + 1;
+  return String(plot.idx + 1).padStart(2, '0');
 }
 
 function updateNavButtons() {
@@ -347,272 +197,6 @@ function updateNavButtons() {
   const pos = indices.indexOf(state.plotIdx);
   document.getElementById('prev-btn').disabled = pos <= 0;
   document.getElementById('next-btn').disabled = pos < 0 || pos >= indices.length - 1;
-}
-
-function nextCustomOutsidePlotIdx() {
-  const customMax = state.customOutsidePlots.reduce((max, plot) => Math.max(max, Number(plot.idx) || -1), -1);
-  const enabledMax = state.enabledOutsidePlots.reduce((max, idx) => Math.max(max, idx), -1);
-  return Math.max(PLOTS.length - 1, customMax, enabledMax, CORE_PLOT_COUNT - 1) + 1;
-}
-
-function plotFitsDetailBounds(plot) {
-  return plot.latS >= TUBLAY_DETAIL_BOUNDS.s &&
-    plot.latN <= TUBLAY_DETAIL_BOUNDS.n &&
-    plot.lngW >= TUBLAY_DETAIL_BOUNDS.w &&
-    plot.lngE <= TUBLAY_DETAIL_BOUNDS.e;
-}
-
-// Plot rect overlaps the Tublay tile-coverage boundary (straddles it from either
-// side). Prefer non-straddling snap positions; fall back to this only if no
-// other candidate exists (canvas will use ESRI in that case).
-function plotStraddlesTuplayBounds(plot) {
-  const d = TUBLAY_DETAIL_BOUNDS;
-  const overlaps = plot.latS < d.n - GEOMETRY_EPSILON &&
-                   plot.latN > d.s + GEOMETRY_EPSILON &&
-                   plot.lngW < d.e - GEOMETRY_EPSILON &&
-                   plot.lngE > d.w + GEOMETRY_EPSILON;
-  return overlaps && !plotFitsDetailBounds(plot);
-}
-
-function plotOverlapsVisiblePlots(plot) {
-  return visiblePlots().some(existing => plotOverlapsRect(plot, existing));
-}
-
-function outsidePlotFromCenter(lat, lng, idx = nextCustomOutsidePlotIdx()) {
-  const plot = {
-    idx,
-    latS: lat - AMBASSADOR_PLOT_LAT / 2,
-    latN: lat + AMBASSADOR_PLOT_LAT / 2,
-    lngW: lng - AMBASSADOR_PLOT_LNG / 2,
-    lngE: lng + AMBASSADOR_PLOT_LNG / 2,
-    centerLat: lat,
-    centerLng: lng,
-    r: null,
-    c: null,
-    outsideSeq: null,
-    area: 'tublay',
-    source: 'outside_custom',
-    tilePath: null,
-  };
-  const generated = generatedOutsidePlotFor(plot);
-  if (!generated) return plot;
-  return {
-    ...plot,
-    r: generated.r,
-    c: generated.c,
-    outsideSeq: generated.outsideSeq,
-    tilePath: generated.tilePath,
-  };
-}
-
-function distanceToPlotCenter(latlng, plot) {
-  const dLat = latlng.lat - plot.centerLat;
-  const dLng = latlng.lng - plot.centerLng;
-  return dLat * dLat + dLng * dLng;
-}
-
-function plotPlacementKey(plot) {
-  return [
-    plot.latS.toFixed(12),
-    plot.latN.toFixed(12),
-    plot.lngW.toFixed(12),
-    plot.lngE.toFixed(12),
-  ].join('|');
-}
-
-function generatedOutsidePlotFor(plot) {
-  return TUBLAY_PLOTS.find(candidate =>
-    Math.abs(candidate.latS - plot.latS) <= 1e-9 &&
-    Math.abs(candidate.latN - plot.latN) <= 1e-9 &&
-    Math.abs(candidate.lngW - plot.lngW) <= 1e-9 &&
-    Math.abs(candidate.lngE - plot.lngE) <= 1e-9);
-}
-
-function candidateOutsidePlotCenters(latlng) {
-  const halfLat = AMBASSADOR_PLOT_LAT / 2;
-  const halfLng = AMBASSADOR_PLOT_LNG / 2;
-  const centers = [{ lat: latlng.lat, lng: latlng.lng }];
-  // Boundary-wall candidates: plots that sit flush just inside or just outside
-  // each edge of TUBLAY_DETAIL_BOUNDS. These ensure that clicks within halfPlot
-  // of the white boundary always snap to a non-straddling position.
-  const d = TUBLAY_DETAIL_BOUNDS;
-  centers.push(
-    { lat: latlng.lat, lng: d.e - halfLng },  // flush inside east wall
-    { lat: latlng.lat, lng: d.e + halfLng },  // flush outside east wall
-    { lat: latlng.lat, lng: d.w + halfLng },  // flush inside west wall
-    { lat: latlng.lat, lng: d.w - halfLng },  // flush outside west wall
-    { lat: d.n - halfLat, lng: latlng.lng },  // flush inside north wall
-    { lat: d.n + halfLat, lng: latlng.lng },  // flush outside north wall
-    { lat: d.s + halfLat, lng: latlng.lng },  // flush inside south wall
-    { lat: d.s - halfLat, lng: latlng.lng },  // flush outside south wall
-  );
-  visiblePlots().forEach(existing => {
-    const northLat = existing.latN + halfLat;
-    const southLat = existing.latS - halfLat;
-    const eastLng = existing.lngE + halfLng;
-    const westLng = existing.lngW - halfLng;
-    centers.push(
-      { lat: northLat, lng: latlng.lng },
-      { lat: southLat, lng: latlng.lng },
-      { lat: latlng.lat, lng: eastLng },
-      { lat: latlng.lat, lng: westLng },
-      { lat: northLat, lng: eastLng },
-      { lat: northLat, lng: westLng },
-      { lat: southLat, lng: eastLng },
-      { lat: southLat, lng: westLng },
-    );
-  });
-  return centers;
-}
-
-function normalizeCustomOutsidePlot(plot) {
-  const idx = Number(plot && plot.idx);
-  const latS = Number(plot && plot.latS);
-  const latN = Number(plot && plot.latN);
-  const lngW = Number(plot && plot.lngW);
-  const lngE = Number(plot && plot.lngE);
-  if (!Number.isInteger(idx) || idx < CORE_PLOT_COUNT) return null;
-  if (![latS, latN, lngW, lngE].every(Number.isFinite)) return null;
-  const centerLat = Number.isFinite(Number(plot.centerLat)) ? Number(plot.centerLat) : (latS + latN) / 2;
-  const centerLng = Number.isFinite(Number(plot.centerLng)) ? Number(plot.centerLng) : (lngW + lngE) / 2;
-  return {
-    idx,
-    latS,
-    latN,
-    lngW,
-    lngE,
-    centerLat,
-    centerLng,
-    r: plot.r ?? null,
-    c: plot.c ?? null,
-    outsideSeq: plot.outsideSeq ?? null,
-    area: 'tublay',
-    source: 'outside_custom',
-    tilePath: plot.tilePath || null,
-  };
-}
-
-function restoreCustomOutsidePlots() {
-  state.customOutsidePlots = state.customOutsidePlots
-    .map(normalizeCustomOutsidePlot)
-    .filter(Boolean);
-  state.customOutsidePlots.forEach(plot => {
-    PLOTS[plot.idx] = plot;
-  });
-}
-
-function registerCustomOutsidePlot(plot) {
-  const normalized = normalizeCustomOutsidePlot(plot);
-  if (!normalized) return null;
-  PLOTS[normalized.idx] = normalized;
-  if (!state.customOutsidePlots.some(existing => existing.idx === normalized.idx)) {
-    state.customOutsidePlots.push(normalized);
-  }
-  return normalized;
-}
-
-function createOutsidePlotAt(latlng, forceCreate = false) {
-  if (!latlng) return null;
-  const idx = nextCustomOutsidePlotIdx();
-  const seen = new Set();
-  const candidates = candidateOutsidePlotCenters(latlng)
-    .map(center => outsidePlotFromCenter(center.lat, center.lng, idx))
-    .filter(candidate => {
-      const key = plotPlacementKey(candidate);
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return (forceCreate || plotFitsDetailBounds(candidate)) && !plotOverlapsVisiblePlots(candidate);
-    })
-    .sort((a, b) => distanceToPlotCenter(latlng, a) - distanceToPlotCenter(latlng, b));
-  // Prefer non-straddling candidates; straddling ones are valid fallback but
-  // will use ESRI canvas which requires internet.
-  const nonStraddling = candidates.filter(c => !plotStraddlesTuplayBounds(c));
-  return nonStraddling[0] ?? candidates[0] ?? null;
-}
-
-function setOutsideAddMode(on) {
-  outsideAddMode = !!on;
-  const btn = document.getElementById('add-outside-btn');
-  if (btn) {
-    btn.classList.toggle('on', outsideAddMode);
-    btn.setAttribute('aria-pressed', outsideAddMode ? 'true' : 'false');
-  }
-  if (map) map.getContainer().classList.toggle('adding-outside', outsideAddMode);
-}
-
-function showOutsideZoneMessage() {
-  toast('This area is outside Tublay. An internet connection is required to view satellite imagery here.');
-}
-
-function enableOutsidePlot(idx) {
-  if (!PLOTS[idx] || !isTublayPlot(idx)) return;
-  if (!state.enabledOutsidePlots.includes(idx)) {
-    state.enabledOutsidePlots.push(idx);
-  }
-  ensurePlot(idx);
-  saveState();
-  drawPlotsOnMap();
-  openPlot(idx);
-  updateProgress();
-  toast(tr('outsideAdded'));
-}
-
-function removeOutsidePlot(idx = state.plotIdx) {
-  const plot = PLOTS[idx];
-  if (!plot || !isTublayPlot(plot) || !state.enabledOutsidePlots.includes(idx)) return;
-  const indices = visiblePlotIndices();
-  const pos = indices.indexOf(idx);
-  const fallbackIdx = indices[pos - 1] ?? indices[pos + 1] ?? 0;
-
-  state.enabledOutsidePlots = state.enabledOutsidePlots.filter(enabledIdx => enabledIdx !== idx);
-  if (plot.source === 'outside_custom') {
-    state.customOutsidePlots = state.customOutsidePlots.filter(customPlot => customPlot.idx !== idx);
-    delete PLOTS[idx];
-    delete imgCache[idx];
-  }
-  delete state.plots[idx];
-  cloudDirty.delete(idx);
-  setOutsideAddMode(false);
-  saveState();
-  drawPlotsOnMap();
-  openPlot(fallbackIdx);
-  updateProgress();
-  toast(tr('outsideRemoved'));
-  if (typeof window.deletePlot === 'function') {
-    window.deletePlot(idx).catch(e => console.warn('delete plot failed:', e));
-  }
-}
-
-async function handleOutsideMapClick(e) {
-  if (!outsideAddMode) return;
-  const { lat, lng } = e.latlng;
-  const zone = classifyZone(lat, lng);
-
-  if (zone === 'outside') {
-    const online = await checkConnectivity();
-    if (!online) { showOutsideZoneMessage(); return; }
-    const plot = createOutsidePlotAt(e.latlng, true);
-    if (!plot) return;
-    registerCustomOutsidePlot(plot);
-    enableOutsidePlot(plot.idx);
-    setOutsideAddMode(false);
-    return;
-  }
-
-  // zone === 'ambassador' or 'tublay'
-  // Find nearest snap by center-distance, ignoring Tublay tile-coverage bounds
-  const bestPlot = createOutsidePlotAt(e.latlng, true);
-  if (!bestPlot) return;
-
-  if (!plotFitsDetailBounds(bestPlot)) {
-    // Nearest snap falls outside local tile coverage — ESRI needed
-    const online = await checkConnectivity();
-    if (!online) { showOutsideZoneMessage(); return; }
-  }
-
-  registerCustomOutsidePlot(bestPlot);
-  enableOutsidePlot(bestPlot.idx);
-  setOutsideAddMode(false);
 }
 
 // ── PERSISTENCE ───────────────────────────────────────────────────
@@ -683,12 +267,7 @@ function cloudRetryIndices(indices) {
 function afterRemoteMerge(idx) {
   if (isCloudDirty(idx)) return;
   ensurePlot(idx);
-  if (isTublayPlot(idx) && !state.enabledOutsidePlots.includes(idx)) {
-    state.enabledOutsidePlots.push(idx);
-    drawPlotsOnMap();
-  } else {
-    updateMapPlot(idx);
-  }
+  updateMapPlot(idx);
   if (idx === state.plotIdx) {
     renderCanvas();
     updatePlotHeader();
@@ -954,25 +533,23 @@ function drawMixedCell(ctx, x0, y0, w, h, cropIdxs, style){
 
 // ── MAP ───────────────────────────────────────────────────────────
 let contextTileLayerRef = null;
-let esriTileLayerRef = null;
 let detailTileLayerRef = null;
 const MAP_TILE_VERSION = '20260603-z17';
 const MAP_CONTEXT_MIN_ZOOM = 10;
 const MAP_CONTEXT_MAX_ZOOM = 13;
 const MAP_DETAIL_MIN_ZOOM = 12;
-const MAP_DETAIL_MAX_ZOOM = 16;
-const CANVAS_ESRI_ZOOM = 18;
+const MAP_DETAIL_MAX_ZOOM = 17;
 const CANVAS_DETAIL_ZOOM = 17;
 const LABELS_MIN_ZOOM = 14;
 const MAP_APP_MIN_ZOOM = 10;
-const MAP_APP_MAX_ZOOM = 16;
+const MAP_APP_MAX_ZOOM = 17;
 const MAP_CONTEXT_BOUNDS = L.latLngBounds(
   [16.1724728083975, 120.43212890625],
   [16.93070509876553, 120.9375]
 );
 const MAP_DETAIL_BOUNDS = L.latLngBounds(
-  [TUBLAY_DETAIL_BOUNDS.s, TUBLAY_DETAIL_BOUNDS.w],
-  [TUBLAY_DETAIL_BOUNDS.n, TUBLAY_DETAIL_BOUNDS.e]
+  [ATOK_DETAIL_BOUNDS.s, ATOK_DETAIL_BOUNDS.w],
+  [ATOK_DETAIL_BOUNDS.n, ATOK_DETAIL_BOUNDS.e]
 );
 
 function makeContextTileLayer() {
@@ -986,18 +563,6 @@ function makeContextTileLayer() {
     errorTileUrl: 'tiles/context/empty.jpg',
     attribution: '',
   });
-}
-
-function makeEsriTileLayer() {
-  return L.tileLayer(
-    'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-    {
-      maxZoom: 19,
-      noWrap: true,
-      errorTileUrl: '',
-      attribution: '',
-    }
-  );
 }
 
 function makeDetailTileLayer() {
@@ -1015,7 +580,7 @@ function makeDetailTileLayer() {
 
 function initMap(){
   map = L.map('map', {
-    center:[16.482,120.640],
+    center:[16.62,120.75],
     zoom:14,
     minZoom: MAP_APP_MIN_ZOOM,
     maxZoom: MAP_APP_MAX_ZOOM,
@@ -1027,34 +592,22 @@ function initMap(){
   });
   contextTileLayerRef = makeContextTileLayer().addTo(map);
   detailTileLayerRef  = makeDetailTileLayer().addTo(map);
-  esriTileLayerRef    = makeEsriTileLayer().addTo(map);
-  // Tublay outer bounding rectangle — thin white border, no fill
-  L.rectangle(
-    [[TUBLAY_DETAIL_BOUNDS.s, TUBLAY_DETAIL_BOUNDS.w],
-     [TUBLAY_DETAIL_BOUNDS.n, TUBLAY_DETAIL_BOUNDS.e]],
-    { color: '#FFFFFF', weight: 1.5, fill: false, interactive: false }
-  ).addTo(map);
-
-  // Tublay municipality polygon — dashed light-blue, no fill
-  L.polygon(TUBLAY_POLY, {
-    color: '#64B5F6', weight: 2, dashArray: '6,4',
+  L.polygon(ATOK_POLY, {
+    color: '#FFFFFF', weight: 1.5,
     fill: false, interactive: false
   }).addTo(map);
 
-  // Ambassador polygon — unchanged, renders on top of Tublay layers
-  L.polygon(POLY, {
+  L.polygon(PAOAY_POLY, {
     color:'#F2C84B', weight:2.5, dashArray:'7,5',
     fillColor:'#F2C84B', fillOpacity:0.04, interactive:false
   }).addTo(map);
   drawPlotsOnMap();
   map.fitBounds([
-    [TUBLAY_DETAIL_BOUNDS.s, TUBLAY_DETAIL_BOUNDS.w],
-    [TUBLAY_DETAIL_BOUNDS.n, TUBLAY_DETAIL_BOUNDS.e]
+    [ATOK_DETAIL_BOUNDS.s, ATOK_DETAIL_BOUNDS.w],
+    [ATOK_DETAIL_BOUNDS.n, ATOK_DETAIL_BOUNDS.e]
   ]);
   document.getElementById('zoom-in').onclick = ()=>map.zoomIn();
   document.getElementById('zoom-out').onclick = ()=>map.zoomOut();
-  document.getElementById('add-outside-btn').onclick = ()=>setOutsideAddMode(!outsideAddMode);
-  map.on('click', handleOutsideMapClick);
   function updateLabelVisibility() {
     const zoom = map.getZoom();
     map.getContainer().classList.toggle('labels-visible', zoom >= LABELS_MIN_ZOOM);
@@ -1069,24 +622,18 @@ function plotStyle(idx){
   const composition = plotCompositionForView(idx);
   const { crop } = composition;
   const isCurrent = idx === state.plotIdx;
-  const isOutside = plot && isTublayPlot(plot);
   if (crop){
     return {
       color: isCurrent ? '#F2C84B' : getCss('--mixed-stroke'),
       weight: isCurrent ? 3 : 2,
       fillColor: getCss('--mixed-fill'),
       fillOpacity: 0.46,
-      dashArray: isCurrent ? null : (isOutside ? '8,4' : '4,3'),
+      dashArray: isCurrent ? null : '4,3',
     };
   }
   // EMPTY plot — grey (per requirement) — translucent so satellite shows through
   const greyFill = getCss('--empty-fill');
   const greyStroke = getCss('--empty-stroke');
-  if (isOutside) {
-    return isCurrent
-      ? { color:'#F2C84B', weight:3, fillColor:greyFill, fillOpacity:0.28, dashArray:null }
-      : { color:'#4DB6FF', weight:1.7, fillColor:greyFill, fillOpacity:0.12, dashArray:'8,4' };
-  }
   return isCurrent
     ? { color:'#F2C84B', weight:3, fillColor:greyFill, fillOpacity:0.30, dashArray:null }
     : { color:greyStroke, weight:1.2, fillColor:greyFill, fillOpacity:0.18, dashArray:'4,3' };
@@ -1136,13 +683,13 @@ function drawPlotsOnMap(){
   Object.values(plotCompositionBars).forEach(m=>map.removeLayer(m));
   plotRects = {}; plotMarkers = {}; plotCompositionBars = {};
 
-  visiblePlots().forEach(plot=>{
+  PLOTS.forEach(plot=>{
     const style = plotStyle(plot.idx);
     const rect = L.rectangle([[plot.latS, plot.lngW],[plot.latN, plot.lngE]], style).addTo(map);
     const marker = L.marker([plot.centerLat, plot.centerLng], {
       icon: L.divIcon({
         className:'',
-        html:`<div class="plot-num${isTublayPlot(plot) ? ' outside' : ''}">${plotDisplayLabel(plot)}</div>`,
+        html:`<div class="plot-num">${plotDisplayLabel(plot)}</div>`,
         iconSize:[24,14], iconAnchor:[12,7]
       }),
       interactive:false
@@ -1292,21 +839,12 @@ function renderCanvas(){
   ctx.fillRect(0, 0, w, h);
 
   const plot = PLOTS[state.plotIdx];
-  const zone = plot ? classifyZone(plot.centerLat, plot.centerLng) : null;
-  // Use ESRI when the plot is outside Tublay OR when it straddles the Tublay
-  // boundary (center inside but rect crosses it — local tiles would show a seam).
-  const useEsri = zone === 'outside' || (zone === 'tublay' && plot && plotStraddlesTuplayBounds(plot));
-  if (useEsri) {
-    if (plot) drawMapTileBackground(plot, w, h, ESRI_TILE_TEMPLATE, CANVAS_ESRI_ZOOM);
-  } else {
-    const tile = getPlotTile(state.plotIdx);
-    if (tile && tile.complete && tile.naturalWidth > 0) {
-      ctx.drawImage(tile, 0, 0, w, h);
-    } else if (plot) {
-      // No pre-generated tile: use local high-res tiles (zoom 17), fall back to zoom 16
-      if (!drawMapTileBackground(plot, w, h, 'tiles/map/{z}/{x}/{y}.jpg', CANVAS_DETAIL_ZOOM)) {
-        drawMapTileBackground(plot, w, h);
-      }
+  const tile = getPlotTile(state.plotIdx);
+  if (tile && tile.complete && tile.naturalWidth > 0) {
+    ctx.drawImage(tile, 0, 0, w, h);
+  } else if (plot) {
+    if (!drawMapTileBackground(plot, w, h, 'tiles/map/{z}/{x}/{y}.jpg', CANVAS_DETAIL_ZOOM)) {
+      drawMapTileBackground(plot, w, h);
     }
   }
 
@@ -1496,7 +1034,7 @@ function updateBrush(){
 
 // ── PLOT NAVIGATION ───────────────────────────────────────────────
 function openPlot(idx){
-  if (!PLOTS[idx] || !isPlotEnabled(PLOTS[idx])) return;
+  if (!PLOTS[idx]) return;
   const prev = state.plotIdx;
   state.plotIdx = idx;
   updatePlotHeader();
@@ -1519,14 +1057,8 @@ function updatePlotHeader(){
   const plot = PLOTS[state.plotIdx];
   if (!plot) return;
   const p = state.plots[state.plotIdx];
-  document.getElementById('plot-name').textContent = isTublayPlot(plot)
-    ? tr('outsidePlotN').replace('{n}', plotDisplayLabel(plot))
-    : tr('plotN').replace('{n}', plotDisplayLabel(plot));
-  document.getElementById('plot-loc').textContent = isTublayPlot(plot)
-    ? `${tr('outsideArea')} · ${plot.centerLat.toFixed(4)}°N, ${plot.centerLng.toFixed(4)}°E`
-    : `R${plot.r} · C${plot.c} · ${plot.centerLat.toFixed(4)}°N, ${plot.centerLng.toFixed(4)}°E`;
-  const removeOutsideBtn = document.getElementById('btn-remove-outside');
-  if (removeOutsideBtn) removeOutsideBtn.hidden = !isTublayPlot(plot);
+  document.getElementById('plot-name').textContent = tr('plotN').replace('{n}', plotDisplayLabel(plot));
+  document.getElementById('plot-loc').textContent = `R${plot.r} · C${plot.c} · ${plot.centerLat.toFixed(4)}°N, ${plot.centerLng.toFixed(4)}°E`;
   // farmer chip
   const chip = document.getElementById('ed-farmer-chip');
   if (p && p.farmerId) {
@@ -1585,7 +1117,7 @@ function updateLegend(){
   const plotsContainingCrop = new Array(CROPS.length).fill(0);
   let emptyVisibleCells = 0;
   let totalVisibleCells = 0;
-  visiblePlots().forEach(plot=>{
+  PLOTS.forEach(plot=>{
     const composition = plotCompositionForView(plot.idx);
     totalVisibleCells += GRID * GRID;
     emptyVisibleCells += composition.emptyCells;
@@ -1633,8 +1165,6 @@ function applyLang(){
   document.querySelectorAll('.lang-btn').forEach(b=>b.classList.toggle('on', b.dataset.lang===state.lang));
   document.getElementById('brand-sub').textContent = tr('appSub');
   document.getElementById('map-title').textContent = tr('mapTitle');
-  document.getElementById('add-outside-txt').textContent = tr('addOutsideFarm');
-  document.getElementById('add-outside-btn').title = tr('addOutsideFarm');
   document.getElementById('lab-brush').textContent = tr('brush');
   document.getElementById('lab-crop').textContent = tr('crop');
   document.getElementById('sched-label').textContent = tr('schedule');
@@ -1643,7 +1173,6 @@ function applyLang(){
   document.getElementById('btn-undo-txt').textContent = tr('undo');
   document.getElementById('btn-redo-txt').textContent = tr('redo');
   document.getElementById('btn-clear').textContent = tr('clear');
-  document.getElementById('btn-remove-outside').textContent = tr('removeOutsidePlot');
   document.getElementById('btn-save-txt').textContent = tr('saveAll');
   document.getElementById('meta-toggle-txt').textContent = tr('plotDetails');
   document.getElementById('roster-btn-txt').textContent = tr('roster');
@@ -1674,13 +1203,11 @@ function applyTheme(){
   document.documentElement.setAttribute('data-theme', state.theme);
   document.querySelectorAll('.theme-btn').forEach(b=>b.classList.toggle('on', b.dataset.theme===state.theme));
   // re-render dependent visuals
-  if (map && contextTileLayerRef && esriTileLayerRef && detailTileLayerRef) {
-    map.removeLayer(esriTileLayerRef);
+  if (map && contextTileLayerRef && detailTileLayerRef) {
     map.removeLayer(detailTileLayerRef);
     map.removeLayer(contextTileLayerRef);
     contextTileLayerRef = makeContextTileLayer().addTo(map);
     detailTileLayerRef  = makeDetailTileLayer().addTo(map);
-    esriTileLayerRef    = makeEsriTileLayer().addTo(map);
   }
   renderCanvas();
   if (map) {
@@ -1846,13 +1373,12 @@ document.getElementById('btn-clear').onclick = ()=>{
   savePlotChange(state.plotIdx);
   toast(tr('cleared'));
 };
-document.getElementById('btn-remove-outside').onclick = () => removeOutsidePlot();
 document.getElementById('btn-undo').onclick = undo;
 document.getElementById('btn-redo').onclick = redo;
 
 // ── ZIP EXPORT ────────────────────────────────────────────────────
 // Output layout:
-//   ambassador_cropmap_YYYY-MM-DD/
+//   paoay_cropmap_YYYY-MM-DD/
 //     labels.csv          one row per (cell, crop) with 12 month columns
 //     plots.csv           one row per plot with farmer + per-crop month masks
 //     farmers.csv         one row per Farmer ID with their plot list
@@ -1871,7 +1397,7 @@ document.getElementById('btn-save').onclick = async () => {
 
   const zip = new JSZip();
   const dateStamp = new Date().toISOString().slice(0,10);
-  const folder = zip.folder('ambassador_cropmap_' + dateStamp);
+  const folder = zip.folder('paoay_cropmap_' + dateStamp);
 
   // headers
   let labelsCsv =
@@ -1893,8 +1419,7 @@ document.getElementById('btn-save').onclick = async () => {
     const p = state.plots[idx];
     const plot = PLOTS[idx];
     if (!plot) continue;
-    const _zone = classifyZone(plot.centerLat, plot.centerLng);
-    const plotArea = _zone === 'outside' ? 'outside_custom' : _zone;
+    const plotArea = plot.area || 'paoay';
     const plotSource = plot.source || 'field_grid';
     const farmerId = (p.farmerId || '').trim();
     const farmerName = (p.farmer || '').trim();
@@ -1995,7 +1520,7 @@ document.getElementById('btn-save').onclick = async () => {
   folder.file('plots.csv', plotsCsv);
   folder.file('farmers.csv', farmersCsv);
   folder.file('metadata.json', JSON.stringify({
-    survey_area: 'Ambassador, Tublay, Benguet',
+    survey_area: 'Paoay, Atok, Benguet',
     surveyed_at: new Date().toISOString(),
     schema_version: 3,
     grid_resolution: `${GRID}x${GRID}`,
@@ -2015,7 +1540,7 @@ document.getElementById('btn-save').onclick = async () => {
 
   if (window.__TAURI__) {
     const uint8 = await zip.generateAsync({type:'uint8array'});
-    const filename = `ambassador_cropmap_${dateStamp}.zip`;
+    const filename = `paoay_cropmap_${dateStamp}.zip`;
     // Encode as base64 string — avoids IPC size limits that hit large byte arrays.
     let binary = '';
     const chunk = 0x8000;
@@ -2031,7 +1556,7 @@ document.getElementById('btn-save').onclick = async () => {
     }
   } else {
     const blob = await zip.generateAsync({type:'blob'});
-    saveAs(blob, `ambassador_cropmap_${dateStamp}.zip`);
+    saveAs(blob, `paoay_cropmap_${dateStamp}.zip`);
     toast(tr('saved'));
   }
   } finally {
@@ -2044,7 +1569,7 @@ document.getElementById('btn-save').onclick = async () => {
 function buildRosterData(){
   // group plots by farmerId. Include an "unassigned with paint" bucket too.
   const map = new Map();
-  visiblePlots().forEach(plot=>{
+  PLOTS.forEach(plot=>{
     const p = state.plots[plot.idx];
     if (!p || !plotHasPaint(plot.idx) && !p.farmerId && !p.farmer) return;
     const key = p.farmerId || '__unassigned__';
@@ -2228,5 +1753,5 @@ window.TANIMAN = {
   normalizeViewMonths, viewMonthFromMask, maskToDisplayLabel,
   shouldAutoSwitchViewMonths, isBrushHiddenOnMap,
   renderCanvas, drawPlotsOnMap, updateMapPlot, updateLegend, updatePlotHeader,
-  saveState, tr, schedSave, visiblePlots, enableOutsidePlot,
+  saveState, tr, schedSave, visiblePlots,
 };
