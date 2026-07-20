@@ -534,15 +534,19 @@ function drawMixedCell(ctx, x0, y0, w, h, cropIdxs, style){
 // ── MAP ───────────────────────────────────────────────────────────
 let contextTileLayerRef = null;
 let detailTileLayerRef = null;
+let esriTileLayerRef = null;
 const MAP_TILE_VERSION = '20260603-z17';
 const MAP_CONTEXT_MIN_ZOOM = 10;
 const MAP_CONTEXT_MAX_ZOOM = 13;
-const MAP_DETAIL_MIN_ZOOM = 12;
-const MAP_DETAIL_MAX_ZOOM = 17;
-const CANVAS_DETAIL_ZOOM = 17;
+const MAP_DETAIL_MIN_ZOOM = 14;
+const MAP_DETAIL_MAX_ZOOM = 14;
+const CANVAS_DETAIL_ZOOM = MAP_DETAIL_MAX_ZOOM;
+const ONLINE_IMAGERY_MAX_ZOOM = 19;
+const ONLINE_IMAGERY_NATIVE_ZOOM = 18;
+const ESRI_TILE_TEMPLATE = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}';
 const LABELS_MIN_ZOOM = 14;
 const MAP_APP_MIN_ZOOM = 10;
-const MAP_APP_MAX_ZOOM = 17;
+const MAP_APP_MAX_ZOOM = 14;
 const MAP_CONTEXT_BOUNDS = L.latLngBounds(
   [16.1724728083975, 120.43212890625],
   [16.93070509876553, 120.9375]
@@ -551,6 +555,14 @@ const MAP_DETAIL_BOUNDS = L.latLngBounds(
   [ATOK_DETAIL_BOUNDS.s, ATOK_DETAIL_BOUNDS.w],
   [ATOK_DETAIL_BOUNDS.n, ATOK_DETAIL_BOUNDS.e]
 );
+
+function useOnlineImagery() {
+  return !window.__TAURI__;
+}
+
+function getMapMaxZoom() {
+  return useOnlineImagery() ? ONLINE_IMAGERY_MAX_ZOOM : MAP_APP_MAX_ZOOM;
+}
 
 function makeContextTileLayer() {
   return L.tileLayer(`tiles/context/{z}/{x}/{y}.jpg?v=${MAP_TILE_VERSION}`, {
@@ -561,6 +573,17 @@ function makeContextTileLayer() {
     bounds: MAP_CONTEXT_BOUNDS,
     noWrap: true,
     errorTileUrl: 'tiles/context/empty.jpg',
+    attribution: '',
+  });
+}
+
+function makeEsriTileLayer() {
+  return L.tileLayer(ESRI_TILE_TEMPLATE, {
+    minZoom: MAP_APP_MIN_ZOOM,
+    maxZoom: ONLINE_IMAGERY_MAX_ZOOM,
+    maxNativeZoom: ONLINE_IMAGERY_NATIVE_ZOOM,
+    noWrap: true,
+    errorTileUrl: '',
     attribution: '',
   });
 }
@@ -578,20 +601,42 @@ function makeDetailTileLayer() {
   });
 }
 
+function removeBaseImageryLayers() {
+  [esriTileLayerRef, detailTileLayerRef, contextTileLayerRef].forEach(layer => {
+    if (map && layer) map.removeLayer(layer);
+  });
+  esriTileLayerRef = null;
+  detailTileLayerRef = null;
+  contextTileLayerRef = null;
+}
+
+function addBaseImageryLayers() {
+  if (useOnlineImagery()) {
+    esriTileLayerRef = makeEsriTileLayer().addTo(map);
+    return;
+  }
+  contextTileLayerRef = makeContextTileLayer().addTo(map);
+  detailTileLayerRef  = makeDetailTileLayer().addTo(map);
+}
+
+function refreshBaseImageryLayers() {
+  removeBaseImageryLayers();
+  addBaseImageryLayers();
+}
+
 function initMap(){
   map = L.map('map', {
     center:[16.62,120.75],
     zoom:14,
     minZoom: MAP_APP_MIN_ZOOM,
-    maxZoom: MAP_APP_MAX_ZOOM,
+    maxZoom: getMapMaxZoom(),
     maxBounds: MAP_CONTEXT_BOUNDS,
     maxBoundsViscosity: 0.85,
     zoomControl:false,
     attributionControl:false,
     zoomAnimation:false,
   });
-  contextTileLayerRef = makeContextTileLayer().addTo(map);
-  detailTileLayerRef  = makeDetailTileLayer().addTo(map);
+  addBaseImageryLayers();
   L.polygon(ATOK_POLY, {
     color: '#FFFFFF', weight: 1.5,
     fill: false, interactive: false
@@ -727,10 +772,13 @@ function fitCanvas(){
   const pad = 36;
   const statusH = status ? status.offsetHeight + 10 : 0;
   const size = Math.max(120, Math.min(zone.clientWidth - pad, zone.clientHeight - pad - statusH));
+  const dpr = Math.max(1, window.devicePixelRatio || 1);
   frame.style.width = size + 'px';
   frame.style.height = size + 'px';
-  canvas.width = size;
-  canvas.height = size;
+  canvas.style.width = size + 'px';
+  canvas.style.height = size + 'px';
+  canvas.width = Math.round(size * dpr);
+  canvas.height = Math.round(size * dpr);
 }
 
 function getPlotTile(idx) {
@@ -771,6 +819,7 @@ function getMapTileImage(z, x, y, idx, urlTemplate = 'tiles/map/{z}/{x}/{y}.jpg'
     };
     const url = urlTemplate.replace('{z}', z).replace('{x}', x).replace('{y}', y);
     const isExternal = urlTemplate.startsWith('http');
+    if (isExternal) img.crossOrigin = 'anonymous';
     img.src = isExternal ? url : `${url}?v=${MAP_TILE_VERSION}`;
     mapTileCache[key] = img;
   }
@@ -832,19 +881,28 @@ function drawMapTileBackground(plot, w, h, urlTemplate = 'tiles/map/{z}/{x}/{y}.
 }
 
 function renderCanvas(){
-  const w = canvas.width, h = canvas.height;
+  const dpr = Math.max(1, canvas.width / Math.max(1, canvas.clientWidth || canvas.width));
+  const w = Math.round(canvas.width / dpr);
+  const h = Math.round(canvas.height / dpr);
   if (!w || !h) return;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
   ctx.clearRect(0,0,w,h);
   ctx.fillStyle = getCss('--canvas-bg');
   ctx.fillRect(0, 0, w, h);
 
   const plot = PLOTS[state.plotIdx];
-  const tile = getPlotTile(state.plotIdx);
-  if (tile && tile.complete && tile.naturalWidth > 0) {
-    ctx.drawImage(tile, 0, 0, w, h);
-  } else if (plot) {
-    if (!drawMapTileBackground(plot, w, h, 'tiles/map/{z}/{x}/{y}.jpg', CANVAS_DETAIL_ZOOM)) {
-      drawMapTileBackground(plot, w, h);
+  if (plot) {
+    if (useOnlineImagery()) {
+      drawMapTileBackground(plot, w, h, ESRI_TILE_TEMPLATE, ONLINE_IMAGERY_NATIVE_ZOOM);
+    } else {
+      const tile = getPlotTile(state.plotIdx);
+      if (tile && tile.complete && tile.naturalWidth > 0) {
+        ctx.drawImage(tile, 0, 0, w, h);
+      } else if (!drawMapTileBackground(plot, w, h, 'tiles/map/{z}/{x}/{y}.jpg', CANVAS_DETAIL_ZOOM)) {
+        drawMapTileBackground(plot, w, h);
+      }
     }
   }
 
@@ -1203,12 +1261,7 @@ function applyTheme(){
   document.documentElement.setAttribute('data-theme', state.theme);
   document.querySelectorAll('.theme-btn').forEach(b=>b.classList.toggle('on', b.dataset.theme===state.theme));
   // re-render dependent visuals
-  if (map && contextTileLayerRef && detailTileLayerRef) {
-    map.removeLayer(detailTileLayerRef);
-    map.removeLayer(contextTileLayerRef);
-    contextTileLayerRef = makeContextTileLayer().addTo(map);
-    detailTileLayerRef  = makeDetailTileLayer().addTo(map);
-  }
+  if (map) refreshBaseImageryLayers();
   renderCanvas();
   if (map) {
     drawPlotsOnMap();

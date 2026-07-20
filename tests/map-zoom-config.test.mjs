@@ -22,6 +22,11 @@ function readNumericConstant(source, constantName) {
   return match ? Number(match[1]) : null;
 }
 
+function readConstantExpression(source, constantName) {
+  const match = source.match(new RegExp(`const\\s+${constantName}\\s*=\\s*([^;]+);`));
+  return match ? match[1].trim() : null;
+}
+
 function resolveNumericValue(source, value) {
   if (value === null) return null;
   if (/^\d+$/.test(value)) return Number(value);
@@ -76,9 +81,10 @@ test('map zoom floor follows the offline context tile layer', async () => {
 test('map tile generation preserves full XYZ tile extents instead of stretching partial source coverage', () => {
   const start = tileGeneratorSource.indexOf('def generate_map_tiles');
   assert.notEqual(start, -1, 'generate_map_tiles should exist');
-  const end = tileGeneratorSource.indexOf('\n\nif __name__ == "__main__"', start);
-  assert.notEqual(end, -1, 'generate_map_tiles block should end before main');
-  const mapTileGenerator = tileGeneratorSource.slice(start, end);
+  const afterStart = tileGeneratorSource.slice(start);
+  const end = afterStart.search(/\r?\n\r?\ndef generate_detail_map_tiles/);
+  assert.notEqual(end, -1, 'generate_map_tiles block should end before detail wrapper');
+  const mapTileGenerator = afterStart.slice(0, end);
 
   assert.match(mapTileGenerator, /read_xyz_tile/);
   assert.match(tileGeneratorSource, /boundless\s*=\s*True/);
@@ -98,6 +104,35 @@ test('map uses separate context and detail bounds', () => {
   assert.match(detailLayerBlock, /bounds:\s*MAP_DETAIL_BOUNDS/);
 });
 
+test('online browser map uses ESRI World Imagery at every app zoom level', () => {
+  const initMapBlock = extractFunctionBlock('initMap');
+  const addBaseLayersBlock = extractFunctionBlock('addBaseImageryLayers');
+  const esriLayerBlock = extractFunctionBlock('makeEsriTileLayer');
+  const useOnlineBlock = extractFunctionBlock('useOnlineImagery');
+  const mapMaxZoomBlock = extractFunctionBlock('getMapMaxZoom');
+
+  assert.match(appSource, /ESRI_TILE_TEMPLATE\s*=\s*'https:\/\/server\.arcgisonline\.com\/ArcGIS\/rest\/services\/World_Imagery\/MapServer\/tile\/\{z\}\/\{y\}\/\{x\}'/);
+  assert.equal(readNumericConstant(appSource, 'ONLINE_IMAGERY_MAX_ZOOM'), 19);
+  assert.equal(readNumericConstant(appSource, 'ONLINE_IMAGERY_NATIVE_ZOOM'), 18);
+  assert.match(useOnlineBlock, /!window\.__TAURI__/);
+  assert.match(mapMaxZoomBlock, /useOnlineImagery\(\)\s*\?\s*ONLINE_IMAGERY_MAX_ZOOM\s*:\s*MAP_APP_MAX_ZOOM/);
+  assert.match(initMapBlock, /maxZoom:\s*getMapMaxZoom\(\)/);
+  assert.match(addBaseLayersBlock, /if\s*\(\s*useOnlineImagery\(\)\s*\)/);
+  assert.match(addBaseLayersBlock, /makeEsriTileLayer\(\)\.addTo\(map\)/);
+  assert.match(esriLayerBlock, /L\.tileLayer\(ESRI_TILE_TEMPLATE/);
+  assert.match(esriLayerBlock, /maxZoom:\s*ONLINE_IMAGERY_MAX_ZOOM/);
+  assert.match(esriLayerBlock, /maxNativeZoom:\s*ONLINE_IMAGERY_NATIVE_ZOOM/);
+});
+
+test('offline app still uses generated local context and detail map tiles', () => {
+  const addBaseLayersBlock = extractFunctionBlock('addBaseImageryLayers');
+  const themeBlock = extractFunctionBlock('applyTheme');
+
+  assert.match(addBaseLayersBlock, /contextTileLayerRef\s*=\s*makeContextTileLayer\(\)\.addTo\(map\)/);
+  assert.match(addBaseLayersBlock, /detailTileLayerRef\s*=\s*makeDetailTileLayer\(\)\.addTo\(map\)/);
+  assert.match(themeBlock, /refreshBaseImageryLayers\(\)/);
+});
+
 test('tile generator defines separate context and detail map outputs', () => {
   assert.match(tileGeneratorSource, /DETAIL_MAP_OUT_DIR\s*=\s*Path\("tiles\/map"\)/);
   assert.match(tileGeneratorSource, /CONTEXT_MAP_OUT_DIR\s*=\s*Path\("tiles\/context"\)/);
@@ -106,7 +141,16 @@ test('tile generator defines separate context and detail map outputs', () => {
   assert.match(tileGeneratorSource, /generate_detail_map_tiles/);
 });
 
-test('plot canvas draws the selected plot crop before label overlays', () => {
+test('map max zoom stays within the native Atok raster detail', () => {
+  assert.equal(readNumericConstant(appSource, 'MAP_DETAIL_MIN_ZOOM'), 14);
+  assert.equal(readNumericConstant(appSource, 'MAP_DETAIL_MAX_ZOOM'), 14);
+  assert.equal(readNumericConstant(appSource, 'MAP_APP_MAX_ZOOM'), 14);
+  assert.equal(readConstantExpression(appSource, 'CANVAS_DETAIL_ZOOM'), 'MAP_DETAIL_MAX_ZOOM');
+  assert.match(tileGeneratorSource, /DETAIL_MIN_ZOOM\s*=\s*14/);
+  assert.match(tileGeneratorSource, /DETAIL_MAX_ZOOM\s*=\s*14/);
+});
+
+test('offline plot canvas draws the selected plot crop before label overlays', () => {
   const renderCanvasBlock = extractFunctionBlock('renderCanvas');
   const getPlotTileBlock = extractFunctionBlock('getPlotTile');
 
@@ -114,12 +158,33 @@ test('plot canvas draws the selected plot crop before label overlays', () => {
   assert.match(appSource, /const\s+PLOTS\s*=\s*PAOAY_PLOTS/);
   assert.match(getPlotTileBlock, /if\s*\(\s*!plot\s*\|\|\s*!plot\.tilePath\s*\)\s*return\s+null/);
   assert.match(getPlotTileBlock, /img\.src\s*=\s*plot\.tilePath/);
+  assert.match(renderCanvasBlock, /if\s*\(\s*useOnlineImagery\(\)\s*\)/);
   assert.match(renderCanvasBlock, /const\s+tile\s*=\s*getPlotTile\(state\.plotIdx\)/);
   assert.match(renderCanvasBlock, /if\s*\(\s*tile\s*&&\s*tile\.complete\s*&&\s*tile\.naturalWidth\s*>\s*0\s*\)/);
   assert.match(renderCanvasBlock, /ctx\.drawImage\(tile,\s*0,\s*0,\s*w,\s*h\)/);
 });
 
-test('plot canvas falls back to offline Atok detail map tiles when a Paoay plot crop is not loaded', () => {
+test('plot canvas uses device-pixel backing resolution instead of browser-upscaled pixels', () => {
+  const fitCanvasBlock = extractFunctionBlock('fitCanvas');
+
+  assert.match(fitCanvasBlock, /window\.devicePixelRatio/);
+  assert.match(fitCanvasBlock, /canvas\.style\.width\s*=\s*size\s*\+\s*'px'/);
+  assert.match(fitCanvasBlock, /canvas\.style\.height\s*=\s*size\s*\+\s*'px'/);
+  assert.match(fitCanvasBlock, /canvas\.width\s*=\s*Math\.round\(size\s*\*\s*dpr\)/);
+  assert.match(fitCanvasBlock, /canvas\.height\s*=\s*Math\.round\(size\s*\*\s*dpr\)/);
+});
+
+test('online plot canvas uses ESRI World Imagery as its background', () => {
+  const renderCanvasBlock = extractFunctionBlock('renderCanvas');
+  const getMapTileImageBlock = extractFunctionBlock('getMapTileImage');
+
+  assert.match(renderCanvasBlock, /drawMapTileBackground\(plot,\s*w,\s*h,\s*ESRI_TILE_TEMPLATE,\s*ONLINE_IMAGERY_NATIVE_ZOOM\)/);
+  assert.match(getMapTileImageBlock, /const\s+isExternal\s*=\s*urlTemplate\.startsWith\('http'\)/);
+  assert.match(getMapTileImageBlock, /if\s*\(\s*isExternal\s*\)\s*img\.crossOrigin\s*=\s*'anonymous'/);
+  assert.match(renderCanvasBlock, /return/);
+});
+
+test('offline plot canvas falls back to offline Atok detail map tiles when a Paoay plot crop is not loaded', () => {
   const renderCanvasBlock = extractFunctionBlock('renderCanvas');
   const drawMapTileBlock = extractFunctionBlock('drawMapTileBackground');
 
@@ -132,7 +197,7 @@ test('plot canvas falls back to offline Atok detail map tiles when a Paoay plot 
   assert.match(renderCanvasBlock, /drawMapTileBackground\(plot,\s*w,\s*h\)/);
   assert.match(appSource, /function\s+drawMapTileBackground\s*\([^)]*zoom\s*=\s*MAP_DETAIL_MAX_ZOOM/);
   assert.match(drawMapTileBlock, /ctx\.drawImage\(/);
-  assert.doesNotMatch(renderCanvasBlock, /ESRI|outside_custom|tublay/i);
+  assert.doesNotMatch(renderCanvasBlock, /outside_custom|tublay/i);
 });
 
 test('cloud sync waits four seconds after the latest dirty plot action', () => {

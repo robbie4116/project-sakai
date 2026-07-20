@@ -97,3 +97,8 @@ test('generated plot crop files match PAOAY_PLOTS entries', async () => {
   const plotJpegs = files.filter(name => /^plot_\d{3}\.jpg$/.test(name));
   assert.equal(plotJpegs.length, data.PAOAY_PLOTS.length);
 });
+
+test('plot crop directory contains no obsolete outside-area JPEGs', async () => {
+  const files = await readdir(new URL('../tiles/plots', import.meta.url));
+  assert.deepEqual(files.filter(name => /^outside_\d+\.jpg$/i.test(name)), []);
+});

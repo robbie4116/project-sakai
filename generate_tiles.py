@@ -42,8 +42,8 @@ MAP_TILE_PX = 256
 JPEG_QUALITY = 85
 DETAIL_TILE_QUALITY = 80
 CONTEXT_TILE_QUALITY = 74
-DETAIL_MIN_ZOOM = 12
-DETAIL_MAX_ZOOM = 17
+DETAIL_MIN_ZOOM = 14
+DETAIL_MAX_ZOOM = 14
 CONTEXT_MIN_ZOOM = 10
 CONTEXT_MAX_ZOOM = 13
 PLOT_LAT_DEGREES = 0.0041364375
@@ -319,11 +319,13 @@ def write_geography_to_data_js(atok_poly: list, paoay_poly: list, paoay_plots: l
 
 def clean_generated_outputs():
     PLOT_OUT_DIR.mkdir(parents=True, exist_ok=True)
-    for path in PLOT_OUT_DIR.glob("plot_*.jpg"):
+    for path in PLOT_OUT_DIR.glob("*.jpg"):
         path.unlink()
 
-    if DETAIL_MAP_OUT_DIR.exists():
-        for child in DETAIL_MAP_OUT_DIR.iterdir():
+    for tile_dir in (DETAIL_MAP_OUT_DIR, CONTEXT_MAP_OUT_DIR):
+        if not tile_dir.exists():
+            continue
+        for child in tile_dir.iterdir():
             if child.name == "empty.jpg":
                 continue
             if child.is_dir():
@@ -336,7 +338,7 @@ def clean_generated_outputs():
 
 def generate_plot_crops(src, plots):
     # Tiles are sampled directly from the EPSG:4326 source raster by converting
-    # lat/lng bounds to pixel coordinates. At latitude ~16.6 and zoom 12-17,
+    # lat/lng bounds to pixel coordinates. At latitude ~16.6 and zoom 14,
     # the distortion is small enough for this field app.
     PLOT_OUT_DIR.mkdir(parents=True, exist_ok=True)
     written = 0
