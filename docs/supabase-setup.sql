@@ -24,3 +24,11 @@ create policy "public_photo_upload" on storage.objects
 
 create policy "public_photo_read" on storage.objects
   for select using (bucket_id = 'photos');
+
+-- Clean slate reset for Atok/Paoay migration.
+-- Run before first Atok/Paoay sync if the old Ambassador/Tublay data exists.
+delete from public.plots;
+
+-- This may require project owner or service-role privileges.
+delete from storage.objects
+where bucket_id = 'photos';
