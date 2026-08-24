@@ -4,6 +4,7 @@ import test from 'node:test';
 
 const htmlSource = await readFile(new URL('../taniman.html', import.meta.url), 'utf8');
 const calendarSource = await readFile(new URL('../calendar.js', import.meta.url), 'utf8');
+const appSource = await readFile(new URL('../app.js', import.meta.url), 'utf8');
 
 test('schedule UI exposes exact month-day fields and shortcuts', () => {
   assert.match(htmlSource, /id="season-start"/);
@@ -21,4 +22,8 @@ test('calendar writes active paint season dates', () => {
   assert.match(calendarSource, /state\.paintEndDate/);
   assert.match(calendarSource, /shortcutRange/);
   assert.doesNotMatch(calendarSource, /function buildScheduleTrack/);
+});
+
+test('app language binding does not target removed quarter filter ids', () => {
+  assert.doesNotMatch(appSource, /getElementById\('q-(all|rainy|cool|hot)'\)/);
 });
