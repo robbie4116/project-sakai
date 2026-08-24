@@ -4,9 +4,10 @@
 (function(){
 const {
   state, CROPS, MONTH_SHORT, MONTH_FULL, MONTH_FULL_LONG, ALL_MONTHS,
-  monthsBetween, maskToLabel, normalizeViewMonths, viewMonthFromMask,
+  SeasonUtils, monthsBetween, normalizeViewMonths, viewMonthFromMask,
   maskToDisplayLabel, isBrushHiddenOnMap, tr,
 } = window.TANIMAN;
+const { isValidMmdd, shortcutRange } = SeasonUtils;
 
 let scrubStart = 0, scrubEnd = 11;
 
@@ -29,24 +30,7 @@ function setViewEnd(m) {
   setViewMonths(monthsBetween(scrubStart, m));
 }
 
-// ── BUILD: schedule track + scrubber DOM ──────────────────────────
-function buildScheduleTrack() {
-  const track = document.getElementById('sched-track');
-  track.innerHTML = '';
-  for (let m=0; m<12; m++) {
-    const cell = document.createElement('div');
-    cell.className = 'sched-month';
-    cell.dataset.m = m;
-    cell.textContent = MONTH_SHORT[m];
-    track.appendChild(cell);
-  }
-  // fill bar overlay
-  const fill = document.createElement('div');
-  fill.className = 'sched-track-fill';
-  fill.id = 'sched-track-fill';
-  track.appendChild(fill);
-}
-
+// ── BUILD: map scrubber DOM ───────────────────────────────────────
 function buildScrubberTrack() {
   const track = document.getElementById('scrubber-track');
   track.innerHTML = '';
@@ -65,37 +49,42 @@ function buildScrubberTrack() {
 }
 
 // ── SCHEDULE PICKER LOGIC ─────────────────────────────────────────
-function updateScheduleVisuals() {
-  const track = document.getElementById('sched-track');
-  const s = state.paintStart, e = state.paintEnd;
-  const inRange = (m)=> !!(state.paintMonths & (1<<m));
-  const showEndpoints = state.paintMonths !== ALL_MONTHS;
-  track.querySelectorAll('.sched-month').forEach((el)=>{
-    const m = +el.dataset.m;
-    el.classList.toggle('in-range', inRange(m));
-    el.classList.toggle('endpoint', showEndpoints && (m === s || m === e));
-  });
-}
 function updateScheduleReadout() {
   const el = document.getElementById('sched-readout');
   const crop = CROPS[state.crop];
+  const valid = isValidMmdd(state.paintStartDate) && isValidMmdd(state.paintEndDate);
   el.innerHTML =
     `<span class="crop-dot" style="background:${crop.hex}"></span>` +
     `<span>${crop.name[state.lang]||crop.name.en} · </span>` +
-    `<span class="rng">${maskToLabel(state.paintMonths)}</span>`;
+    `<span class="rng">${valid ? `${state.paintStartDate}-${state.paintEndDate}` : 'Invalid date'}</span>`;
   if (typeof updateHiddenBrushIndicator === 'function') updateHiddenBrushIndicator();
 }
 window.updateScheduleReadout = updateScheduleReadout;
 window.updateScrubberReadout = updateScrubberReadout;
 
-let dragging = null; // 'start' | 'end' | null
-function setRange(s, e) {
-  state.paintStart = s;
-  state.paintEnd = e;
-  state.paintMonths = monthsBetween(s, e);
-  updateScheduleVisuals();
+function monthMaskForSeason(start, end) {
+  if (!isValidMmdd(start) || !isValidMmdd(end)) return 0;
+  let mask = 0;
+  for (let m=0; m<12; m++) {
+    const month = String(m + 1).padStart(2, '0');
+    const monthStart = `${month}-01`;
+    const monthEnd = `${month}-${String(SeasonUtils.MONTH_DAYS[m]).padStart(2, '0')}`;
+    if (SeasonUtils.seasonsOverlap(start, end, monthStart, monthEnd)) mask |= (1 << m);
+  }
+  return mask;
+}
+function syncSeasonInputs() {
+  const startInput = document.getElementById('season-start');
+  const endInput = document.getElementById('season-end');
+  if (startInput && startInput.value !== state.paintStartDate) startInput.value = state.paintStartDate;
+  if (endInput && endInput.value !== state.paintEndDate) endInput.value = state.paintEndDate;
+}
+function setPaintSeasonRange(start, end) {
+  state.paintStartDate = start;
+  state.paintEndDate = end;
+  state.paintMonths = monthMaskForSeason(start, end);
+  syncSeasonInputs();
   updateScheduleReadout();
-  syncQuickButtons();
   window.TANIMAN.schedSave();
 }
 
@@ -107,53 +96,32 @@ function nearestMonth(track, clientX){
   return m;
 }
 
-function wireSchedulePicker() {
-  const track = document.getElementById('sched-track');
-
-  const startInteract = (clientX) => {
-    const m = nearestMonth(track, clientX);
-    // pick whichever endpoint is closer; ties go to end so user can extend
-    const ds = Math.abs(m - state.paintStart);
-    const de = Math.abs(m - state.paintEnd);
-    dragging = ds < de ? 'start' : 'end';
-    if (dragging === 'start') setRange(m, state.paintEnd);
-    else setRange(state.paintStart, m);
-  };
-  const moveInteract = (clientX) => {
-    if (!dragging) return;
-    const m = nearestMonth(track, clientX);
-    if (dragging === 'start') setRange(m, state.paintEnd);
-    else setRange(state.paintStart, m);
-  };
-  const endInteract = () => { dragging = null; };
-
-  track.addEventListener('mousedown', (e)=>{ e.preventDefault(); startInteract(e.clientX); });
-  document.addEventListener('mousemove', (e)=>{ if (dragging) moveInteract(e.clientX); });
-  document.addEventListener('mouseup', endInteract);
-  track.addEventListener('touchstart', (e)=>{ e.preventDefault(); startInteract(e.touches[0].clientX); }, {passive:false});
-  track.addEventListener('touchmove', (e)=>{ if (dragging) { e.preventDefault(); moveInteract(e.touches[0].clientX); } }, {passive:false});
-  track.addEventListener('touchend', endInteract);
+function populateSeasonMonthSelect() {
+  const select = document.getElementById('season-month');
+  if (!select) return;
+  select.innerHTML = MONTH_FULL_LONG.map((name, i) =>
+    `<option value="${i + 1}">${name}</option>`).join('');
 }
 
-function wireQuickButtons() {
-  const allBtn  = document.getElementById('q-all');
-  const rainBtn = document.getElementById('q-rainy');
-  const coolBtn = document.getElementById('q-cool');
-  const hotBtn  = document.getElementById('q-hot');
-  rainBtn.title = 'Rainy season · Jun–Nov';
-  coolBtn.title = 'Cool dry season · Dec–Feb';
-  hotBtn.title  = 'Hot dry season · Mar–May';
-  allBtn.onclick  = ()=>{ setRange(0,11); state.paintMonths = ALL_MONTHS; updateScheduleVisuals(); updateScheduleReadout(); syncQuickButtons(); };
-  rainBtn.onclick = ()=> setRange(5, 10);
-  coolBtn.onclick = ()=> setRange(11, 1);
-  hotBtn.onclick  = ()=> setRange(2, 4);
-}
-function syncQuickButtons() {
-  const m = state.paintMonths;
-  document.getElementById('q-all').classList.toggle('on',   m === ALL_MONTHS);
-  document.getElementById('q-rainy').classList.toggle('on', m === monthsBetween(5,10));
-  document.getElementById('q-cool').classList.toggle('on',  m === monthsBetween(11,1));
-  document.getElementById('q-hot').classList.toggle('on',   m === monthsBetween(2,4));
+function wireSeasonPicker() {
+  const startInput = document.getElementById('season-start');
+  const endInput = document.getElementById('season-end');
+  const monthSelect = document.getElementById('season-month');
+  if (!startInput || !endInput || !monthSelect) return;
+
+  syncSeasonInputs();
+  const applyInputs = () => setPaintSeasonRange(startInput.value.trim(), endInput.value.trim());
+  startInput.addEventListener('change', applyInputs);
+  startInput.addEventListener('blur', applyInputs);
+  endInput.addEventListener('change', applyInputs);
+  endInput.addEventListener('blur', applyInputs);
+
+  document.querySelectorAll('[data-season-shortcut]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const range = shortcutRange(Number(monthSelect.value), btn.dataset.seasonShortcut);
+      if (range) setPaintSeasonRange(range.start, range.end);
+    });
+  });
 }
 
 // ── MAP MONTH SCRUBBER LOGIC ──────────────────────────────────────
@@ -250,14 +218,12 @@ function wireScrubber() {
 }
 
 // ── INIT ──────────────────────────────────────────────────────────
-buildScheduleTrack();
 buildScrubberTrack();
-wireSchedulePicker();
-wireQuickButtons();
+populateSeasonMonthSelect();
+setPaintSeasonRange(state.paintStartDate, state.paintEndDate);
+wireSeasonPicker();
 wireScrubber();
-updateScheduleVisuals();
 updateScheduleReadout();
-syncQuickButtons();
 updateScrubberReadout();
 
 })();

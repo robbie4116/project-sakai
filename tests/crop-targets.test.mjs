@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 const dataSource = await readFile(new URL('../data.js', import.meta.url), 'utf8');
+const appSource = await readFile(new URL('../app.js', import.meta.url), 'utf8');
 const htmlSource = await readFile(new URL('../taniman.html', import.meta.url), 'utf8');
 const prepareDistSource = await readFile(new URL('../src-tauri/scripts/prepare-dist.mjs', import.meta.url), 'utf8');
 
@@ -20,4 +21,9 @@ test('season utilities load before app startup', () => {
 
 test('desktop static bundle includes season utilities', () => {
   assert.match(prepareDistSource, /season-utils\.js/);
+});
+
+test('keyboard crop shortcuts are bounded by the active crop list', () => {
+  assert.match(appSource, /\+e\.key\s*<=\s*CROPS\.length/);
+  assert.doesNotMatch(appSource, /e\.key === '4'/);
 });

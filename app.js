@@ -1788,7 +1788,7 @@ document.addEventListener('keydown', (e)=>{
   if ((e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'Z')){ e.preventDefault(); undo(); return; }
   if (e.key === 'ArrowLeft') openPlot(adjacentVisiblePlotIdx(state.plotIdx, -1));
   if (e.key === 'ArrowRight') openPlot(adjacentVisiblePlotIdx(state.plotIdx, 1));
-  if (e.key === '1' || e.key === '2' || e.key === '3' || e.key === '4'){
+  if (/^[1-9]$/.test(e.key) && +e.key <= CROPS.length){
     state.crop = +e.key - 1; buildPalette(); updateScheduleReadout();
   }
   if (e.key === 'e' || e.key === 'E'){ state.brush = 'erase'; updateBrush(); }
@@ -1856,6 +1856,7 @@ if (hasSyncInit()) {
 // ── EXPOSE UTILITIES for calendar.js to consume ───────────────────
 window.TANIMAN = {
   state, GRID, PLOTS, CROPS, MONTH_SHORT, MONTH_FULL, MONTH_FULL_LONG, ALL_MONTHS,
+  SeasonUtils,
   monthsBetween, maskList, maskToLabel, maskIntersects, maskContains,
   normalizeViewMonths, viewMonthFromMask, maskToDisplayLabel,
   shouldAutoSwitchViewMonths, isBrushHiddenOnMap,
