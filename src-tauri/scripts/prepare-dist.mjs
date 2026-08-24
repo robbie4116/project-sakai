@@ -16,7 +16,7 @@ const DIST = join(SRC_TAURI, 'dist-static');
 const FILES = [
   'app.js', 'data.js', 'styles.css', 'config.js',
   'supabase-sync.js', 'offline-storage.js',
-  'month-view-utils.js', 'calendar.js'
+  'month-view-utils.js', 'season-utils.js', 'calendar.js'
 ];
 const DIRS = ['vendor', 'fonts', 'tiles'];
 
