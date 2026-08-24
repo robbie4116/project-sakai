@@ -40,7 +40,7 @@ test('plot composition helper exposes visible cell coverage, empty cells, and mi
   assert.match(composition, /nonZeroCropCount/);
   assert.match(composition, /isMixed/);
   assert.match(composition, /percentages/);
-  assert.match(composition, /maskIntersects\(v,\s*viewMonths\)/);
+  assert.match(composition, /seasonIntersectsViewMonths\(season,\s*viewMonths\)/);
 });
 
 test('dominant crop remains a compatibility wrapper over composition metadata', () => {

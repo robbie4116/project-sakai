@@ -41,15 +41,17 @@ test('app initializes canonical viewMonths and legacy mirror from month utility'
 
 test('visible crop and dominant crop calculations use viewMonths mask overlap', () => {
   const cellVisible = extractFunctionBlock(appSource, 'cellVisibleCrops');
+  const cellVisibleIds = extractFunctionBlock(appSource, 'cellVisibleCropIds');
   const composition = extractFunctionBlock(appSource, 'plotCompositionForView');
   const dominant = extractFunctionBlock(appSource, 'dominantCropForView');
 
-  assert.match(cellVisible, /state\.viewMonths/);
-  assert.match(cellVisible, /maskIntersects\(v,\s*viewMonths\)/);
+  assert.match(cellVisible, /cellVisibleCropIds\(p,\s*cellIdx\)/);
+  assert.match(appSource, /function cellVisibleCropIds\(p,\s*cellIdx,\s*viewMonths\s*=\s*state\.viewMonths\)/);
+  assert.match(cellVisibleIds, /seasonIntersectsViewMonths\(season,\s*viewMonths\)/);
   assert.doesNotMatch(cellVisible, /state\.viewMonth(?!s)/);
 
   assert.match(appSource, /function plotCompositionForView\(idx,\s*viewMonths\s*=\s*state\.viewMonths\)/);
-  assert.match(composition, /maskIntersects\(v,\s*viewMonths\)/);
+  assert.match(composition, /seasonIntersectsViewMonths\(season,\s*viewMonths\)/);
   assert.doesNotMatch(composition, /state\.viewMonth(?!s)/);
 
   assert.match(dominant, /plotCompositionForView\(idx\)/);
@@ -75,7 +77,7 @@ test('scrubber renders range state and hidden brush warning', () => {
   assert.match(calendarSource, /monthsBetween\(scrubStart,\s*m\)/);
   assert.doesNotMatch(calendarSource, /scrubber-indicator/);
   assert.match(appSource, /tag\.classList\.toggle\('hidden-brush'/);
-  assert.match(appSource, /Hidden · \$\{maskToDisplayLabel\(state\.paintMonths\)\} brush/);
+  assert.match(appSource, /Hidden · \$\{maskToDisplayLabel\(paintMonths\)\} brush/);
 });
 
 test('setViewMonths persists viewMonths and legacy viewMonth mirror', () => {
