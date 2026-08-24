@@ -109,13 +109,17 @@
             <span class="sched-label" id="sched-label">Schedule · when planted</span>
             <span class="sched-readout" id="sched-readout"></span>
           </div>
-          <div class="sched-track" id="sched-track"></div>
+          <div class="season-fields">
+            <label>Start <input id="season-start" inputmode="numeric" maxlength="5" placeholder="MM-DD"></label>
+            <label>End <input id="season-end" inputmode="numeric" maxlength="5" placeholder="MM-DD"></label>
+            <select id="season-month" aria-label="Shortcut month"></select>
+          </div>
         </div>
         <div class="sched-quick">
-          <button id="q-all" class="on">All year</button>
-          <button id="q-rainy">Rainy</button>
-          <button id="q-cool">Cool dry</button>
-          <button id="q-hot">Hot dry</button>
+          <button data-season-shortcut="whole">Whole</button>
+          <button data-season-shortcut="early">Early</button>
+          <button data-season-shortcut="mid">Mid</button>
+          <button data-season-shortcut="late">Late</button>
         </div>
       </div>
 

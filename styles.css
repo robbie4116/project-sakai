@@ -468,6 +468,49 @@ input,textarea{font:inherit;color:inherit;background:none;border:none;outline:no
   display:inline-block;width:8px;height:8px;border-radius:50%;
   margin-right:6px;vertical-align:middle;
 }
+.season-fields{
+  display:grid;
+  grid-template-columns:minmax(96px, 132px) minmax(96px, 132px) minmax(132px, 1fr);
+  gap:8px;
+  align-items:stretch;
+}
+.season-fields label{
+  min-width:0;
+  height:42px;
+  padding:5px 8px;
+  border-radius:8px;
+  background:var(--bg-2);
+  border:1px solid var(--border);
+  color:var(--muted);
+  display:flex;
+  flex-direction:column;
+  justify-content:center;
+  font-size:9px;
+  font-weight:700;
+  letter-spacing:0.08em;
+  text-transform:uppercase;
+}
+.season-fields input,
+.season-fields select{
+  width:100%;
+  min-width:0;
+  border:0;
+  outline:0;
+  background:transparent;
+  color:var(--text);
+  font-family:'IBM Plex Mono',monospace;
+  font-size:14px;
+  font-weight:700;
+  letter-spacing:0;
+}
+.season-fields select{
+  height:42px;
+  padding:0 10px;
+  border-radius:8px;
+  background:var(--bg-2);
+  border:1px solid var(--border);
+  color:var(--text);
+}
 .sched-track{
   position:relative;height:42px;
   background:var(--bg-2);
@@ -1086,6 +1129,8 @@ input,textarea{font:inherit;color:inherit;background:none;border:none;outline:no
   .schedule-bar{padding:10px 14px;flex-direction:column;align-items:stretch;gap:10px}
   .sched-head{align-items:flex-start}
   .sched-readout{white-space:normal;text-align:right}
+  .season-fields{grid-template-columns:1fr 1fr}
+  .season-fields select{grid-column:1 / -1}
   .sched-quick{max-width:none;display:grid;grid-template-columns:repeat(2,1fr);gap:6px}
   .sched-quick button{width:100%}
 
