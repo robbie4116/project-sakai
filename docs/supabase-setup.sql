@@ -1,6 +1,8 @@
+drop table if exists public.plots cascade;
+
 create table public.plots (
   plot_idx   integer      primary key,
-  cells      jsonb        not null default '[]',
+  seasons    jsonb        not null default '[]',
   farmer_id  text         not null default '',
   farmer     text         not null default '',
   note       text         not null default '',
@@ -11,6 +13,7 @@ create table public.plots (
 
 alter table public.plots enable row level security;
 
+drop policy if exists "public_read_write" on public.plots;
 create policy "public_read_write" on public.plots
   for all
   using (true)
@@ -19,16 +22,15 @@ create policy "public_read_write" on public.plots
 insert into storage.buckets (id, name, public) values ('photos', 'photos', true)
 on conflict do nothing;
 
+drop policy if exists "public_photo_upload" on storage.objects;
 create policy "public_photo_upload" on storage.objects
   for insert with check (bucket_id = 'photos');
 
+drop policy if exists "public_photo_read" on storage.objects;
 create policy "public_photo_read" on storage.objects
   for select using (bucket_id = 'photos');
 
--- Clean slate reset for Atok/Paoay migration.
--- Run before first Atok/Paoay sync if the old Ambassador/Tublay data exists.
-delete from public.plots;
-
--- This may require project owner or service-role privileges.
+-- Optional clean slate for uploaded plot photos. This may require project owner
+-- or service-role privileges; skip it if storage cleanup is not needed.
 delete from storage.objects
 where bucket_id = 'photos';

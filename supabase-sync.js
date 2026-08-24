@@ -46,7 +46,7 @@
   function plotToRow(idx, plotData, deviceId) {
     return {
       plot_idx: idx,
-      cells: plotData.cells ? plotData.cells.map(a => Array.from(a)) : [],
+      seasons: Array.isArray(plotData.seasons) ? plotData.seasons : [],
       farmer_id: plotData.farmerId || '',
       farmer: plotData.farmer || '',
       note: plotData.note || '',
@@ -59,7 +59,7 @@
   // Convert Supabase row -> app state plot object
   function rowToPlot(row) {
     return {
-      cells: Array.isArray(row.cells) ? row.cells.map(a => new Uint16Array(a)) : [],
+      seasons: Array.isArray(row.seasons) ? row.seasons : [],
       farmerId: row.farmer_id || '',
       farmer: row.farmer || '',
       note: row.note || '',
