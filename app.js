@@ -1505,14 +1505,13 @@ document.getElementById('btn-save').onclick = async () => {
   const dateStamp = new Date().toISOString().slice(0,10);
   const folder = zip.folder('paoay_cropmap_' + dateStamp);
 
-  // headers
+  let seasonsCsv =
+    'plot_idx,season_id,cell_idx,cell_row,cell_col,crop_id,start_mmdd,end_mmdd,wraps_year,center_lat,center_lng,lat_s,lat_n,lng_w,lng_e,farmer_id\n';
   let labelsCsv =
-    'plot_idx,plot_area,plot_source,plot_row,plot_col,centerLat,centerLng,farmer_id,crop_id,crop_en,patch_row,patch_col,' +
-    'jan,feb,mar,apr,may,jun,jul,aug,sep,oct,nov,dec,month_count\n';
+    'plot_idx,plot_area,plot_source,plot_row,plot_col,farmer_id,season_id,cell_idx,cell_row,cell_col,crop_id,crop_en,start_mmdd,end_mmdd,wraps_year,center_lat,center_lng,lat_s,lat_n,lng_w,lng_e\n';
   let plotsCsv =
-    'plot_idx,plot_area,plot_source,plot_row,plot_col,centerLat,centerLng,farmer_id,farmer_name,note,photo_count,' +
-    CROPS.map(c=>`${c.id}_cells`).join(',') + ',' +
-    CROPS.map(c=>`${c.id}_months_mask`).join(',') + '\n';
+    'plot_idx,plot_area,plot_source,plot_row,plot_col,centerLat,centerLng,farmer_id,farmer_name,note,photo_count,season_count,total_season_cells,' +
+    CROPS.map(c=>`${c.id}_cells`).join(',') + '\n';
   const farmerMap = new Map(); // farmer_id -> { name, plots:[], patches }
   const metaPlots = [];
 
@@ -1522,7 +1521,7 @@ document.getElementById('btn-save').onclick = async () => {
   const oct = oc.getContext('2d');
 
   for (const idx of indices) {
-    const p = state.plots[idx];
+    const p = ensurePlot(idx);
     const plot = PLOTS[idx];
     if (!plot) continue;
     const plotArea = plot.area || 'paoay';
@@ -1531,14 +1530,33 @@ document.getElementById('btn-save').onclick = async () => {
     const farmerName = (p.farmer || '').trim();
     const note = (p.note || '').replaceAll('"', '""').replaceAll('\n', ' ');
 
-    // PNG label image (snapshot in "all months" view)
-    if (p.cells && p.cells.some(arr => arr.some(v => v > 0))) {
+    const seasonRows = seasonExportRows({ plotIdx: idx, plot, plotData: p, grid: GRID, farmerId });
+    const cellCounts = new Array(CROPS.length).fill(0);
+    for (const row of seasonRows) {
+      const cropIdx = cropIndexFromId(row.crop_id);
+      if (cropIdx >= 0) cellCounts[cropIdx]++;
+      seasonsCsv += [
+        row.plot_idx, row.season_id, row.cell_idx, row.cell_row, row.cell_col,
+        row.crop_id, row.start_mmdd, row.end_mmdd, row.wraps_year,
+        row.center_lat, row.center_lng, row.lat_s, row.lat_n, row.lng_w, row.lng_e,
+        csvEscape(row.farmer_id),
+      ].join(',') + '\n';
+      const crop = CROPS[cropIdx] || { name: { en: row.crop_id } };
+      labelsCsv += [
+        row.plot_idx, plotArea, plotSource, plot.r, plot.c, csvEscape(farmerId),
+        row.season_id, row.cell_idx, row.cell_row, row.cell_col,
+        row.crop_id, csvEscape(crop.name.en), row.start_mmdd, row.end_mmdd, row.wraps_year,
+        row.center_lat, row.center_lng, row.lat_s, row.lat_n, row.lng_w, row.lng_e,
+      ].join(',') + '\n';
+    }
+
+    // PNG label image (snapshot in "all months" view for visual QA only)
+    if (seasonRows.length) {
       oct.fillStyle = '#0A1A0A';
       oct.fillRect(0, 0, 500, 500);
       for (let r=0; r<GRID; r++) for (let c=0; c<GRID; c++) {
         const cellIdx = r*GRID + c;
-        const present = [];
-        for (let ci=0; ci<CROPS.length; ci++) if (p.cells[ci][cellIdx] > 0) present.push(ci);
+        const present = cellVisibleCropIds(p, cellIdx, ALL_MONTHS).map(cropIndexFromId).filter(i => i >= 0);
         if (!present.length) continue;
         drawMixedCell(oct, c*10, r*10, 10, 10, present, state.mixedStyle);
       }
@@ -1546,36 +1564,13 @@ document.getElementById('btn-save').onclick = async () => {
         oc.toDataURL('image/png').split(',')[1], { base64: true });
     }
 
-    // labels.csv — one row per (cell, crop) with 12-column month indicator
-    for (let r=0; r<GRID; r++) for (let c=0; c<GRID; c++) {
-      const cellIdx = r*GRID + c;
-      for (let ci=0; ci<CROPS.length; ci++) {
-        const mask = p.cells[ci][cellIdx];
-        if (!mask) continue;
-        const monthBits = [];
-        let monthCount = 0;
-        for (let m=0; m<12; m++) {
-          const bit = (mask >> m) & 1;
-          monthBits.push(bit);
-          monthCount += bit;
-        }
-        labelsCsv += `${idx},${plotArea},${plotSource},${plot.r},${plot.c},${plot.centerLat},${plot.centerLng},` +
-          `${farmerId},${CROPS[ci].id},${CROPS[ci].name.en},${r},${c},` +
-          `${monthBits.join(',')},${monthCount}\n`;
-      }
-    }
-
     // plots.csv — one row per plot
-    const cellCounts = CROPS.map((_,ci) => {
-      let n=0; for (let i=0; i<p.cells[ci].length; i++) if (p.cells[ci][i]>0) n++; return n;
-    });
-    const monthMasks = CROPS.map((_,ci) => {
-      let mm = 0; for (let i=0; i<p.cells[ci].length; i++) mm |= p.cells[ci][i]; return mm;
-    });
     const photos = (p.photos || []).filter(ph => ph && (ph.url || ph.dataUrl));
-    plotsCsv += `${idx},${plotArea},${plotSource},${plot.r},${plot.c},${plot.centerLat},${plot.centerLng},` +
-      `${farmerId},"${farmerName}","${note}",${photos.length},` +
-      `${cellCounts.join(',')},${monthMasks.join(',')}\n`;
+    plotsCsv += [
+      idx, plotArea, plotSource, plot.r, plot.c, plot.centerLat, plot.centerLng,
+      csvEscape(farmerId), csvEscape(farmerName), csvEscape(note), photos.length,
+      (p.seasons || []).length, seasonRows.length, ...cellCounts,
+    ].join(',') + '\n';
 
     // Photos export
     photos.forEach((ph, pi) => {
@@ -1591,7 +1586,7 @@ document.getElementById('btn-save').onclick = async () => {
       const f = farmerMap.get(farmerId);
       if (farmerName && !f.name) f.name = farmerName;
       f.plots.push(idx);
-      f.patches += cellCounts.reduce((a,b)=>a+b, 0);
+      f.patches += seasonRows.length;
       cellCounts.forEach((n,ci)=>{ if (n>0) f.crops.add(CROPS[ci].id); });
     }
 
@@ -1606,35 +1601,40 @@ document.getElementById('btn-save').onclick = async () => {
       farmer_name: farmerName,
       note: p.note || '',
       photo_count: photos.length,
+      season_count: (p.seasons || []).length,
+      season_cell_rows: seasonRows.length,
       crops: CROPS.map((crop,ci) => ({
         id: crop.id,
         en: crop.name.en,
-        cells: cellCounts[ci],
-        months_mask: monthMasks[ci],
-        months: maskList(monthMasks[ci]).map(m => MONTH_FULL[m]),
-      })).filter(x => x.cells > 0),
+        season_cell_rows: cellCounts[ci],
+      })).filter(x => x.season_cell_rows > 0),
+      seasons: cloneSeasons(p.seasons),
     });
   }
 
   // farmers.csv
   let farmersCsv = 'farmer_id,farmer_name,plot_count,plot_indices,total_patches,crops\n';
   for (const [id, f] of farmerMap.entries()) {
-    farmersCsv += `${id},"${f.name}",${f.plots.length},"${f.plots.join(';')}",${f.patches},"${[...f.crops].join(';')}"\n`;
+    farmersCsv += `${csvEscape(id)},${csvEscape(f.name)},${f.plots.length},${csvEscape(f.plots.join(';'))},${f.patches},${csvEscape([...f.crops].join(';'))}\n`;
   }
 
+  folder.file('seasons.csv', seasonsCsv);
   folder.file('labels.csv', labelsCsv);
   folder.file('plots.csv', plotsCsv);
   folder.file('farmers.csv', farmersCsv);
   folder.file('metadata.json', JSON.stringify({
     survey_area: 'Paoay, Atok, Benguet',
     surveyed_at: new Date().toISOString(),
-    schema_version: 3,
+    schema_version: 4,
     grid_resolution: `${GRID}x${GRID}`,
-    month_encoding: {
-      type: '12-bit mask',
-      bit_to_month: MONTH_FULL,
-      note: 'bit i (i=0..11) set means the crop is planted in that month',
+    authoritative_ground_truth_file: 'seasons.csv',
+    date_encoding: {
+      type: 'recurring annual MM-DD inclusive range',
+      fields: ['start_mmdd', 'end_mmdd', 'wraps_year'],
+      note: 'start_mmdd and end_mmdd are inclusive recurring annual planting-to-harvest windows with no year component',
     },
+    coordinate_reference_system: 'EPSG:4326',
+    sentinel2_alignment_note: 'Use WGS84 cell centers or bounds from seasons.csv to sample Sentinel-2 bands and vegetation indices for a chosen target year.',
     crops: CROPS.map(c => ({ id:c.id, hex:c.hex, name:c.name })),
     farmers: [...farmerMap.entries()].map(([id, f]) => ({
       id, name: f.name, plot_count: f.plots.length,
@@ -1762,6 +1762,11 @@ function toast(msg){
   t.classList.add('show');
   clearTimeout(toastTimer);
   toastTimer = setTimeout(()=>t.classList.remove('show'), 2200);
+}
+
+function csvEscape(value) {
+  const s = value == null ? '' : String(value);
+  return /[",\n]/.test(s) ? `"${s.replaceAll('"', '""')}"` : s;
 }
 
 // ── EVENT WIRING ──────────────────────────────────────────────────

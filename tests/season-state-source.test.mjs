@@ -33,3 +33,17 @@ test('plot details schedule summary renders season ranges', () => {
   assert.match(appSource, /season\.start/);
   assert.match(appSource, /season\.end/);
 });
+
+test('export writes ML-ready seasons csv with georeferenced rows', () => {
+  assert.match(appSource, /let seasonsCsv\s*=/);
+  assert.match(appSource, /season_id,cell_idx,cell_row,cell_col,crop_id,start_mmdd,end_mmdd,wraps_year/);
+  assert.match(appSource, /seasonExportRows,\s*\n\}\s*=\s*SeasonUtils/);
+  assert.match(appSource, /seasonExportRows/);
+  assert.match(appSource, /folder\.file\('seasons\.csv',\s*seasonsCsv\)/);
+});
+
+test('metadata documents recurring inclusive date windows', () => {
+  assert.match(appSource, /schema_version:\s*4/);
+  assert.match(appSource, /recurring annual/);
+  assert.match(appSource, /inclusive/);
+});
