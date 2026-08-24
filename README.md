@@ -44,9 +44,18 @@ is no Add Plot workflow.
 
 Edit `config.js` with your Supabase project URL and anon key.
 
-Run the SQL in `docs/supabase-setup.sql` in the Supabase SQL editor. For the
-Atok/Paoay migration, run the clean-slate reset block before first sync if old
-study-area data exists.
+Run the SQL in `docs/supabase-setup.sql` in the Supabase SQL editor. This drops
+and recreates the `plots` table, which wipes existing plot rows and replaces the
+old crop-month cell schema with `seasons jsonb`.
+
+### Reset Supabase for season schema
+
+1. Open Supabase Dashboard.
+2. Select the project used by `config.js`.
+3. Open SQL Editor.
+4. Paste the full contents of `docs/supabase-setup.sql`.
+5. Run it. This wipes existing plot rows.
+6. Reload the deployed app.
 
 ### 4. Deploy to Vercel
 
@@ -64,11 +73,15 @@ python -m http.server 8080
 
 Use the "Save all (.zip)" button in the app footer. Exports:
 
+- `seasons.csv` - authoritative ML ground truth; one row per `season_id` plus
+  `cell_idx`, with `crop_id`, inclusive recurring `start_mmdd`/`end_mmdd`,
+  `wraps_year`, WGS84 cell center/bounds, row, and column
 - `labels/plot_NNN.png` - color-coded label map per plot
-- `labels.csv` - per-cell crop assignments
-- `plots.csv` - Paoay plot metadata and crop month masks
+- `labels.csv` - compatibility per-season/cell labels with crop names
+- `plots.csv` - Paoay plot metadata and season row counts
 - `farmers.csv` - farmer IDs and plot lists
-- `metadata.json` - survey area, farmer names, notes, plot coordinates, and crop summaries
+- `metadata.json` - schema version, recurring annual date encoding, Sentinel-2
+  alignment notes, farmer names, notes, plot coordinates, and crop summaries
 
 All exported plot records are generated Paoay plots with `plot_area=paoay` and
 `plot_source=field_grid`.
