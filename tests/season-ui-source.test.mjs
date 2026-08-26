@@ -5,6 +5,7 @@ import test from 'node:test';
 const htmlSource = await readFile(new URL('../taniman.html', import.meta.url), 'utf8');
 const calendarSource = await readFile(new URL('../calendar.js', import.meta.url), 'utf8');
 const appSource = await readFile(new URL('../app.js', import.meta.url), 'utf8');
+const styleSource = await readFile(new URL('../styles.css', import.meta.url), 'utf8');
 
 test('schedule UI exposes planted and harvest month-day selectors', () => {
   assert.match(htmlSource, /id="season-planted-month"/);
@@ -19,6 +20,17 @@ test('schedule UI exposes planted and harvest month-day selectors', () => {
   assert.doesNotMatch(htmlSource, /id="season-start"/);
   assert.doesNotMatch(htmlSource, /id="season-end"/);
   assert.doesNotMatch(htmlSource, /id="sched-track"/);
+});
+
+test('date selectors defer distinct accessible names to runtime aria labels', () => {
+  for (const id of [
+    'season-planted-month',
+    'season-planted-day',
+    'season-harvest-month',
+    'season-harvest-day',
+  ]) {
+    assert.doesNotMatch(htmlSource, new RegExp(`<select[^>]*id="${id}"[^>]*aria-labelledby=`));
+  }
 });
 
 test('calendar wires planting-harvest selectors through one range update path', () => {
@@ -47,4 +59,19 @@ test('app language binding does not target removed quarter filter ids', () => {
 test('app exposes startup active paint date recovery to calendar', () => {
   assert.match(appSource, /invalidActivePaintRangeAtStartup/);
   assert.match(appSource, /!isValidMmdd\(state\.paintStartDate\)\s*\|\|\s*!isValidMmdd\(state\.paintEndDate\)/);
+});
+
+test('schedule editor stylesheet targets the date selector markup', () => {
+  assert.match(styleSource, /\.season-editor\b/);
+  assert.match(styleSource, /\.season-date-group\b/);
+  assert.match(styleSource, /\.season-preset-group\b/);
+  assert.match(styleSource, /\.sched-readout\s+\.rng-helper\b/);
+  assert.match(styleSource, /\.sched-quick button\.on\b/);
+});
+
+test('obsolete schedule track styles are removed from production CSS', () => {
+  assert.doesNotMatch(styleSource, /\.sched-track\b/);
+  assert.doesNotMatch(styleSource, /\.sched-track-fill\b/);
+  assert.doesNotMatch(styleSource, /\.sched-month\b/);
+  assert.doesNotMatch(styleSource, /\.sched-handle\b/);
 });

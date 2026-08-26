@@ -162,7 +162,7 @@ function updateScheduleReadout() {
   el.innerHTML =
     `<span class="crop-dot" style="background:${model.crop.hex}"></span>` +
     `<span class="rng">${escapeHtml(model.text)}</span>` +
-    (model.helper ? `<span class="rng-helper">${escapeHtml(model.helper)}</span>` : '');
+    (model.helper ? `<span class="rng-helper"> &middot; ${escapeHtml(model.helper)}</span>` : '');
   if (typeof updateHiddenBrushIndicator === 'function') updateHiddenBrushIndicator();
 }
 window.updateScheduleReadout = updateScheduleReadout;
@@ -173,6 +173,10 @@ function updateSeasonStaticLabels() {
   document.getElementById('season-planted-label').textContent = tr('seasonPlanted');
   document.getElementById('season-harvest-label').textContent = tr('seasonHarvest');
   document.getElementById('season-preset-label').textContent = tr('seasonPresetMonth');
+  document.getElementById('season-planted-month').setAttribute('aria-label', `${tr('seasonPlanted')} ${tr('seasonMonth')}`);
+  document.getElementById('season-planted-day').setAttribute('aria-label', `${tr('seasonPlanted')} ${tr('seasonDay')}`);
+  document.getElementById('season-harvest-month').setAttribute('aria-label', `${tr('seasonHarvest')} ${tr('seasonMonth')}`);
+  document.getElementById('season-harvest-day').setAttribute('aria-label', `${tr('seasonHarvest')} ${tr('seasonDay')}`);
 }
 
 window.updateSeasonStaticLabels = updateSeasonStaticLabels;

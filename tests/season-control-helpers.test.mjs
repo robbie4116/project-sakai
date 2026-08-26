@@ -8,6 +8,7 @@ const calendarSource = await readFile(new URL('../calendar.js', import.meta.url)
 
 function fakeElement(id = '') {
   const classes = new Set();
+  const attributes = new Map();
   return {
     id,
     value: '',
@@ -30,7 +31,8 @@ function fakeElement(id = '') {
     appendChild(child) { this.children.push(child); return child; },
     querySelectorAll() { return []; },
     addEventListener() {},
-    setAttribute() {},
+    setAttribute(name, value) { attributes.set(name, String(value)); },
+    getAttribute(name) { return attributes.get(name) || null; },
     getBoundingClientRect() { return { left: 0, width: 120 }; },
   };
 }
@@ -82,6 +84,10 @@ function loadHelpers(initialState = {}, tanimanOverrides = {}) {
         isBrushHiddenOnMap: () => false,
         tr: key => ({
           seasonPresentFromTo: '{crop} present from {start} to {end}',
+          seasonPlanted: 'Planted',
+          seasonHarvest: 'Harvest',
+          seasonMonth: 'Month',
+          seasonDay: 'Day',
           seasonContinuesNextYear: 'Continues into next year',
           seasonDateResetAllYear: 'Date reset to all year',
           seasonShortcutAll: 'All {month}',
@@ -103,7 +109,7 @@ function loadHelpers(initialState = {}, tanimanOverrides = {}) {
   vm.runInContext(seasonUtilsSource, context);
   context.window.TANIMAN.SeasonUtils = context.window.TANIMAN_SEASONS;
   vm.runInContext(calendarSource, context);
-  return { helpers: context.window.TANIMAN_SEASON_CONTROL, state, elements, shortcutButtons, saveCount: () => saveCount };
+  return { helpers: context.window.TANIMAN_SEASON_CONTROL, window: context.window, state, elements, shortcutButtons, saveCount: () => saveCount };
 }
 
 test('date parts convert to canonical MM-DD and readable labels', () => {
@@ -168,6 +174,27 @@ test('same-day and wrapped ranges format as valid readout states', () => {
   assert.equal(wrapped.helpers.readoutModel().wrapped, true);
   assert.match(wrapped.helpers.readoutModel().text, /Nov 15/);
   assert.match(wrapped.helpers.readoutModel().text, /May 5/);
+});
+
+test('schedule readout separates wrapped helper text in rendered HTML', () => {
+  const { window, elements } = loadHelpers({ paintStartDate: '11-15', paintEndDate: '05-05' });
+
+  window.updateScheduleReadout();
+
+  const readout = elements.get('sched-readout').innerHTML;
+  assert.match(readout, /<span class="rng">[^<]*May 5<\/span>/);
+  assert.match(readout, /<span class="rng-helper">\s+&middot;\s+Continues into next year<\/span>/);
+});
+
+test('season static labels assign distinct month and day accessible names', () => {
+  const { window, elements } = loadHelpers();
+
+  window.updateSeasonStaticLabels();
+
+  assert.equal(elements.get('season-planted-month').getAttribute('aria-label'), 'Planted Month');
+  assert.equal(elements.get('season-planted-day').getAttribute('aria-label'), 'Planted Day');
+  assert.equal(elements.get('season-harvest-month').getAttribute('aria-label'), 'Harvest Month');
+  assert.equal(elements.get('season-harvest-day').getAttribute('aria-label'), 'Harvest Day');
 });
 
 test('crop readout refresh does not mutate the active range', () => {

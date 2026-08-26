@@ -58,6 +58,8 @@ test('planting-harvest control strings exist in every supported language', () =>
     'schedulePlantingHarvest',
     'seasonPlanted',
     'seasonHarvest',
+    'seasonMonth',
+    'seasonDay',
     'seasonPresetMonth',
     'seasonPresentFromTo',
     'seasonContinuesNextYear',
