@@ -7,6 +7,21 @@ const calendarSource = await readFile(new URL('../calendar.js', import.meta.url)
 const appSource = await readFile(new URL('../app.js', import.meta.url), 'utf8');
 const styleSource = await readFile(new URL('../styles.css', import.meta.url), 'utf8');
 
+function mediaBlock(maxWidth) {
+  const marker = `@media (max-width: ${maxWidth}px){`;
+  const start = styleSource.indexOf(marker);
+  assert.notEqual(start, -1, `${marker} should exist`);
+  let depth = 0;
+  for (let i = start; i < styleSource.length; i += 1) {
+    if (styleSource[i] === '{') depth += 1;
+    if (styleSource[i] === '}') {
+      depth -= 1;
+      if (depth === 0) return styleSource.slice(start, i + 1);
+    }
+  }
+  throw new Error(`${marker} should close`);
+}
+
 test('schedule UI exposes planted and harvest month-day selectors', () => {
   assert.match(htmlSource, /id="season-planted-month"/);
   assert.match(htmlSource, /id="season-planted-day"/);
@@ -70,13 +85,17 @@ test('schedule editor stylesheet targets the date selector markup', () => {
 });
 
 test('schedule editor switches to touch layout before 720px can overflow', () => {
-  assert.match(styleSource, /@media\s*\(max-width:\s*780px\)\s*\{[\s\S]*\.schedule-bar\{[^}]*flex-direction:column/);
-  assert.match(styleSource, /@media\s*\(max-width:\s*780px\)\s*\{[\s\S]*\.season-editor\{[^}]*grid-template-columns:repeat\(2,minmax\(0,1fr\)\)/);
+  const scheduleMedia = mediaBlock(780);
+  assert.match(scheduleMedia, /\.schedule-bar\{[^}]*flex-direction:column/);
+  assert.match(scheduleMedia, /\.season-editor\{[^}]*grid-template-columns:repeat\(2,minmax\(0,1fr\)\)/);
+  assert.doesNotMatch(scheduleMedia, /\.scrubber-/);
+  assert.match(styleSource, /@media\s*\(max-width:\s*700px\)\{/);
 });
 
 test('schedule editor touch controls meet minimum mobile target height', () => {
-  assert.match(styleSource, /@media\s*\(max-width:\s*780px\)\s*\{[\s\S]*\.season-editor select\{[^}]*height:44px/);
-  assert.match(styleSource, /@media\s*\(max-width:\s*780px\)\s*\{[\s\S]*\.sched-quick button\{[^}]*height:44px/);
+  const scheduleMedia = mediaBlock(780);
+  assert.match(scheduleMedia, /\.season-editor select\{[^}]*height:44px/);
+  assert.match(scheduleMedia, /\.sched-quick button\{[^}]*height:44px/);
 });
 
 test('obsolete schedule track styles are removed from production CSS', () => {

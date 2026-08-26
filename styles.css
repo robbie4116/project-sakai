@@ -1067,6 +1067,19 @@ input,textarea{font:inherit;color:inherit;background:none;border:none;outline:no
 }
 
 @media (max-width: 780px){
+  .schedule-bar{padding:10px 14px;flex-direction:column;align-items:stretch;gap:10px}
+  .sched-head{align-items:flex-start}
+  .sched-readout{white-space:normal;text-align:right}
+  .sched-readout .rng-helper{white-space:normal}
+  .season-editor{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .season-date-group{grid-template-columns:minmax(0,1fr) 54px}
+  .season-preset-group{grid-column:1 / -1;grid-template-columns:minmax(0,1fr)}
+  .season-editor select{height:44px}
+  .sched-quick{max-width:none;display:grid;grid-template-columns:repeat(2,1fr);gap:6px}
+  .sched-quick button{width:100%;height:44px}
+}
+
+@media (max-width: 700px){
   html,body{overflow:hidden}
   .app{grid-template-rows:auto 1fr auto;min-width:0}
   .hdr{height:auto;min-height:68px;padding:8px 14px;gap:8px;align-items:center}
@@ -1097,17 +1110,6 @@ input,textarea{font:inherit;color:inherit;background:none;border:none;outline:no
   .ed-farmer-chip{max-width:100%;overflow:hidden;text-overflow:ellipsis}
   .ed-loc{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .ed-meta-toggle{order:3;width:100%;justify-content:center;height:38px}
-
-  .schedule-bar{padding:10px 14px;flex-direction:column;align-items:stretch;gap:10px}
-  .sched-head{align-items:flex-start}
-  .sched-readout{white-space:normal;text-align:right}
-  .sched-readout .rng-helper{white-space:normal}
-  .season-editor{grid-template-columns:repeat(2,minmax(0,1fr))}
-  .season-date-group{grid-template-columns:minmax(0,1fr) 54px}
-  .season-preset-group{grid-column:1 / -1;grid-template-columns:minmax(0,1fr)}
-  .season-editor select{height:44px}
-  .sched-quick{max-width:none;display:grid;grid-template-columns:repeat(2,1fr);gap:6px}
-  .sched-quick button{width:100%;height:44px}
 
   .ed-body{grid-template-columns:1fr;grid-template-rows:auto auto;min-width:0}
   .canvas-zone{padding:14px;align-items:stretch}
