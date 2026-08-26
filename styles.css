@@ -476,20 +476,22 @@ input,textarea{font:inherit;color:inherit;background:none;border:none;outline:no
   white-space:nowrap;
 }
 .season-editor{
-  display:grid;
-  grid-template-columns:minmax(150px, 1fr) minmax(150px, 1fr);
-  gap:8px;
-  align-items:stretch;
+  display:flex;
+  flex-wrap:wrap;
+  align-items:center;
+  gap:10px;
 }
 .season-date-group{
-  min-width:0;
-  padding:6px;
-  border-radius:8px;
-  background:var(--bg-2);
-  border:1px solid var(--border);
-  display:grid;
-  grid-template-columns:minmax(70px, 1fr) 58px;
-  gap:5px;
+  display:flex;
+  align-items:center;
+  gap:6px;
+}
+.season-date-group:first-child::after{
+  content:"\2192";
+  margin-left:4px;
+  color:var(--muted);
+  font-size:15px;
+  line-height:1;
 }
 .season-date-label{
   color:var(--muted);
@@ -499,19 +501,16 @@ input,textarea{font:inherit;color:inherit;background:none;border:none;outline:no
   text-transform:uppercase;
   line-height:1;
   white-space:nowrap;
-  overflow:hidden;
-  text-overflow:ellipsis;
-  grid-column:1 / -1;
+  margin-right:2px;
 }
 .season-editor select{
-  width:100%;
-  min-width:0;
+  width:auto;
   height:30px;
   padding:0 8px;
   border-radius:6px;
-  border:1px solid transparent;
+  border:1px solid var(--border);
   outline:0;
-  background:var(--surface);
+  background:var(--bg-2);
   color:var(--text);
   font-family:'IBM Plex Mono',monospace;
   font-size:13px;
@@ -1048,8 +1047,7 @@ input,textarea{font:inherit;color:inherit;background:none;border:none;outline:no
   .sched-head{align-items:flex-start}
   .sched-readout{white-space:normal;text-align:right}
   .sched-readout .rng-helper{white-space:normal}
-  .season-editor{grid-template-columns:repeat(2,minmax(0,1fr))}
-  .season-date-group{grid-template-columns:minmax(0,1fr) 54px}
+  .season-editor{gap:8px 12px}
   .season-editor select{height:44px}
 }
 

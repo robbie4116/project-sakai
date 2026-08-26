@@ -87,7 +87,7 @@ test('schedule editor stylesheet targets the date selector markup', () => {
 test('schedule editor switches to touch layout before 720px can overflow', () => {
   const scheduleMedia = mediaBlock(780);
   assert.match(scheduleMedia, /\.schedule-bar\{[^}]*flex-direction:column/);
-  assert.match(scheduleMedia, /\.season-editor\{[^}]*grid-template-columns:repeat\(2,minmax\(0,1fr\)\)/);
+  assert.match(styleSource, /\.season-editor\{[^}]*flex-wrap:wrap/);
   assert.doesNotMatch(scheduleMedia, /\.scrubber-/);
   assert.match(styleSource, /@media\s*\(max-width:\s*700px\)\{/);
 });
