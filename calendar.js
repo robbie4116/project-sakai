@@ -111,7 +111,10 @@ function monthMaskForSeason(start, end) {
 }
 
 function normalizeActivePaintRange({ save = true } = {}) {
-  if (isValidMmdd(state.paintStartDate) && isValidMmdd(state.paintEndDate)) {
+  const shouldRecover = !!window.TANIMAN.invalidActivePaintRangeAtStartup ||
+    !isValidMmdd(state.paintStartDate) ||
+    !isValidMmdd(state.paintEndDate);
+  if (!shouldRecover) {
     state.paintMonths = monthMaskForSeason(state.paintStartDate, state.paintEndDate);
     return false;
   }
@@ -119,6 +122,7 @@ function normalizeActivePaintRange({ save = true } = {}) {
   state.paintEndDate = '12-31';
   state.paintMonths = monthMaskForSeason(state.paintStartDate, state.paintEndDate);
   activeDateReset = true;
+  window.TANIMAN.invalidActivePaintRangeAtStartup = false;
   if (save) window.TANIMAN.schedSave();
   return true;
 }

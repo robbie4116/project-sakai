@@ -107,8 +107,12 @@ const state = loadState() || {
 };
 
 // fill in any missing keys (state was loaded from a previous version)
-if (!isValidMmdd(state.paintStartDate)) state.paintStartDate = '01-01';
-if (!isValidMmdd(state.paintEndDate)) state.paintEndDate = '12-31';
+const invalidActivePaintRangeAtStartup =
+  !isValidMmdd(state.paintStartDate) || !isValidMmdd(state.paintEndDate);
+if (invalidActivePaintRangeAtStartup) {
+  state.paintStartDate = '01-01';
+  state.paintEndDate = '12-31';
+}
 if (state.viewMonth === undefined) state.viewMonth = -1;
 state.viewMonths = normalizeViewMonths(state.viewMonths, state.viewMonth);
 state.viewMonth = viewMonthFromMask(state.viewMonths);
@@ -1864,4 +1868,5 @@ window.TANIMAN = {
   shouldAutoSwitchViewMonths, isBrushHiddenOnMap,
   renderCanvas, drawPlotsOnMap, updateMapPlot, updateLegend, updatePlotHeader,
   saveState, tr, schedSave, visiblePlots,
+  invalidActivePaintRangeAtStartup,
 };

@@ -43,3 +43,8 @@ test('calendar wires planting-harvest selectors through one range update path', 
 test('app language binding does not target removed quarter filter ids', () => {
   assert.doesNotMatch(appSource, /getElementById\('q-(all|rainy|cool|hot)'\)/);
 });
+
+test('app exposes startup active paint date recovery to calendar', () => {
+  assert.match(appSource, /invalidActivePaintRangeAtStartup/);
+  assert.match(appSource, /!isValidMmdd\(state\.paintStartDate\)\s*\|\|\s*!isValidMmdd\(state\.paintEndDate\)/);
+});

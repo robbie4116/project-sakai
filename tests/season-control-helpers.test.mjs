@@ -35,7 +35,7 @@ function fakeElement(id = '') {
   };
 }
 
-function loadHelpers(initialState = {}) {
+function loadHelpers(initialState = {}, tanimanOverrides = {}) {
   const elements = new Map();
   const shortcutButtons = ['whole', 'early', 'mid', 'late'].map(kind => {
     const el = fakeElement(`shortcut-${kind}`);
@@ -94,6 +94,7 @@ function loadHelpers(initialState = {}) {
         renderCanvas() {},
         drawPlotsOnMap() {},
         updateLegend() {},
+        ...tanimanOverrides,
       },
     },
     document,
@@ -125,6 +126,23 @@ test('invalid active dates recover to all year and recompute paint months', () =
   assert.equal(state.paintStartDate, '01-01');
   assert.equal(state.paintEndDate, '12-31');
   assert.equal(state.paintMonths, (1 << 12) - 1);
+  assert.equal(saveCount() > 0, true);
+});
+
+test('startup-invalid marker forces full recovery after app.js safety normalization', () => {
+  const { helpers, state, elements, saveCount } = loadHelpers(
+    { paintStartDate: '01-01', paintEndDate: '06-30', paintMonths: 1 },
+    { invalidActivePaintRangeAtStartup: true },
+  );
+
+  assert.equal(state.paintStartDate, '01-01');
+  assert.equal(state.paintEndDate, '12-31');
+  assert.equal(state.paintMonths, (1 << 12) - 1);
+  assert.equal(elements.get('season-planted-month').value, '1');
+  assert.equal(elements.get('season-planted-day').value, '1');
+  assert.equal(elements.get('season-harvest-month').value, '12');
+  assert.equal(elements.get('season-harvest-day').value, '31');
+  assert.equal(helpers.readoutModel().helper, 'Date reset to all year');
   assert.equal(saveCount() > 0, true);
 });
 
