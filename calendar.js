@@ -257,7 +257,9 @@ function updateSelectedShortcut(presetMonth) {
   const month = Number(presetMonth || document.getElementById('season-preset-month')?.value);
   const selected = shortcutKindForRange(state.paintStartDate, state.paintEndDate, month);
   document.querySelectorAll('[data-season-shortcut]').forEach(btn => {
-    btn.classList.toggle('on', !!selected && btn.dataset.seasonShortcut === selected);
+    const isSelected = !!selected && btn.dataset.seasonShortcut === selected;
+    btn.classList.toggle('on', isSelected);
+    btn.setAttribute('aria-pressed', isSelected ? 'true' : 'false');
   });
 }
 

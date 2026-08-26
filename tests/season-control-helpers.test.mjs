@@ -222,9 +222,13 @@ test('shortcut apply uses shortcutRange and updates selectors', () => {
 test('selected shortcut state appears only for the matching preset shortcut', () => {
   const { helpers, shortcutButtons } = loadHelpers({ paintStartDate: '06-21', paintEndDate: '06-30' });
   helpers.updateSelectedShortcut(6);
-  assert.equal(shortcutButtons.find(btn => btn.dataset.seasonShortcut === 'late').classList.contains('on'), true);
+  const lateButton = shortcutButtons.find(btn => btn.dataset.seasonShortcut === 'late');
+  assert.equal(lateButton.classList.contains('on'), true);
+  assert.equal(lateButton.getAttribute('aria-pressed'), 'true');
   assert.equal(shortcutButtons.filter(btn => btn.dataset.seasonShortcut !== 'late').some(btn => btn.classList.contains('on')), false);
+  assert.equal(shortcutButtons.filter(btn => btn.dataset.seasonShortcut !== 'late').some(btn => btn.getAttribute('aria-pressed') !== 'false'), false);
 
   helpers.updateSelectedShortcut(7);
   assert.equal(shortcutButtons.some(btn => btn.classList.contains('on')), false);
+  assert.equal(shortcutButtons.some(btn => btn.getAttribute('aria-pressed') !== 'false'), false);
 });

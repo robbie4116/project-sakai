@@ -37,6 +37,12 @@ test('schedule UI exposes planted and harvest month-day selectors', () => {
   assert.doesNotMatch(htmlSource, /id="sched-track"/);
 });
 
+test('schedule shortcut buttons expose pressed state semantics', () => {
+  for (const kind of ['whole', 'early', 'mid', 'late']) {
+    assert.match(htmlSource, new RegExp(`<button[^>]*data-season-shortcut="${kind}"[^>]*aria-pressed="false"`));
+  }
+});
+
 test('date selectors defer distinct accessible names to runtime aria labels', () => {
   for (const id of [
     'season-planted-month',

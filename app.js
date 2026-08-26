@@ -1789,7 +1789,7 @@ document.getElementById('prev-btn').onclick = ()=>openPlot(adjacentVisiblePlotId
 document.getElementById('next-btn').onclick = ()=>openPlot(adjacentVisiblePlotIdx(state.plotIdx, 1));
 
 document.addEventListener('keydown', (e)=>{
-  if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
   if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'z' || e.key === 'Z')) { e.preventDefault(); redo(); return; }
   if ((e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'Z')){ e.preventDefault(); undo(); return; }
   if (e.key === 'ArrowLeft') openPlot(adjacentVisiblePlotIdx(state.plotIdx, -1));

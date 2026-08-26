@@ -27,3 +27,9 @@ test('keyboard crop shortcuts are bounded by the active crop list', () => {
   assert.match(appSource, /\+e\.key\s*<=\s*CROPS\.length/);
   assert.doesNotMatch(appSource, /e\.key === '4'/);
 });
+
+test('global keyboard shortcuts ignore focused form controls', () => {
+  assert.match(appSource, /tagName\s*===\s*'INPUT'/);
+  assert.match(appSource, /tagName\s*===\s*'TEXTAREA'/);
+  assert.match(appSource, /tagName\s*===\s*'SELECT'/);
+});
