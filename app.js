@@ -1283,7 +1283,8 @@ function applyLang(){
   document.getElementById('map-title').textContent = tr('mapTitle');
   document.getElementById('lab-brush').textContent = tr('brush');
   document.getElementById('lab-crop').textContent = tr('crop');
-  document.getElementById('sched-label').textContent = tr('schedule');
+  if (typeof updateSeasonStaticLabels === 'function') updateSeasonStaticLabels();
+  else document.getElementById('sched-label').textContent = tr('schedulePlantingHarvest');
   document.getElementById('scrub-label').textContent = tr('showing');
   setLegendCollapsed(document.getElementById('map-legend').classList.contains('collapsed'));
   document.getElementById('btn-undo-txt').textContent = tr('undo');
@@ -1306,6 +1307,7 @@ function applyLang(){
   updatePlotHeader();
   updateLegend();
   if (typeof updateScheduleReadout === 'function') updateScheduleReadout();
+  if (typeof updateShortcutLabels === 'function') updateShortcutLabels();
   if (typeof updateScrubberReadout === 'function') updateScrubberReadout();
 }
 

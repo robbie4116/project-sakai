@@ -109,10 +109,21 @@
             <span class="sched-label" id="sched-label">Schedule · when planted</span>
             <span class="sched-readout" id="sched-readout"></span>
           </div>
-          <div class="season-fields">
-            <label>Start <input id="season-start" inputmode="numeric" maxlength="5" placeholder="MM-DD"></label>
-            <label>End <input id="season-end" inputmode="numeric" maxlength="5" placeholder="MM-DD"></label>
-            <select id="season-month" aria-label="Shortcut month"></select>
+          <div class="season-editor" aria-labelledby="sched-label">
+            <div class="season-date-group">
+              <span class="season-date-label" id="season-planted-label"></span>
+              <select id="season-planted-month" aria-labelledby="season-planted-label"></select>
+              <select id="season-planted-day" aria-labelledby="season-planted-label"></select>
+            </div>
+            <div class="season-date-group">
+              <span class="season-date-label" id="season-harvest-label"></span>
+              <select id="season-harvest-month" aria-labelledby="season-harvest-label"></select>
+              <select id="season-harvest-day" aria-labelledby="season-harvest-label"></select>
+            </div>
+            <div class="season-preset-group">
+              <span class="season-date-label" id="season-preset-label"></span>
+              <select id="season-preset-month" aria-labelledby="season-preset-label"></select>
+            </div>
           </div>
         </div>
         <div class="sched-quick">
