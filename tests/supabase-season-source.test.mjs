@@ -15,3 +15,7 @@ test('supabase setup resets plots with seasons jsonb', () => {
   assert.match(sqlSource, /drop table if exists public\.plots/);
   assert.match(sqlSource, /seasons\s+jsonb\s+not null\s+default '\[\]'/);
 });
+
+test('supabase setup does not directly delete protected storage rows', () => {
+  assert.doesNotMatch(sqlSource, /delete\s+from\s+storage\.objects/i);
+});

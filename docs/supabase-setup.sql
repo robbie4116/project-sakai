@@ -30,7 +30,6 @@ drop policy if exists "public_photo_read" on storage.objects;
 create policy "public_photo_read" on storage.objects
   for select using (bucket_id = 'photos');
 
--- Optional clean slate for uploaded plot photos. This may require project owner
--- or service-role privileges; skip it if storage cleanup is not needed.
-delete from storage.objects
-where bucket_id = 'photos';
+-- This script intentionally does not delete rows from storage.objects.
+-- Supabase blocks direct storage table deletion in SQL Editor; clean uploaded
+-- photos separately through the Storage dashboard or Storage API if needed.
