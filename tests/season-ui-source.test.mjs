@@ -69,6 +69,16 @@ test('schedule editor stylesheet targets the date selector markup', () => {
   assert.match(styleSource, /\.sched-quick button\.on\b/);
 });
 
+test('schedule editor switches to touch layout before 720px can overflow', () => {
+  assert.match(styleSource, /@media\s*\(max-width:\s*780px\)\s*\{[\s\S]*\.schedule-bar\{[^}]*flex-direction:column/);
+  assert.match(styleSource, /@media\s*\(max-width:\s*780px\)\s*\{[\s\S]*\.season-editor\{[^}]*grid-template-columns:repeat\(2,minmax\(0,1fr\)\)/);
+});
+
+test('schedule editor touch controls meet minimum mobile target height', () => {
+  assert.match(styleSource, /@media\s*\(max-width:\s*780px\)\s*\{[\s\S]*\.season-editor select\{[^}]*height:44px/);
+  assert.match(styleSource, /@media\s*\(max-width:\s*780px\)\s*\{[\s\S]*\.sched-quick button\{[^}]*height:44px/);
+});
+
 test('obsolete schedule track styles are removed from production CSS', () => {
   assert.doesNotMatch(styleSource, /\.sched-track\b/);
   assert.doesNotMatch(styleSource, /\.sched-track-fill\b/);
