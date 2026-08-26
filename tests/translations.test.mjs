@@ -60,14 +60,9 @@ test('planting-harvest control strings exist in every supported language', () =>
     'seasonHarvest',
     'seasonMonth',
     'seasonDay',
-    'seasonPresetMonth',
     'seasonPresentFromTo',
     'seasonContinuesNextYear',
     'seasonDateResetAllYear',
-    'seasonShortcutAll',
-    'seasonShortcutEarly',
-    'seasonShortcutMid',
-    'seasonShortcutLate',
   ];
 
   for (const lang of ['en', 'tl', 'il']) {
@@ -78,10 +73,5 @@ test('planting-harvest control strings exist in every supported language', () =>
     assert.match(STRINGS[lang].seasonPresentFromTo, /\{crop\}/);
     assert.match(STRINGS[lang].seasonPresentFromTo, /\{start\}/);
     assert.match(STRINGS[lang].seasonPresentFromTo, /\{end\}/);
-    assert.match(STRINGS[lang].seasonShortcutAll, /\{month\}/);
-    assert.match(STRINGS[lang].seasonShortcutEarly, /\{month\}/);
-    assert.match(STRINGS[lang].seasonShortcutMid, /\{month\}/);
-    assert.match(STRINGS[lang].seasonShortcutLate, /\{month\}/);
-    assert.match(STRINGS[lang].seasonShortcutLate, /\{lastDay\}/);
   }
 });

@@ -1311,7 +1311,6 @@ function applyLang(){
   updatePlotHeader();
   updateLegend();
   if (typeof updateScheduleReadout === 'function') updateScheduleReadout();
-  if (typeof updateShortcutLabels === 'function') updateShortcutLabels();
   if (typeof updateScrubberReadout === 'function') updateScrubberReadout();
 }
 

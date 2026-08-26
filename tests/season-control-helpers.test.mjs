@@ -152,19 +152,6 @@ test('startup-invalid marker forces full recovery after app.js safety normalizat
   assert.equal(saveCount() > 0, true);
 });
 
-test('preset month label changes do not mutate the active range', () => {
-  const { helpers, state } = loadHelpers({ paintStartDate: '06-21', paintEndDate: '06-30' });
-  helpers.shortcutLabelsForPreset(7);
-  assert.equal(state.paintStartDate, '06-21');
-  assert.equal(state.paintEndDate, '06-30');
-});
-
-test('shortcut matching identifies only the active preset range', () => {
-  const { helpers } = loadHelpers();
-  assert.equal(helpers.shortcutKindForRange('06-21', '06-30', 6), 'late');
-  assert.equal(helpers.shortcutKindForRange('06-21', '06-30', 7), null);
-});
-
 test('same-day and wrapped ranges format as valid readout states', () => {
   const sameDay = loadHelpers({ paintStartDate: '06-21', paintEndDate: '06-21' });
   assert.equal(sameDay.helpers.readoutModel().wrapped, false);
@@ -208,27 +195,10 @@ test('crop readout refresh does not mutate the active range', () => {
   assert.equal(state.paintEndDate, '06-30');
 });
 
-test('shortcut apply uses shortcutRange and updates selectors', () => {
-  const { helpers, state, elements } = loadHelpers({ paintStartDate: '01-01', paintEndDate: '12-31' });
-  helpers.applyShortcut('late', 6);
-  assert.equal(state.paintStartDate, '06-21');
-  assert.equal(state.paintEndDate, '06-30');
-  assert.equal(elements.get('season-planted-month').value, '6');
-  assert.equal(elements.get('season-planted-day').value, '21');
-  assert.equal(elements.get('season-harvest-month').value, '6');
-  assert.equal(elements.get('season-harvest-day').value, '30');
-});
-
-test('selected shortcut state appears only for the matching preset shortcut', () => {
-  const { helpers, shortcutButtons } = loadHelpers({ paintStartDate: '06-21', paintEndDate: '06-30' });
-  helpers.updateSelectedShortcut(6);
-  const lateButton = shortcutButtons.find(btn => btn.dataset.seasonShortcut === 'late');
-  assert.equal(lateButton.classList.contains('on'), true);
-  assert.equal(lateButton.getAttribute('aria-pressed'), 'true');
-  assert.equal(shortcutButtons.filter(btn => btn.dataset.seasonShortcut !== 'late').some(btn => btn.classList.contains('on')), false);
-  assert.equal(shortcutButtons.filter(btn => btn.dataset.seasonShortcut !== 'late').some(btn => btn.getAttribute('aria-pressed') !== 'false'), false);
-
-  helpers.updateSelectedShortcut(7);
-  assert.equal(shortcutButtons.some(btn => btn.classList.contains('on')), false);
-  assert.equal(shortcutButtons.some(btn => btn.getAttribute('aria-pressed') !== 'false'), false);
+test('season control no longer exposes preset or shortcut helpers', () => {
+  const { helpers } = loadHelpers();
+  assert.equal(helpers.shortcutLabelsForPreset, undefined);
+  assert.equal(helpers.shortcutKindForRange, undefined);
+  assert.equal(helpers.applyShortcut, undefined);
+  assert.equal(helpers.updateSelectedShortcut, undefined);
 });

@@ -27,20 +27,15 @@ test('schedule UI exposes planted and harvest month-day selectors', () => {
   assert.match(htmlSource, /id="season-planted-day"/);
   assert.match(htmlSource, /id="season-harvest-month"/);
   assert.match(htmlSource, /id="season-harvest-day"/);
-  assert.match(htmlSource, /id="season-preset-month"/);
-  assert.match(htmlSource, /data-season-shortcut="whole"/);
-  assert.match(htmlSource, /data-season-shortcut="early"/);
-  assert.match(htmlSource, /data-season-shortcut="mid"/);
-  assert.match(htmlSource, /data-season-shortcut="late"/);
   assert.doesNotMatch(htmlSource, /id="season-start"/);
   assert.doesNotMatch(htmlSource, /id="season-end"/);
   assert.doesNotMatch(htmlSource, /id="sched-track"/);
 });
 
-test('schedule shortcut buttons expose pressed state semantics', () => {
-  for (const kind of ['whole', 'early', 'mid', 'late']) {
-    assert.match(htmlSource, new RegExp(`<button[^>]*data-season-shortcut="${kind}"[^>]*aria-pressed="false"`));
-  }
+test('schedule UI no longer exposes preset month or shortcut buttons', () => {
+  assert.doesNotMatch(htmlSource, /id="season-preset-month"/);
+  assert.doesNotMatch(htmlSource, /data-season-shortcut/);
+  assert.doesNotMatch(htmlSource, /class="sched-quick"/);
 });
 
 test('date selectors defer distinct accessible names to runtime aria labels', () => {
@@ -58,16 +53,15 @@ test('calendar wires planting-harvest selectors through one range update path', 
   assert.match(calendarSource, /function setPaintSeasonRange/);
   assert.match(calendarSource, /function syncSeasonSelectors/);
   assert.match(calendarSource, /function updateDayOptions/);
-  assert.match(calendarSource, /function updateShortcutLabels/);
-  assert.match(calendarSource, /function updateSelectedShortcut/);
   assert.match(calendarSource, /season-planted-month/);
   assert.match(calendarSource, /season-planted-day/);
   assert.match(calendarSource, /season-harvest-month/);
   assert.match(calendarSource, /season-harvest-day/);
-  assert.match(calendarSource, /season-preset-month/);
-  assert.match(calendarSource, /shortcutRange/);
   assert.match(calendarSource, /state\.paintStartDate/);
   assert.match(calendarSource, /state\.paintEndDate/);
+  assert.doesNotMatch(calendarSource, /season-preset-month/);
+  assert.doesNotMatch(calendarSource, /shortcutRange/);
+  assert.doesNotMatch(calendarSource, /data-season-shortcut/);
   assert.doesNotMatch(calendarSource, /season-start/);
   assert.doesNotMatch(calendarSource, /season-end/);
   assert.doesNotMatch(calendarSource, /['"`#.]season-month\b/);
@@ -85,9 +79,9 @@ test('app exposes startup active paint date recovery to calendar', () => {
 test('schedule editor stylesheet targets the date selector markup', () => {
   assert.match(styleSource, /\.season-editor\b/);
   assert.match(styleSource, /\.season-date-group\b/);
-  assert.match(styleSource, /\.season-preset-group\b/);
   assert.match(styleSource, /\.sched-readout\s+\.rng-helper\b/);
-  assert.match(styleSource, /\.sched-quick button\.on\b/);
+  assert.doesNotMatch(styleSource, /\.season-preset-group\b/);
+  assert.doesNotMatch(styleSource, /\.sched-quick\b/);
 });
 
 test('schedule editor switches to touch layout before 720px can overflow', () => {
@@ -101,7 +95,6 @@ test('schedule editor switches to touch layout before 720px can overflow', () =>
 test('schedule editor touch controls meet minimum mobile target height', () => {
   const scheduleMedia = mediaBlock(780);
   assert.match(scheduleMedia, /\.season-editor select\{[^}]*height:44px/);
-  assert.match(scheduleMedia, /\.sched-quick button\{[^}]*height:44px/);
 });
 
 test('obsolete schedule track styles are removed from production CSS', () => {

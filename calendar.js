@@ -7,7 +7,7 @@ const {
   SeasonUtils, monthsBetween, normalizeViewMonths, viewMonthFromMask,
   maskToDisplayLabel, isBrushHiddenOnMap, tr,
 } = window.TANIMAN;
-const { isValidMmdd, shortcutRange, rangeWrapsYear } = SeasonUtils;
+const { isValidMmdd, rangeWrapsYear } = SeasonUtils;
 
 let scrubStart = 0, scrubEnd = 11;
 let activeDateReset = false;
@@ -75,27 +75,6 @@ function clampDayForMonth(day, month) {
   const d = Number(day);
   if (!Number.isFinite(d) || d < 1) return 1;
   return Math.min(Math.trunc(d), max);
-}
-
-function shortcutLabelsForPreset(month) {
-  const m = Number(month);
-  const label = monthShortLabel(m);
-  const lastDay = SeasonUtils.MONTH_DAYS[m - 1];
-  return {
-    whole: tr('seasonShortcutAll').replace('{month}', label),
-    early: tr('seasonShortcutEarly').replace('{month}', label),
-    mid: tr('seasonShortcutMid').replace('{month}', label),
-    late: tr('seasonShortcutLate').replace('{month}', label).replace('{lastDay}', lastDay),
-  };
-}
-
-function shortcutKindForRange(start, end, presetMonth) {
-  const month = Number(presetMonth);
-  for (const kind of ['whole', 'early', 'mid', 'late']) {
-    const range = shortcutRange(month, kind);
-    if (range && range.start === start && range.end === end) return kind;
-  }
-  return null;
 }
 
 function monthMaskForSeason(start, end) {
@@ -172,7 +151,6 @@ function updateSeasonStaticLabels() {
   document.getElementById('sched-label').textContent = tr('schedulePlantingHarvest');
   document.getElementById('season-planted-label').textContent = tr('seasonPlanted');
   document.getElementById('season-harvest-label').textContent = tr('seasonHarvest');
-  document.getElementById('season-preset-label').textContent = tr('seasonPresetMonth');
   document.getElementById('season-planted-month').setAttribute('aria-label', `${tr('seasonPlanted')} ${tr('seasonMonth')}`);
   document.getElementById('season-planted-day').setAttribute('aria-label', `${tr('seasonPlanted')} ${tr('seasonDay')}`);
   document.getElementById('season-harvest-month').setAttribute('aria-label', `${tr('seasonHarvest')} ${tr('seasonMonth')}`);
@@ -202,10 +180,6 @@ function populateMonthSelect(select, { short = false } = {}) {
 function populateSeasonMonthSelects() {
   populateMonthSelect(document.getElementById('season-planted-month'), { short: true });
   populateMonthSelect(document.getElementById('season-harvest-month'), { short: true });
-  const presetMonth = document.getElementById('season-preset-month');
-  populateMonthSelect(presetMonth);
-  const start = mmddToParts(state.paintStartDate);
-  if (presetMonth && start) presetMonth.value = String(start.month);
 }
 
 function updateDayOptions(monthSelect, daySelect, desiredDay = Number(daySelect.value) || 1) {
@@ -229,7 +203,6 @@ function syncSeasonSelectors({ normalize = true } = {}) {
   const plantedDay = document.getElementById('season-planted-day');
   const harvestMonth = document.getElementById('season-harvest-month');
   const harvestDay = document.getElementById('season-harvest-day');
-  const presetMonth = document.getElementById('season-preset-month');
   const start = mmddToParts(state.paintStartDate);
   const end = mmddToParts(state.paintEndDate);
   if (!plantedMonth || !plantedDay || !harvestMonth || !harvestDay || !start || !end) return;
@@ -238,29 +211,6 @@ function syncSeasonSelectors({ normalize = true } = {}) {
   updateDayOptions(plantedMonth, plantedDay, start.day);
   harvestMonth.value = String(end.month);
   updateDayOptions(harvestMonth, harvestDay, end.day);
-  if (presetMonth && !presetMonth.value) presetMonth.value = String(start.month);
-}
-
-function updateShortcutLabels() {
-  const preset = document.getElementById('season-preset-month');
-  if (!preset) return;
-  const labels = shortcutLabelsForPreset(Number(preset.value));
-  document.querySelectorAll('[data-season-shortcut]').forEach(btn => {
-    const label = labels[btn.dataset.seasonShortcut];
-    if (label) btn.textContent = label;
-  });
-  updateSelectedShortcut(Number(preset.value));
-}
-window.updateShortcutLabels = updateShortcutLabels;
-
-function updateSelectedShortcut(presetMonth) {
-  const month = Number(presetMonth || document.getElementById('season-preset-month')?.value);
-  const selected = shortcutKindForRange(state.paintStartDate, state.paintEndDate, month);
-  document.querySelectorAll('[data-season-shortcut]').forEach(btn => {
-    const isSelected = !!selected && btn.dataset.seasonShortcut === selected;
-    btn.classList.toggle('on', isSelected);
-    btn.setAttribute('aria-pressed', isSelected ? 'true' : 'false');
-  });
 }
 
 function setPaintSeasonRange(start, end) {
@@ -270,13 +220,7 @@ function setPaintSeasonRange(start, end) {
   normalizeActivePaintRange({ save: false });
   syncSeasonSelectors({ normalize: false });
   updateScheduleReadout();
-  updateSelectedShortcut();
   window.TANIMAN.schedSave();
-}
-
-function applyShortcut(kind, presetMonth) {
-  const range = shortcutRange(Number(presetMonth), kind);
-  if (range) setPaintSeasonRange(range.start, range.end);
 }
 
 window.TANIMAN_SEASON_CONTROL = {
@@ -284,12 +228,8 @@ window.TANIMAN_SEASON_CONTROL = {
   mmddToParts,
   formatMmdd,
   clampDayForMonth,
-  shortcutLabelsForPreset,
-  shortcutKindForRange,
   normalizeActivePaintRange,
   readoutModel,
-  applyShortcut,
-  updateSelectedShortcut,
 };
 
 function nearestMonth(track, clientX){
@@ -305,8 +245,7 @@ function wireSeasonPicker() {
   const plantedDay = document.getElementById('season-planted-day');
   const harvestMonth = document.getElementById('season-harvest-month');
   const harvestDay = document.getElementById('season-harvest-day');
-  const preset = document.getElementById('season-preset-month');
-  if (!plantedMonth || !plantedDay || !harvestMonth || !harvestDay || !preset) return;
+  if (!plantedMonth || !plantedDay || !harvestMonth || !harvestDay) return;
 
   const setFromSelectors = () => setPaintSeasonRange(
     partsToMmdd(plantedMonth.value, plantedDay.value),
@@ -322,14 +261,6 @@ function wireSeasonPicker() {
     setFromSelectors();
   });
   harvestDay.addEventListener('change', setFromSelectors);
-  preset.addEventListener('change', () => {
-    updateShortcutLabels();
-    updateSelectedShortcut(Number(preset.value));
-  });
-
-  document.querySelectorAll('[data-season-shortcut]').forEach(btn => {
-    btn.addEventListener('click', () => applyShortcut(btn.dataset.seasonShortcut, Number(preset.value)));
-  });
 }
 
 // ── MAP MONTH SCRUBBER LOGIC ──────────────────────────────────────
@@ -431,7 +362,6 @@ populateSeasonMonthSelects();
 normalizeActivePaintRange();
 syncSeasonSelectors({ normalize: false });
 updateSeasonStaticLabels();
-updateShortcutLabels();
 wireSeasonPicker();
 wireScrubber();
 updateScheduleReadout();
