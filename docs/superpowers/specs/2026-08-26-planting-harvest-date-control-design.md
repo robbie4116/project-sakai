@@ -40,6 +40,8 @@ The control should communicate this sentence:
 Potato present from Jun 21 to Jun 30
 ```
 
+All new visible strings must use the app's existing translation system. The implementation should add translation keys for English, Tagalog, and Ilocano wherever the app currently stores UI copy. This includes the lifecycle label, date labels, preset labels, shortcut labels, wrapped-range helper text, and invalid-state message.
+
 The visible editing controls should use separate month and day selectors instead of freeform `MM-DD` typing:
 
 ```text
@@ -87,6 +89,8 @@ The UI may add a small neutral helper for wrapped ranges:
 Continues into next year
 ```
 
+The exact wording should come from translation keys, not hard-coded English strings.
+
 The date selectors are:
 
 - planted month
@@ -106,6 +110,10 @@ Shortcut buttons are generated from the preset month. If the preset month is Jun
 Clicking a shortcut updates all four planted/harvest selectors and then updates app state through the same existing state path used by manual selector changes.
 
 The shortcut matching the active planted/harvest range should show a selected state. If the range does not match one of the preset shortcuts, no shortcut is selected.
+
+Changing the selected crop updates the crop dot and crop name in the readout only. It must not reset the planted/harvest date range.
+
+Changing the preset month updates shortcut labels only. It must not change the planted/harvest date range until the user clicks a shortcut.
 
 ## Data And State
 
@@ -152,6 +160,10 @@ The pure calendar rules should continue to come from `season-utils.js`, especial
 
 The implementation should avoid duplicating date validity rules across files.
 
+Translation keys should be read through the same translation path used by the current schedule and map UI. Date formatting may keep month abbreviations from the app's existing month name arrays, but surrounding words such as `present from`, `to`, and `continues into next year` should be translated.
+
+The visual styling belongs in `styles.css`. The implementation should update schedule-specific CSS there and remove obsolete schedule-track styles when they are no longer referenced by the markup or script.
+
 ## Markup Scope
 
 Update the schedule bar in `taniman.html`.
@@ -171,7 +183,20 @@ Recommended IDs:
 - `season-harvest-day`
 - `season-preset-month`
 
-The existing shortcut mechanism may continue using `data-season-shortcut`, but the labels should be dynamic.
+These IDs are required unless the implementation deliberately introduces a different binding map in one place and updates the tests to match that binding.
+
+The existing shortcut mechanism should continue using `data-season-shortcut`, but the labels should be dynamic.
+
+Translation keys should cover at least:
+
+- lifecycle label: `Planting to harvest`
+- planted date label: `Planted`
+- harvest date label: `Harvest`
+- preset month label: `Preset month`
+- readout phrase: `{crop} present from {start} to {end}`
+- wrapped helper: `Continues into next year`
+- invalid fallback helper: `Date reset to all year`
+- shortcut labels: `All {month}`, `{month} 1-10`, `{month} 11-20`, `{month} 21-{lastDay}`
 
 ## Visual Design
 
@@ -204,6 +229,17 @@ If existing state somehow contains an invalid date, the UI should recover withou
 01-01 to 12-31
 ```
 
+The fallback behavior is exact:
+
+1. Normalize `state.paintStartDate` to `01-01`.
+2. Normalize `state.paintEndDate` to `12-31`.
+3. Recompute `state.paintMonths` from the normalized range.
+4. Sync the planted/harvest month/day selectors to the normalized values.
+5. Update the readout.
+6. Trigger the same schedule save path used by normal date changes so later painting and persistence use the recovered valid range.
+
+This fallback affects only the active paint range. It does not mutate already saved season records. Invalid saved season records remain governed by the existing render/export validation behavior.
+
 Same-day ranges remain valid.
 
 Wrapped annual ranges remain valid.
@@ -224,6 +260,19 @@ Add focused source tests for the redesigned control:
 - `calendar.js` uses `shortcutRange` for shortcut behavior.
 - `calendar.js` updates shortcut labels based on the preset month.
 - `calendar.js` contains logic to regenerate day options when a month changes.
+- New visible schedule strings are present in the app's translation dictionaries.
+
+Add focused behavior tests where feasible by extracting pure helper logic or by using lightweight DOM tests:
+
+- Invalid active paint dates recover to `01-01` through `12-31`.
+- Fallback recovery recomputes `paintMonths`.
+- Changing a selected month clamps the selected day to that month's last valid day.
+- Same-day planted/harvest ranges remain valid.
+- Wrapped ranges remain valid and expose the wrapped helper state.
+- Changing crop updates the readout without changing `paintStartDate` or `paintEndDate`.
+- Changing preset month updates shortcut labels without changing `paintStartDate` or `paintEndDate`.
+- Clicking a shortcut updates planted and harvest selectors through `shortcutRange`.
+- The selected shortcut state appears only when the active range matches that shortcut for the current preset month.
 
 Run the full existing test suite after implementation:
 
