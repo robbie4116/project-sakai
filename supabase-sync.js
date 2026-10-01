@@ -19,6 +19,22 @@
     return db;
   }
 
+  window.fetchCustomCrops = async function () {
+    if (!isOnline()) throw new Error('offline');
+    const { data, error } = await initClient().from('crops')
+      .select('id,name,hex,created_at').order('name');
+    if (error) throw error;
+    return data || [];
+  };
+
+  window.insertCustomCrop = async function (name, hex) {
+    if (!isOnline()) throw new Error('offline');
+    const { data, error } = await initClient().from('crops')
+      .insert({ name, hex }).select('id,name,hex,created_at').single();
+    if (error) throw error;
+    return data;
+  };
+
   // Encode photos array -> photo_url column value
   function encodePhotos(photos) {
     if (!photos || !photos.length) return null;
