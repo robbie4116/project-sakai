@@ -192,6 +192,18 @@ test('subscribe returns an unsubscribe function and reference changes create unk
   assert.strictEqual(notifications, 1);
 });
 
+test('registerReferences scans plot maps keyed by plot index', () => {
+  const { catalog } = makeContext();
+
+  catalog.registerReferences({ 0: { seasons: [{ cropId: 'missing-from-keyed-plots' }] } });
+
+  assert.strictEqual(catalog.byId('missing-from-keyed-plots').isResolved, false);
+  assert.strictEqual(catalog.all().at(-1).id, 'missing-from-keyed-plots');
+
+  catalog.registerReferences({ plots: { 1: { seasons: [{ cropId: 'missing-from-state-wrapper' }] } } });
+  assert.strictEqual(catalog.all().at(-1).id, 'missing-from-state-wrapper');
+});
+
 test('failed Supabase refresh preserves cached rows', async () => {
   const { catalog } = makeContext({
     cache: cache([{ id: UUID_A, name: 'Amaranth', hex: '#258C55' }]),

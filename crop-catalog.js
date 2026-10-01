@@ -174,15 +174,20 @@
   }
 
   function registerReferences(plots) {
-    const source = plots && Array.isArray(plots.plots) ? plots.plots : plots;
+    const source = plots && plots.plots && typeof plots.plots === 'object' ? plots.plots : plots;
+    const plotList = Array.isArray(source)
+      ? source
+      : source && typeof source === 'object' && Array.isArray(source.seasons)
+        ? [source]
+        : source && typeof source === 'object'
+          ? Object.values(source)
+          : [];
     const found = new Set();
-    if (Array.isArray(source)) {
-      for (const plot of source) {
-        if (!plot || !Array.isArray(plot.seasons)) continue;
-        for (const season of plot.seasons) {
-          const id = season && season.cropId != null ? String(season.cropId).trim() : '';
-          if (id) found.add(id);
-        }
+    for (const plot of plotList) {
+      if (!plot || !Array.isArray(plot.seasons)) continue;
+      for (const season of plot.seasons) {
+        const id = season && season.cropId != null ? String(season.cropId).trim() : '';
+        if (id) found.add(id);
       }
     }
     const unknown = new Set(Array.from(found).filter(id => !targetById.has(id) && !customById.has(id)));
