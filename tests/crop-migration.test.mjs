@@ -40,6 +40,12 @@ test('crop migration is repeatable and grants app roles read and insert access o
   assert.match(sqlSource, /create policy crops_public_insert on public\.crops\s+for insert to anon, authenticated with check \(true\)/i);
 });
 
+test('crop migration requires non-null names and #RRGGBB hex colors', () => {
+  assert.match(sqlSource, /\bname\s+text\s+not\s+null\b/i);
+  assert.match(sqlSource, /\bhex\s+text\s+not\s+null\b/i);
+  assert.match(sqlSource, /constraint\s+crops_hex_format\s+check\s*\(\s*hex\s*~\s*'\^#\[0-9A-Fa-f\]\{6\}\$'\s*\)/i);
+});
+
 test('crop migration reserves every built-in display name using the shared normalized expression', () => {
   const compact = compactSql(sqlSource);
   const lengthCheck = sqlBetween(compact, 'constraintcrops_name_lengthcheck(', 'constraintcrops_hex_format');
