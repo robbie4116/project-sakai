@@ -67,6 +67,17 @@ test('fetchCustomCrops returns an empty list when Supabase data is null', async 
   assert.deepEqual(Array.from(await api.fetchCustomCrops()), []);
 });
 
+test('fetchCustomCrops propagates Supabase read errors with their error code', async () => {
+  const readError = Object.assign(new Error('catalog read denied'), { code: '42501' });
+  const { api } = loadAdapter({ result: { data: null, error: readError } });
+
+  await assert.rejects(api.fetchCustomCrops(), error => {
+    assert.strictEqual(error, readError);
+    assert.equal(error.code, '42501');
+    return true;
+  });
+});
+
 test('insertCustomCrop inserts only name and hex and returns the selected row', async () => {
   const crop = { id: 'crop-2', name: 'Ube', hex: '#714B9E', created_at: '2026-10-01T00:00:00Z' };
   const { api, calls } = loadAdapter({ result: { data: crop, error: null } });
