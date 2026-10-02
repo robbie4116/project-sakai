@@ -10,6 +10,7 @@
   const targetById = new Map(targets.map(crop => [crop.id, crop]));
   const targetNames = new Set();
   const customById = new Map();
+  const confirmedById = new Map();
   const placeholdersById = new Map();
   const referencedIds = new Set();
   const listeners = new Set();
@@ -130,12 +131,22 @@
     return null;
   }
 
+  function confirmCustomCrop(crop) {
+    confirmedById.set(crop.id, crop);
+    customById.set(crop.id, crop);
+    rebuild();
+    persistCache();
+    notify();
+    return crop;
+  }
+
   function setCustomRows(rows) {
     const next = new Map();
     for (const row of Array.isArray(rows) ? rows : []) {
       const crop = cropFromRow(row);
       if (crop && !targetNames.has(nameKey(crop.name.en))) next.set(crop.id, crop);
     }
+    for (const [id, crop] of confirmedById) next.set(id, crop);
     customById.clear();
     for (const [id, crop] of next) customById.set(id, crop);
     rebuild();
@@ -275,10 +286,7 @@
       const crop = cropFromRow(row);
       if (!crop) throw new Error('The saved crop returned invalid catalog data.');
       mutationGeneration++;
-      customById.set(crop.id, crop);
-      rebuild();
-      persistCache();
-      notify();
+      confirmCustomCrop(crop);
       return { status: 'created', crop };
     } catch (error) {
       if (!error || error.code !== '23505') throw error;
@@ -286,7 +294,7 @@
       const duplicate = findCustomByName(displayName) || (Array.isArray(authoritativeRows) ? authoritativeRows : [])
         .map(cropFromRow)
         .find(crop => crop && !targetNames.has(nameKey(crop.name.en)) && nameKey(crop.name.en) === nameKey(displayName));
-      if (duplicate) return { status: 'duplicate', crop: duplicate };
+      if (duplicate) return { status: 'duplicate', crop: confirmCustomCrop(duplicate) };
       throw new Error('A crop with a matching name already exists. Search the crop list to find it.');
     }
   }

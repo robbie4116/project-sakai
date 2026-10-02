@@ -128,6 +128,26 @@ test('ordinary refresh calls share one in-flight request and replace custom rows
   assert.strictEqual(notifications, 1);
 });
 
+test('a newer forced refresh remains authoritative over superseded unconfirmed rows', async () => {
+  const olderFetch = deferred();
+  const latestFetch = deferred();
+  const { catalog, apiCalls } = makeContext({
+    fetch: () => apiCalls.fetch === 1 ? olderFetch.promise : latestFetch.promise,
+  });
+
+  const olderRefresh = catalog.refresh({ force: true });
+  await new Promise(resolve => setImmediate(resolve));
+  const latestRefresh = catalog.refresh({ force: true });
+  await new Promise(resolve => setImmediate(resolve));
+  latestFetch.resolve([{ id: UUID_B, name: 'Zucchini', hex: '#12AB34' }]);
+  await latestRefresh;
+  olderFetch.resolve([{ id: UUID_A, name: 'Rice', hex: '#E0C060' }]);
+  await olderRefresh;
+
+  assert.strictEqual(catalog.isResolved(`crop_${UUID_B}`), true);
+  assert.strictEqual(catalog.isResolved(`crop_${UUID_A}`), false);
+});
+
 test('a refresh started before a successful insert cannot remove the inserted row', async () => {
   const request = deferred();
   const { catalog } = makeContext({ fetch: () => request.promise, insert: async (name, hex) => ({ id: UUID_A, name, hex }) });
@@ -213,15 +233,18 @@ test('duplicate recovery uses its authoritative row when a later forced refresh 
   while (apiCalls.fetch < 1) await new Promise(resolve => setImmediate(resolve));
   const latestRefresh = catalog.refresh({ force: true });
   await new Promise(resolve => setImmediate(resolve));
-  laterFetch.resolve([]);
-  await latestRefresh;
   recoveryFetch.resolve([{ id: UUID_A, name: 'Rice', hex: '#E0C060' }]);
 
   const result = await duplicatePromise;
   assert.strictEqual(apiCalls.fetch, 2);
   assert.strictEqual(result.status, 'duplicate');
   assert.strictEqual(result.crop.id, `crop_${UUID_A}`);
-  assert.strictEqual(catalog.isResolved(`crop_${UUID_A}`), false);
+  assert.strictEqual(catalog.isResolved(`crop_${UUID_A}`), true);
+  assert.strictEqual(catalog.byId(`crop_${UUID_A}`), result.crop);
+
+  laterFetch.resolve([]);
+  await latestRefresh;
+  assert.strictEqual(catalog.isResolved(`crop_${UUID_A}`), true);
 });
 
 test('a duplicate with no locally matchable normalized name keeps refreshed crops and provides search guidance', async () => {
