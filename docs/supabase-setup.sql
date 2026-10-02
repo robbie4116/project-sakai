@@ -1,3 +1,10 @@
+-- DESTRUCTIVE INITIAL SETUP / RESET SCRIPT
+-- This script drops and recreates public.plots, deleting all existing plot rows.
+-- Use only for a fresh project or an intentional reset after backing up data.
+-- Existing projects adding shared crops must run docs/supabase-add-crops.sql
+-- instead. A fresh project should run that additive crop migration after this
+-- setup script.
+
 drop table if exists public.plots cascade;
 
 create table public.plots (

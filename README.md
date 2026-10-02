@@ -44,18 +44,49 @@ is no Add Plot workflow.
 
 Edit `config.js` with your Supabase project URL and anon key.
 
-Run the SQL in `docs/supabase-setup.sql` in the Supabase SQL editor. This drops
-and recreates the `plots` table, which wipes existing plot rows and replaces the
-old crop-month cell schema with `seasons jsonb`.
+For a **new Supabase project only**, run `docs/supabase-setup.sql` to create the
+plot table and photo bucket. This is a destructive reset script: it drops and
+recreates `public.plots`, wiping its existing rows. For a project that already
+contains field data, follow the existing-project instructions below instead.
 
-### Reset Supabase for season schema
+### Existing Supabase project: add shared crops
+
+Run these steps in order before deploying the shared-crop feature:
+
+1. Back up the project data if desired.
+2. In the SQL Editor for the existing project configured in `config.js`, run
+   `docs/supabase-add-crops.sql`.
+3. Verify that the `public.crops` table exists in the project's table list.
+4. Merge or push the feature to `main`. Vercel automatically deploys the app
+   from `main`.
+5. Open the web app in two browsers and add a crop in the first. Reload the
+   second, select the shared crop, and paint with it. Export the data and verify
+   its name in `crops.csv` and its labeled season rows in `seasons.csv` and
+   `plot_crop_counts.csv`.
+
+No new Vercel environment variable, Supabase project, key, photo bucket, or
+manual seed rows are needed. The additive crop migration creates the catalog
+table and its validation and access policies; it does not modify existing plot
+rows. **Do not run `docs/supabase-setup.sql` on an existing project** because it
+drops and recreates `public.plots`.
+
+If the app deploys before the migration is applied, the built-in target crops
+remain available, but saving a new shared crop will fail until the catalog table
+is installed.
+
+### Reset Supabase for season schema (destructive)
 
 1. Open Supabase Dashboard.
 2. Select the project used by `config.js`.
 3. Open SQL Editor.
 4. Paste the full contents of `docs/supabase-setup.sql`.
-5. Run it. This wipes existing plot rows.
+5. Run it. This wipes existing plot rows. Do not use this reset procedure on an
+   existing project with data you need to keep.
 6. Reload the deployed app.
+
+For a fresh project that will use shared crops, run
+`docs/supabase-add-crops.sql` after this setup script. Existing projects should
+run only the additive crop migration described above.
 
 ### 4. Deploy to Vercel
 
