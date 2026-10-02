@@ -72,3 +72,16 @@ test('crop export helpers load before app.js in web and Tauri builds', () => {
   assert.match(htmlSource, /<script src="crop-export\.js"><\/script>[\s\S]*s1\.src = 'app\.js'/);
   assert.match(tauriStageSource, /'crop-picker\.js',\s*'crop-export\.js'/);
 });
+
+test('export releases temporary season rows after building compact crop aggregates', () => {
+  const lookupBuiltAt = appSource.indexOf('const cropLookupRows = CropExport.buildCropLookupRows');
+  const countsBuiltAt = appSource.indexOf('const plotCropCountRows = CropExport.buildPlotCropCounts');
+  const releasedAt = appSource.indexOf('allSeasonExportRows.length = 0');
+  const zipGenerationAt = appSource.indexOf("zip.generateAsync({type:'blob'})");
+
+  assert.notEqual(lookupBuiltAt, -1);
+  assert.notEqual(countsBuiltAt, -1);
+  assert.notEqual(releasedAt, -1);
+  assert.ok(releasedAt > lookupBuiltAt && releasedAt > countsBuiltAt);
+  assert.ok(releasedAt < zipGenerationAt, 'release retained season-row objects before ZIP serialization');
+});

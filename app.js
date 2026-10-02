@@ -1677,6 +1677,7 @@ document.getElementById('btn-save').onclick = async () => {
 
   const cropLookupRows = CropExport.buildCropLookupRows(allSeasonExportRows, CropCatalog.all());
   const plotCropCountRows = CropExport.buildPlotCropCounts(allSeasonExportRows);
+  allSeasonExportRows.length = 0; // Release per-cell row objects before ZIP serialization.
   const cropsCsv = CropExport.buildCropsCsv(cropLookupRows);
   const plotCropCountsCsv = CropExport.buildPlotCropCountsCsv(plotCropCountRows);
 
