@@ -17,6 +17,7 @@
   const refreshDetails = new WeakMap();
   let refreshGeneration = 0;
   let mutationGeneration = 0;
+  let duplicateRecoveryPromise = null;
 
   function normalizeName(name) {
     return String(name == null ? '' : name).trim().replace(/\s+/g, ' ');
@@ -24,6 +25,12 @@
 
   function nameKey(name) {
     return normalizeName(name).toLowerCase();
+  }
+
+  function cropIdentity(cropId) {
+    if (cropId == null) return null;
+    const id = String(cropId);
+    return id.trim() ? id : null;
   }
 
   function isUuid(value) {
@@ -110,7 +117,8 @@
     for (const id of referencedIds) {
       if (!targetById.has(id) && !customById.has(id)) next.push(placeholderFor(id));
     }
-    crops.splice(0, crops.length, ...next);
+    crops.length = 0;
+    for (const crop of next) crops.push(crop);
     if (!Array.isArray(window.CROPS)) window.CROPS = crops;
   }
 
@@ -157,24 +165,25 @@
   }
 
   function byId(cropId) {
-    if (cropId == null) return null;
-    const id = String(cropId).trim();
-    if (!id) return null;
+    const id = cropIdentity(cropId);
+    if (id == null) return null;
     const known = targetById.get(id) || customById.get(id);
     return known || placeholderFor(id);
   }
 
   function isResolved(cropId) {
-    const crop = cropId == null ? null : targetById.get(String(cropId).trim()) || customById.get(String(cropId).trim());
+    const id = cropIdentity(cropId);
+    const crop = id == null ? null : targetById.get(id) || customById.get(id);
     return Boolean(crop);
   }
 
   function isTarget(cropId) {
-    return cropId != null && targetById.has(String(cropId).trim());
+    const id = cropIdentity(cropId);
+    return id != null && targetById.has(id);
   }
 
   function registerReferences(plots) {
-    const source = plots && plots.plots && typeof plots.plots === 'object' ? plots.plots : plots;
+    const source = plots && Object.prototype.hasOwnProperty.call(plots, 'plots') ? plots.plots : plots;
     const plotList = Array.isArray(source)
       ? source
       : source && typeof source === 'object' && Array.isArray(source.seasons)
@@ -186,8 +195,8 @@
     for (const plot of plotList) {
       if (!plot || !Array.isArray(plot.seasons)) continue;
       for (const season of plot.seasons) {
-        const id = season && season.cropId != null ? String(season.cropId).trim() : '';
-        if (id) found.add(id);
+        const id = season && season.cropId != null ? String(season.cropId) : '';
+        if (id.trim()) found.add(id);
       }
     }
     const unknown = new Set(Array.from(found).filter(id => !targetById.has(id) && !customById.has(id)));
@@ -238,6 +247,19 @@
     return request;
   }
 
+  function refreshAfterDuplicate() {
+    if (duplicateRecoveryPromise) return duplicateRecoveryPromise;
+    const olderRequests = Array.from(pendingRefreshes);
+    let recovery;
+    recovery = Promise.allSettled(olderRequests)
+      .then(() => refresh({ force: true }))
+      .finally(() => {
+        if (duplicateRecoveryPromise === recovery) duplicateRecoveryPromise = null;
+      });
+    duplicateRecoveryPromise = recovery;
+    return recovery;
+  }
+
   async function create(name, hex) {
     if (isTauri) throw new Error('Custom crops are unavailable in the offline app.');
     const displayName = validateNewCrop(name, hex);
@@ -257,8 +279,7 @@
       return { status: 'created', crop };
     } catch (error) {
       if (!error || error.code !== '23505') throw error;
-      await Promise.allSettled(Array.from(pendingRefreshes));
-      await refresh({ force: true });
+      await refreshAfterDuplicate();
       const duplicate = findCustomByName(displayName);
       if (duplicate) return { status: 'duplicate', crop: duplicate };
       throw new Error('A crop with a matching name already exists. Search the crop list to find it.');

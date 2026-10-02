@@ -162,6 +162,45 @@ test('23505 waits for older refresh then fetches the authoritative duplicate', a
   assert.strictEqual(catalog.byId(`crop_${UUID_A}`).name.en, 'Rice');
 });
 
+test('concurrent 23505 creates share one authoritative recovery refresh', async () => {
+  const firstFetchStarted = deferred();
+  const requests = [];
+  const cropRow = { id: UUID_A, name: 'Rice', hex: '#E0C060' };
+  const { catalog, apiCalls } = makeContext({
+    fetch: () => {
+      const request = deferred();
+      requests.push(request);
+      if (requests.length === 1) firstFetchStarted.resolve();
+      return request.promise;
+    },
+    insert: async () => { throw Object.assign(new Error('duplicate'), { code: '23505' }); },
+  });
+
+  let statusA = 'pending';
+  let statusB = 'pending';
+  const createA = catalog.create('Rice', '#BBBBBB').then(
+    value => { statusA = 'fulfilled'; return { status: 'fulfilled', value }; },
+    error => { statusA = 'rejected'; return { status: 'rejected', error }; },
+  );
+  const createB = catalog.create('Rice', '#CCCCCC').then(
+    value => { statusB = 'fulfilled'; return { status: 'fulfilled', value }; },
+    error => { statusB = 'rejected'; return { status: 'rejected', error }; },
+  );
+
+  await firstFetchStarted.promise;
+  await new Promise(resolve => setImmediate(resolve));
+  requests[0].resolve([cropRow]);
+  await new Promise(resolve => setImmediate(resolve));
+  const statusesAfterFirstResponse = [statusA, statusB];
+  for (const request of requests) request.resolve([cropRow]);
+  const results = await Promise.all([createA, createB]);
+
+  assert.ok(statusesAfterFirstResponse.every(status => status !== 'rejected'));
+  assert.strictEqual(apiCalls.fetch, 1);
+  assert.deepEqual(results.map(result => result.status), ['fulfilled', 'fulfilled']);
+  assert.deepEqual(results.map(result => result.value.status), ['duplicate', 'duplicate']);
+});
+
 test('a duplicate with no locally matchable normalized name keeps refreshed crops and provides search guidance', async () => {
   const { catalog } = makeContext({
     fetch: async () => [{ id: UUID_A, name: 'Cafe\u0301', hex: '#E0C060' }],
@@ -202,6 +241,31 @@ test('registerReferences scans plot maps keyed by plot index', () => {
 
   catalog.registerReferences({ plots: { 1: { seasons: [{ cropId: 'missing-from-state-wrapper' }] } } });
   assert.strictEqual(catalog.all().at(-1).id, 'missing-from-state-wrapper');
+});
+
+test('unknown crop IDs preserve raw whitespace while all-whitespace IDs remain blank', () => {
+  const { catalog } = makeContext();
+  const rawId = '  legacy crop  ';
+
+  catalog.registerReferences([{ seasons: [{ cropId: rawId }, { cropId: ' \t\n ' }] }]);
+
+  assert.strictEqual(catalog.byId(rawId).id, rawId);
+  assert.strictEqual(catalog.byId('legacy crop').id, 'legacy crop');
+  assert.strictEqual(catalog.isTarget(' lettuce '), false);
+  assert.strictEqual(catalog.all().at(-1).id, rawId);
+  assert.strictEqual(catalog.byId(' \t\n '), null);
+});
+
+test('catalog rebuild handles a large set of referenced unknown crops', () => {
+  const { catalog } = makeContext();
+  const plots = Array.from({ length: 150_000 }, (_, index) => ({
+    seasons: [{ cropId: `unknown-${index}` }],
+  }));
+
+  catalog.registerReferences(plots);
+
+  assert.strictEqual(catalog.all().length, 150_003);
+  assert.strictEqual(catalog.byId('unknown-149999').isResolved, false);
 });
 
 test('failed Supabase refresh preserves cached rows', async () => {
