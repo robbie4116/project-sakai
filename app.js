@@ -1148,40 +1148,35 @@ canvas.addEventListener('touchend', onUp);
 canvas.addEventListener('mouseleave', ()=>{ document.getElementById('brush-cursor').style.display='none'; });
 
 // ── CROP PALETTE ──────────────────────────────────────────────────
+let cropPickerInstance = null;
+
+function selectCrop(cropId){
+  const crop = CropCatalog.byId(cropId);
+  if (!crop || !CropCatalog.isResolved(crop.id)) return;
+  state.selectedCropId = crop.id;
+  if (state.brush==='erase') state.brush = 1;
+  buildPalette();
+  updateBrush();
+  updateScheduleReadout();
+  schedSave();
+}
+
 function buildPalette(){
-  const root = document.getElementById('crop-grid');
-  root.innerHTML = '';
-  cropsForPalette(CROPS, state.selectedCropId, CropCatalog).forEach(crop=>{
-    const selected = isCropSelected(crop, state.selectedCropId);
-    const b = document.createElement('button');
-    b.className = 'crop-btn' + (selected ? ' on' : '');
-    b.style.borderColor = selected ? crop.hex : '';
-    const swatch = document.createElement('div');
-    swatch.className = 'swatch';
-    swatch.style.background = crop.hex;
-    const info = document.createElement('div');
-    info.className = 'info';
-    const name = document.createElement('div');
-    name.className = 'nm';
-    name.textContent = crop.name[state.lang] || crop.name.en || `Unknown crop (${crop.id})`;
-    const englishName = document.createElement('div');
-    englishName.className = 'ct';
-    englishName.textContent = crop.name.en || `Unknown crop (${crop.id})`;
-    info.append(name, englishName);
-    const check = document.createElement('div');
-    check.className = 'chk';
-    check.textContent = '✓';
-    b.append(swatch, info, check);
-    b.onclick = ()=>{
-      state.selectedCropId = crop.id;
-      if (state.brush==='erase') state.brush = 1;
-      buildPalette();
-      updateBrush();
-      updateScheduleReadout();
-      schedSave();
-    };
-    root.appendChild(b);
-  });
+  if (!cropPickerInstance) {
+    cropPickerInstance = window.TANIMAN_CROP_PICKER.create({
+      root: document.getElementById('crop-picker'),
+      catalog: CropCatalog,
+      selectedCropId: state.selectedCropId,
+      lang: state.lang,
+      onSelect: selectCrop,
+      onCreate: async (name, hex) => {
+        const result = await CropCatalog.create(name, hex);
+        if (result.status === 'created') selectCrop(result.crop.id);
+        return result;
+      },
+    });
+  }
+  cropPickerInstance.render({ selectedCropId: state.selectedCropId, lang: state.lang });
 }
 function updateBrush(){
   document.querySelectorAll('.brush-btn').forEach(b=>{

@@ -164,7 +164,39 @@
 
           <div class="tools-section">
             <div class="tools-label" id="lab-crop">Crop</div>
-            <div class="crop-grid" id="crop-grid"></div>
+            <div class="crop-picker" id="crop-picker">
+              <section class="crop-picker-group" id="crop-target-group" aria-labelledby="crop-target-heading">
+                <h4 class="crop-group-heading" id="crop-target-heading"></h4>
+                <div class="crop-grid" id="crop-target-list" role="group" aria-labelledby="crop-target-heading"></div>
+              </section>
+              <section class="crop-picker-group crop-other-group" id="crop-other-group" aria-labelledby="crop-other-heading" hidden>
+                <div class="crop-other-heading-row">
+                  <h4 class="crop-group-heading" id="crop-other-heading"></h4>
+                  <span class="crop-count" id="crop-count" aria-live="polite"></span>
+                </div>
+                <label class="crop-search-label" id="crop-search-label" for="crop-search"></label>
+                <input class="crop-search" id="crop-search" type="search" autocomplete="off" aria-controls="crop-custom-list">
+                <div class="crop-grid crop-custom-list" id="crop-custom-list" role="group" aria-labelledby="crop-other-heading"></div>
+                <div class="crop-selected-status" id="crop-selected-status" role="status" aria-live="polite" hidden></div>
+                <button class="crop-add-toggle" id="crop-add-toggle" type="button" aria-controls="crop-create-form" aria-expanded="false" hidden></button>
+                <form class="crop-create-form" id="crop-create-form" hidden>
+                  <div class="crop-form-field">
+                    <label id="crop-name-label" for="crop-name"></label>
+                    <input id="crop-name" name="crop-name" type="text" autocomplete="off" required maxlength="160" aria-describedby="crop-name-help">
+                  </div>
+                  <div class="crop-form-field crop-color-field">
+                    <label id="crop-color-label" for="crop-color"></label>
+                    <input id="crop-color" name="crop-color" type="color" value="#22C55E">
+                  </div>
+                  <p class="crop-name-help" id="crop-name-help"></p>
+                  <div class="crop-form-actions">
+                    <button class="crop-save" id="crop-save" type="submit"></button>
+                    <button class="crop-cancel" id="crop-cancel" type="button"></button>
+                  </div>
+                  <div class="crop-form-message" id="crop-form-message" role="status" aria-live="polite"></div>
+                </form>
+              </section>
+            </div>
           </div>
 
           <div class="tool-actions">
@@ -287,6 +319,7 @@
 <script src="supabase-sync.js"></script>
 <script src="offline-storage.js"></script>
 <script src="crop-catalog.js"></script>
+<script src="crop-picker.js"></script>
 <script>
   // Boot sequence: wait for offline preload (no-op in Vercel mode),
   // then inject app.js and calendar.js in order.
