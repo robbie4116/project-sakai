@@ -1091,7 +1091,7 @@ input,textarea{font:inherit;color:inherit;background:none;border:none;outline:no
 }
 .mix-seg{
   height:100%;
-  min-width:3px;
+  min-width:0;
   flex:0 0 auto;
 }
 

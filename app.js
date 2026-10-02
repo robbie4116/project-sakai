@@ -568,6 +568,7 @@ function updateUndoBtn() {
 // ── MIXED-CELL DRAWING ───────────────────────────────────────────
 function drawMixedCell(ctx, x0, y0, w, h, cropIdxs, style){
   if (cropIdxs.length === 0) return;
+  if (cropIdxs.length > 4) style = 'stripes';
   if (cropIdxs.length === 1){
     ctx.fillStyle = CROPS[cropIdxs[0]].hex;
     ctx.fillRect(x0, y0, w+0.5, h+0.5);
@@ -760,9 +761,12 @@ function plotStyle(idx){
 
 function compositionBarHtml(composition) {
   if (!composition || composition.totalVisibleCells <= 0) return '';
+  let usedPct = 0;
   const segments = composition.counts.map((count, i) => {
     if (count <= 0) return '';
-    const pct = Math.max(4, composition.percentages[i] * 100);
+    const requestedPct = Number(composition.percentages[i]) * 100 || 0;
+    const pct = Math.min(Math.max(0, requestedPct), Math.max(0, 100 - usedPct));
+    usedPct += pct;
     return `<span class="mix-seg" style="width:${pct}%;background:${CROPS[i].hex}"></span>`;
   }).join('');
   return `<div class="mix-bar" aria-hidden="true">${segments}</div>`;

@@ -5,6 +5,7 @@ import vm from 'node:vm';
 
 const catalogSource = await readFile(new URL('../crop-catalog.js', import.meta.url), 'utf8');
 const appSource = await readFile(new URL('../app.js', import.meta.url), 'utf8');
+const cssSource = await readFile(new URL('../styles.css', import.meta.url), 'utf8');
 const CUSTOM_UUID = '123e4567-e89b-12d3-a456-426614174000';
 const CUSTOM_NAME = '<img src=x onerror=alert(1)>';
 const UNKNOWN_ID = 'field<&" onmouseover=alert(1)>';
@@ -189,4 +190,52 @@ test('mixed cell draw uses catalog colors for custom and unresolved crop IDs', a
   context.unknownIndex = unknownIndex;
   vm.runInContext('drawMixedCell(ctx, 0, 0, 10, 10, [customIndex, unknownIndex], "diagonal")', context);
   assert.deepEqual(drawnColors, ['#AABBCC', '#9CA3AF']);
+});
+
+test('five overlapping crop classes all appear in the mixed-cell drawing used for label PNGs', async () => {
+  const { context, catalog, plot, crops } = await makeHarness();
+  vm.runInContext(`state.plots[0].seasons.push(
+    { cropId: 'lettuce', start: '01-01', end: '12-31', cells: [2] },
+    { cropId: 'potato', start: '01-01', end: '12-31', cells: [2] },
+    { cropId: 'carrot', start: '01-01', end: '12-31', cells: [2] },
+  )`, context);
+  catalog.registerReferences(context.state.plots);
+  assert.deepEqual(
+    Array.from(vm.runInContext('cellVisibleCropIds(state.plots[0], 2)', context)),
+    [`crop_${CUSTOM_UUID}`, UNKNOWN_ID, 'lettuce', 'potato', 'carrot'],
+  );
+
+  const drawnColors = [];
+  const ctx = {
+    set fillStyle(value) { this._fillStyle = value; },
+    get fillStyle() { return this._fillStyle; },
+    beginPath() {}, moveTo() {}, lineTo() {}, closePath() {},
+    fill() { drawnColors.push(this.fillStyle); }, fillRect() { drawnColors.push(this.fillStyle); },
+  };
+  context.ctx = ctx;
+  vm.runInContext('drawMixedCell(ctx, 0, 0, 10, 10, cellVisibleCropIds(state.plots[0], 2).map(cropIndexFromId).filter(i => i >= 0), "diagonal")', context);
+
+  const expectedColors = ['#AABBCC', '#9CA3AF', '#22C55E', '#FFC629', '#FF6A1F'];
+  assert.equal(crops.length, 5);
+  assert.deepEqual(drawnColors, expectedColors);
+});
+
+test('many-class composition bars allocate at most 100 percent and do not force overflow', async () => {
+  const { context } = await makeHarness();
+  const classCount = 30;
+  const counts = Array(classCount).fill(1);
+  const percentages = Array(classCount).fill(1 / classCount);
+  context.CROPS.push(...Array.from({ length: classCount - context.CROPS.length }, (_, index) => ({
+    id: `many-${index}`,
+    hex: `#${String(index + 1).padStart(6, '0')}`,
+    name: { en: `Many ${index}` },
+  })));
+  context.composition = { totalVisibleCells: classCount, counts, percentages };
+
+  const markup = vm.runInContext('compositionBarHtml(composition)', context);
+  const widths = Array.from(markup.matchAll(/width:([\d.]+)%/g), match => Number(match[1]));
+  assert.equal(widths.length, classCount, 'each crop class should have a segment');
+  assert.ok(widths.every(width => width > 0));
+  assert.ok(widths.reduce((sum, width) => sum + width, 0) <= 100.000001);
+  assert.match(cssSource, /\.mix-seg\s*\{[^}]*min-width:\s*0(?:px)?\s*;/s);
 });

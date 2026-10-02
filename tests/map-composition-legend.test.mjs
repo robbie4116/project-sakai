@@ -72,7 +72,8 @@ test('map renders proportional crop bar overlays for any painted plot', () => {
   assert.match(compositionBar, /composition\.totalVisibleCells\s*<=\s*0/);
   assert.doesNotMatch(compositionBar, /composition\.isMixed/);
   assert.doesNotMatch(barHtml, /composition\.isMixed/);
-  assert.match(barHtml, /composition\.percentages\[i\]\s*\*\s*100/);
+  assert.match(barHtml, /Number\(composition\.percentages\[i\]\)\s*\*\s*100/);
+  assert.doesNotMatch(barHtml, /Math\.max\(4\s*,/);
   assert.match(barHtml, /mix-seg/);
 });
 
