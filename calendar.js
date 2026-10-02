@@ -3,7 +3,7 @@
 
 (function(){
 const {
-  state, CROPS, MONTH_SHORT, MONTH_FULL, MONTH_FULL_LONG, ALL_MONTHS,
+  state, CROPS, CropCatalog, MONTH_SHORT, MONTH_FULL, MONTH_FULL_LONG, ALL_MONTHS,
   SeasonUtils, monthsBetween, normalizeViewMonths, viewMonthFromMask,
   maskToDisplayLabel, isBrushHiddenOnMap, tr,
 } = window.TANIMAN;
@@ -107,8 +107,13 @@ function normalizeActivePaintRange({ save = true } = {}) {
 }
 
 function readoutModel() {
-  const crop = CROPS[state.crop];
-  const cropName = crop.name[state.lang] || crop.name.en;
+  const crop = CropCatalog.byId(state.selectedCropId) || {
+    id: state.selectedCropId || '',
+    hex: '#9CA3AF',
+    name: { en: 'Unknown crop' },
+    isResolved: false,
+  };
+  const cropName = crop.name[state.lang] || crop.name.en || 'Unknown crop';
   const valid = isValidMmdd(state.paintStartDate) && isValidMmdd(state.paintEndDate);
   const wrapped = valid && rangeWrapsYear(state.paintStartDate, state.paintEndDate);
   const text = valid
@@ -138,8 +143,9 @@ function escapeHtml(value) {
 function updateScheduleReadout() {
   const el = document.getElementById('sched-readout');
   const model = readoutModel();
+  const cropColor = /^#[0-9a-f]{6}$/i.test(model.crop.hex) ? model.crop.hex : '#9CA3AF';
   el.innerHTML =
-    `<span class="crop-dot" style="background:${model.crop.hex}"></span>` +
+    `<span class="crop-dot" style="background:${cropColor}"></span>` +
     `<span class="rng">${escapeHtml(model.text)}</span>` +
     (model.helper ? `<span class="rng-helper"> &middot; ${escapeHtml(model.helper)}</span>` : '');
   if (typeof updateHiddenBrushIndicator === 'function') updateHiddenBrushIndicator();
@@ -366,5 +372,8 @@ wireSeasonPicker();
 wireScrubber();
 updateScheduleReadout();
 updateScrubberReadout();
+if (CropCatalog && typeof CropCatalog.subscribe === 'function') {
+  CropCatalog.subscribe(() => updateScheduleReadout());
+}
 
 })();

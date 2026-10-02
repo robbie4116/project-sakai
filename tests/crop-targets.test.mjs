@@ -23,8 +23,9 @@ test('desktop static bundle includes season utilities', () => {
   assert.match(prepareDistSource, /season-utils\.js/);
 });
 
-test('keyboard crop shortcuts are bounded by the active crop list', () => {
-  assert.match(appSource, /\+e\.key\s*<=\s*CROPS\.length/);
+test('keyboard crop shortcuts select only the three target crops', () => {
+  assert.match(appSource, /CROPS\.filter\(crop\s*=>\s*CropCatalog\.isTarget\(crop\.id\)\)/);
+  assert.match(appSource, /state\.selectedCropId\s*=\s*targetCrops\[\+e\.key\s*-\s*1\]\.id/);
   assert.doesNotMatch(appSource, /e\.key === '4'/);
 });
 

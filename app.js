@@ -9,6 +9,7 @@ const ATOK_POLY = window.ATOK_POLY;
 const PAOAY_POLY = window.PAOAY_POLY;
 const PAOAY_PLOTS = window.PAOAY_PLOTS;
 const CROPS = window.CROPS;
+const CropCatalog = window.TANIMAN_CROP_CATALOG;
 const T     = window.STRINGS;
 const PLOTS = PAOAY_PLOTS;
 const CORE_PLOT_COUNT = PAOAY_PLOTS.length;
@@ -94,7 +95,7 @@ const state = loadState() || {
   lang: 'en',
   theme: 'dark',
   brush: 1,
-  crop: 0,
+  selectedCropId: 'lettuce',
   plotIdx: 0,
   plots: {},
   paintStartDate: '01-01',
@@ -105,6 +106,24 @@ const state = loadState() || {
   showTweaks: false,
   version: 4,
 };
+
+function migrateCropSelection(savedState, crops, catalog) {
+  if (typeof savedState.selectedCropId === 'string' && savedState.selectedCropId.trim()) {
+    // Preserve unresolved IDs so a later catalog refresh can resolve them.
+  } else {
+    const targetCrops = crops.filter(crop => catalog.isTarget(crop.id));
+    const legacyIndex = savedState.crop;
+    const validLegacyIndex = Number.isInteger(legacyIndex) && legacyIndex >= 0 && legacyIndex < targetCrops.length;
+    savedState.selectedCropId = validLegacyIndex ? targetCrops[legacyIndex].id : (targetCrops[0]?.id || 'lettuce');
+  }
+  delete savedState.crop;
+  return savedState.selectedCropId;
+}
+
+migrateCropSelection(state, CROPS, CropCatalog);
+if (!state.plots || typeof state.plots !== 'object' || Array.isArray(state.plots)) state.plots = {};
+// Register labels before initMap() or the first canvas/readout render.
+CropCatalog.registerReferences(state.plots);
 
 // fill in any missing keys (state was loaded from a previous version)
 const invalidActivePaintRangeAtStartup =
@@ -256,6 +275,7 @@ function cloudRetryIndices(indices) {
 function afterRemoteMerge(idx) {
   if (isCloudDirty(idx)) return;
   ensurePlot(idx);
+  CropCatalog.registerReferences(state.plots);
   updateMapPlot(idx);
   if (idx === state.plotIdx) {
     renderCanvas();
@@ -383,13 +403,22 @@ function seasonMonthsMask(start, end) {
   return mask || ALL_MONTHS;
 }
 function activePaintSeasonData() {
-  const crop = CROPS[state.crop];
-  if (!crop || !isValidMmdd(state.paintStartDate) || !isValidMmdd(state.paintEndDate)) return null;
+  const crop = CropCatalog.byId(state.selectedCropId);
+  if (!crop || !CropCatalog.isResolved(state.selectedCropId) || !isValidMmdd(state.paintStartDate) || !isValidMmdd(state.paintEndDate)) return null;
   return { cropId: crop.id, start: state.paintStartDate, end: state.paintEndDate };
 }
 function activePaintMonthsMask() {
   const data = activePaintSeasonData();
   return data ? seasonMonthsMask(data.start, data.end) : ALL_MONTHS;
+}
+function isCropSelected(crop, selectedCropId) {
+  return Boolean(crop && crop.id === selectedCropId);
+}
+function cropsForPalette(crops, selectedCropId, catalog) {
+  const visibleCrops = Array.from(crops || []);
+  const selectedCrop = catalog.byId(selectedCropId);
+  if (selectedCrop && !visibleCrops.some(crop => crop.id === selectedCrop.id)) visibleCrops.push(selectedCrop);
+  return visibleCrops;
 }
 function cellVisibleCropIds(p, cellIdx, viewMonths = state.viewMonths) {
   const out = [];
@@ -1015,14 +1044,13 @@ function ensurePaintVisibleOnMap() {
   }
 }
 function addCellsToPaintSeason(p, cellIds) {
-  const crop = CROPS[state.crop];
   const data = activePaintSeasonData();
   if (!data || !cellIds.length) return false;
   let season = p.seasons.find(s =>
     s.cropId === data.cropId && s.start === data.start && s.end === data.end);
   const now = new Date().toISOString();
   if (!season) {
-    season = { id: newSeasonId(), cropId: crop.id, start: data.start, end: data.end, cells: [], createdAt: now, updatedAt: now };
+    season = { id: newSeasonId(), cropId: data.cropId, start: data.start, end: data.end, cells: [], createdAt: now, updatedAt: now };
     p.seasons.push(season);
   }
   const seen = new Set(season.cells || []);
@@ -1098,7 +1126,8 @@ function onMove(e){
       const half = Math.floor(size/2);
       cursor.style.left = ((cell.c-half)*cellPx) + 'px';
       cursor.style.top  = ((cell.r-half)*cellPx) + 'px';
-      cursor.style.borderColor = state.brush==='erase' ? 'var(--danger)' : CROPS[state.crop].hex;
+      const selectedCrop = CropCatalog.byId(state.selectedCropId);
+      cursor.style.borderColor = state.brush==='erase' ? 'var(--danger)' : (selectedCrop?.hex || '#9CA3AF');
     }
   } else {
     cursor.style.display = 'none';
@@ -1122,20 +1151,29 @@ canvas.addEventListener('mouseleave', ()=>{ document.getElementById('brush-curso
 function buildPalette(){
   const root = document.getElementById('crop-grid');
   root.innerHTML = '';
-  CROPS.forEach((crop,i)=>{
+  cropsForPalette(CROPS, state.selectedCropId, CropCatalog).forEach(crop=>{
+    const selected = isCropSelected(crop, state.selectedCropId);
     const b = document.createElement('button');
-    b.className = 'crop-btn' + (i===state.crop?' on':'');
-    b.style.borderColor = i===state.crop ? crop.hex : '';
-    b.innerHTML = `
-      <div class="swatch" style="background:${crop.hex}"></div>
-      <div class="info">
-        <div class="nm">${crop.name[state.lang]||crop.name.en}</div>
-        <div class="ct">${crop.name.en}</div>
-      </div>
-      <div class="chk">✓</div>
-    `;
+    b.className = 'crop-btn' + (selected ? ' on' : '');
+    b.style.borderColor = selected ? crop.hex : '';
+    const swatch = document.createElement('div');
+    swatch.className = 'swatch';
+    swatch.style.background = crop.hex;
+    const info = document.createElement('div');
+    info.className = 'info';
+    const name = document.createElement('div');
+    name.className = 'nm';
+    name.textContent = crop.name[state.lang] || crop.name.en || `Unknown crop (${crop.id})`;
+    const englishName = document.createElement('div');
+    englishName.className = 'ct';
+    englishName.textContent = crop.name.en || `Unknown crop (${crop.id})`;
+    info.append(name, englishName);
+    const check = document.createElement('div');
+    check.className = 'chk';
+    check.textContent = '✓';
+    b.append(swatch, info, check);
     b.onclick = ()=>{
-      state.crop = i;
+      state.selectedCropId = crop.id;
       if (state.brush==='erase') state.brush = 1;
       buildPalette();
       updateBrush();
@@ -1793,8 +1831,13 @@ document.addEventListener('keydown', (e)=>{
   if ((e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'Z')){ e.preventDefault(); undo(); return; }
   if (e.key === 'ArrowLeft') openPlot(adjacentVisiblePlotIdx(state.plotIdx, -1));
   if (e.key === 'ArrowRight') openPlot(adjacentVisiblePlotIdx(state.plotIdx, 1));
-  if (/^[1-9]$/.test(e.key) && +e.key <= CROPS.length){
-    state.crop = +e.key - 1; buildPalette(); updateScheduleReadout();
+  if (/^[1-3]$/.test(e.key)){
+    const targetCrops = CROPS.filter(crop => CropCatalog.isTarget(crop.id));
+    if (!targetCrops[+e.key - 1]) return;
+    state.selectedCropId = targetCrops[+e.key - 1].id;
+    buildPalette();
+    updateScheduleReadout();
+    schedSave();
   }
   if (e.key === 'e' || e.key === 'E'){ state.brush = 'erase'; updateBrush(); }
   if (e.key === 'Escape'){
@@ -1858,10 +1901,37 @@ if (hasSyncInit()) {
   window.syncInit(state, afterRemoteMerge, mayMergeRemote).catch(e => console.warn('initial sync failed:', e));
 }
 
+CropCatalog.subscribe(() => {
+  buildPalette();
+  renderCanvas();
+  drawPlotsOnMap();
+  updateLegend();
+  if (typeof window.updateScheduleReadout === 'function') window.updateScheduleReadout();
+});
+
+function wireCropCatalogRefresh(catalog, eventTarget = window) {
+  if (!catalog || eventTarget.__TAURI__) return () => {};
+  const refresh = () => {
+    try {
+      const request = catalog.refresh();
+      if (request && typeof request.catch === 'function') {
+        request.catch(error => console.warn('crop catalog refresh failed:', error));
+      }
+    } catch (error) {
+      console.warn('crop catalog refresh failed:', error);
+    }
+  };
+  eventTarget.addEventListener('focus', refresh);
+  refresh();
+  return () => eventTarget.removeEventListener('focus', refresh);
+}
+
+wireCropCatalogRefresh(CropCatalog);
+
 // ── EXPOSE UTILITIES for calendar.js to consume ───────────────────
 window.TANIMAN = {
   state, GRID, PLOTS, CROPS, MONTH_SHORT, MONTH_FULL, MONTH_FULL_LONG, ALL_MONTHS,
-  SeasonUtils,
+  SeasonUtils, CropCatalog,
   monthsBetween, maskList, maskToLabel, maskIntersects, maskContains,
   normalizeViewMonths, viewMonthFromMask, maskToDisplayLabel,
   shouldAutoSwitchViewMonths, isBrushHiddenOnMap,

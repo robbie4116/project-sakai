@@ -55,23 +55,30 @@ function loadHelpers(initialState = {}, tanimanOverrides = {}) {
   };
   const state = {
     lang: 'en',
-    crop: 0,
+    selectedCropId: 'potato',
     paintStartDate: '06-21',
     paintEndDate: '06-30',
     paintMonths: 1 << 5,
     viewMonths: (1 << 12) - 1,
     ...initialState,
   };
+  const crops = [
+    { id: 'potato', hex: '#FFC629', name: { en: 'Potato' } },
+    { id: 'carrot', hex: '#FF6A1F', name: { en: 'Carrot' } },
+  ];
   let saveCount = 0;
   const context = {
     window: {
       innerWidth: 1200,
       TANIMAN: {
         state,
-        CROPS: [
-          { id: 'potato', hex: '#FFC629', name: { en: 'Potato' } },
-          { id: 'carrot', hex: '#FF6A1F', name: { en: 'Carrot' } },
-        ],
+        CROPS: crops,
+        CropCatalog: tanimanOverrides.CropCatalog || {
+          byId(id) {
+            const crop = crops.find(item => item.id === id);
+            return crop || { id, hex: '#9CA3AF', name: { en: `Unknown crop (${id})` }, isResolved: false };
+          },
+        },
         MONTH_SHORT: ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'],
         MONTH_FULL: ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'],
         MONTH_FULL_LONG: ['January','February','March','April','May','June','July','August','September','October','November','December'],
@@ -187,12 +194,24 @@ test('season static labels assign distinct month and day accessible names', () =
 test('crop readout refresh does not mutate the active range', () => {
   const { helpers, state } = loadHelpers({ paintStartDate: '06-21', paintEndDate: '06-30' });
   const first = helpers.readoutModel();
-  state.crop = 1;
+  state.selectedCropId = 'carrot';
   const second = helpers.readoutModel();
   assert.match(first.text, /Potato/);
   assert.match(second.text, /Carrot/);
   assert.equal(state.paintStartDate, '06-21');
   assert.equal(state.paintEndDate, '06-30');
+});
+
+test('unresolved crop readout always renders safe text and a neutral color dot', () => {
+  const { helpers, window, elements } = loadHelpers({ selectedCropId: '<img src=x onerror=alert(1)>' });
+
+  const model = helpers.readoutModel();
+  window.updateScheduleReadout();
+
+  assert.match(model.text, /Unknown crop/);
+  assert.match(elements.get('sched-readout').innerHTML, /background:#9CA3AF/);
+  assert.match(elements.get('sched-readout').innerHTML, /&lt;img/);
+  assert.doesNotMatch(elements.get('sched-readout').innerHTML, /<img/);
 });
 
 test('season control no longer exposes preset or shortcut helpers', () => {
