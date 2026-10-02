@@ -378,6 +378,15 @@ function restoreCloudDirtyQueue() {
 function cropIndexFromId(cropId) {
   return CROPS.findIndex(c => c.id === cropId);
 }
+function escapeHtml(value) {
+  return String(value == null ? '' : value).replace(/[&<>"']/g, char => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;',
+  })[char]);
+}
 function monthRangeForViewMonth(m) {
   const mm = String(m + 1).padStart(2, '0');
   return {
@@ -529,6 +538,7 @@ function undo() {
   const p = ensurePlot(e.plotIdx);
   redoStack.push({ plotIdx: e.plotIdx, seasons: cloneSeasons(p.seasons) });
   p.seasons = cloneSeasons(e.seasons);
+  CropCatalog.registerReferences(state.plots);
   if (state.plotIdx !== e.plotIdx) { state.plotIdx = e.plotIdx; updatePlotHeader(); drawPlotsOnMap(); }
   else updateMapPlot(e.plotIdx);
   renderCanvas(); updateProgress(); refreshMetaToggle(); updateUndoBtn();
@@ -542,6 +552,7 @@ function redo() {
   undoStack.push({ plotIdx: e.plotIdx, seasons: cloneSeasons(p.seasons) });
   if (undoStack.length > UNDO_LIMIT) undoStack.shift();
   p.seasons = cloneSeasons(e.seasons);
+  CropCatalog.registerReferences(state.plots);
   if (state.plotIdx !== e.plotIdx) { state.plotIdx = e.plotIdx; updatePlotHeader(); drawPlotsOnMap(); }
   else updateMapPlot(e.plotIdx);
   renderCanvas(); updateProgress(); refreshMetaToggle(); updateUndoBtn();
@@ -1295,7 +1306,7 @@ function updateLegend(){
     const row = document.createElement('div');
     row.className = 'lgd-row';
     row.innerHTML = `<span class="lgd-sw" style="background:${crop.hex};border-color:${crop.hex}"></span>
-      <span class="lgd-nm">${crop.name[state.lang]||crop.name.en}</span>
+      <span class="lgd-nm">${escapeHtml(crop.name[state.lang]||crop.name.en)}</span>
       <span class="lgd-val"><span class="lgd-ct">${coveragePct(count)}%</span><span class="lgd-sub">${count} cells · ${plotsContainingCrop[i]} plots</span></span>`;
     root.appendChild(row);
   });
@@ -1425,7 +1436,7 @@ function renderScheduleSummary(){
   const root = document.getElementById('sched-summary-grid');
   const p = ensurePlot(state.plotIdx);
   const seasons = (p.seasons || []).filter(season =>
-    cropIndexFromId(season.cropId) >= 0 &&
+    CropCatalog.byId(season.cropId) &&
     isValidMmdd(season.start) &&
     isValidMmdd(season.end) &&
     season.cells &&
@@ -1435,11 +1446,11 @@ function renderScheduleSummary(){
     return;
   }
   root.innerHTML = `<div class="ss-season-list">` + seasons.map(season => {
-    const crop = CROPS[cropIndexFromId(season.cropId)];
+    const crop = CropCatalog.byId(season.cropId);
     const wraps = rangeWrapsYear(season.start, season.end) ? ' · wraps year' : '';
     return `<div class="ss-season">
       <span class="ss-dot" style="background:${crop.hex}"></span>
-      <span>${crop.name[state.lang]||crop.name.en} · ${season.start}-${season.end}${wraps}</span>
+      <span>${escapeHtml(crop.name[state.lang]||crop.name.en)} · ${season.start}-${season.end}${wraps}</span>
       <span class="ss-count">${season.cells.length}</span>
     </div>`;
   }).join('') + `</div>`;
@@ -1525,6 +1536,7 @@ document.getElementById('btn-redo').onclick = redo;
 //     labels/plotXXX.png  rendered crop label PNG (500x500, 10px/cell)
 //     photos/plotXXX_N.jpg
 document.getElementById('btn-save').onclick = async () => {
+  CropCatalog.registerReferences(state.plots);
   const indices = Object.keys(state.plots).map(k=>+k).filter(plotHasData);
   if (!indices.length){ toast(tr('empty')); return; }
   const btn = document.getElementById('btn-save');
@@ -1707,6 +1719,7 @@ document.getElementById('btn-save').onclick = async () => {
 // ── ROSTER ────────────────────────────────────────────────────────
 function buildRosterData(){
   // group plots by farmerId. Include an "unassigned with paint" bucket too.
+  CropCatalog.registerReferences(state.plots);
   const map = new Map();
   PLOTS.forEach(plot=>{
     const p = state.plots[plot.idx];
@@ -1760,18 +1773,18 @@ function renderRoster(q){
   }
   root.innerHTML = filtered.map(r=>{
     const isU = !r.id;
-    const cropTags = r.cropTotals.map((n,i)=> n>0 ? `<span class="crop-tag"><span class="cdot" style="background:${CROPS[i].hex}"></span>${(CROPS[i].name[state.lang]||CROPS[i].name.en)}</span>` : '').join('');
+    const cropTags = r.cropTotals.map((n,i)=> n>0 ? `<span class="crop-tag"><span class="cdot" style="background:${CROPS[i].hex}"></span>${escapeHtml(CROPS[i].name[state.lang]||CROPS[i].name.en)}</span>` : '').join('');
     const plotList = r.plots.slice(0,12).map(i=>plotDisplayLabel(PLOTS[i])).join(', ') + (r.plots.length>12?' …':'');
     return `<div class="roster-card${isU?' unassigned':''}" data-plot="${r.plots[0]}">
-      <div class="roster-id">${r.id || tr('rosterNoId')}</div>
+      <div class="roster-id">${escapeHtml(r.id || tr('rosterNoId'))}</div>
       <div class="roster-mid">
-        <div class="roster-name ${r.name?'':'empty'}">${r.name || tr('rosterNoName')}</div>
+        <div class="roster-name ${r.name?'':'empty'}">${escapeHtml(r.name || tr('rosterNoName'))}</div>
         <div class="roster-meta">
           <span>${r.plots.length} ${r.plots.length===1?tr('plotS'):tr('plotP')}</span>
           <span>${r.patchTotal.toLocaleString()} ${tr('patches')}</span>
           <div class="crop-tags">${cropTags}</div>
         </div>
-        <div class="roster-plots">Plots: ${plotList}</div>
+        <div class="roster-plots">Plots: ${escapeHtml(plotList)}</div>
       </div>
       <div class="roster-go">→</div>
     </div>`;
