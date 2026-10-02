@@ -33,9 +33,19 @@ class Element {
     this.type = '';
     this.value = '';
     this.textContent = '';
-    this.hidden = false;
+    this._hidden = false;
     this.disabled = false;
+    this.ownerDocument = null;
   }
+  get hidden() { return this._hidden; }
+  set hidden(value) {
+    this._hidden = Boolean(value);
+    if (this._hidden && this.ownerDocument && this.ownerDocument.activeElement && this.contains(this.ownerDocument.activeElement)) {
+      this.ownerDocument.activeElement = null;
+    }
+  }
+  contains(candidate) { return this === candidate || this.children.some(child => child.contains(candidate)); }
+  focus() { if (this.ownerDocument) this.ownerDocument.activeElement = this; }
   append(...nodes) {
     for (const node of nodes) {
       if (node.parentNode) node.parentNode.removeChild(node);
@@ -44,12 +54,15 @@ class Element {
     }
   }
   replaceChildren(...nodes) {
-    for (const child of this.children) child.parentNode = null;
+    for (const child of [...this.children]) this.removeChild(child);
     this.children = [];
     this.textContent = '';
     this.append(...nodes);
   }
   removeChild(node) {
+    if (this.ownerDocument && this.ownerDocument.activeElement && node.contains(this.ownerDocument.activeElement)) {
+      this.ownerDocument.activeElement = null;
+    }
     this.children = this.children.filter(child => child !== node);
     node.parentNode = null;
   }
@@ -130,9 +143,19 @@ function makeDom() {
   node('button', 'crop-cancel', form);
   node('div', 'crop-form-message', form);
   const document = {
-    createElement: tag => new Element(tag),
+    activeElement: null,
+    createElement: tag => {
+      const element = new Element(tag);
+      element.ownerDocument = document;
+      return element;
+    },
     getElementById: byId,
   };
+  const connectDocument = element => {
+    element.ownerDocument = document;
+    for (const child of element.children) connectDocument(child);
+  };
+  connectDocument(documentElement);
   return { document, root, byId };
 }
 
@@ -229,8 +252,32 @@ test('local duplicate offers explicit selection without inserting or selecting i
   assert.match(dom.byId('crop-form-message').textContent, /already exists|duplicate/i);
   const choose = dom.root.querySelector('[data-action="select-duplicate"]');
   assert.ok(choose);
+  choose.focus();
   choose.click();
   assert.deepEqual(selected, ['crop-mango']);
+  assert.equal(dom.document.activeElement, cropButton(dom, 'crop-mango'));
+});
+
+test('crop selection preserves keyboard focus on the selected card after rerender', () => {
+  let dom;
+  dom = loadPicker({ onSelect: id => dom.picker.render({ selectedCropId: id }) });
+  const button = cropButton(dom, 'crop-taro');
+  button.focus();
+  button.click();
+
+  assert.equal(dom.document.activeElement, cropButton(dom, 'crop-taro'));
+  assert.equal(cropButton(dom, 'crop-taro').getAttribute('aria-pressed'), 'true');
+});
+
+test('Cancel returns focus to Add crop after closing the form', () => {
+  const dom = loadPicker();
+  dom.byId('crop-add-toggle').click();
+  const cancel = dom.byId('crop-cancel');
+  cancel.focus();
+  cancel.click();
+
+  assert.equal(dom.byId('crop-create-form').hidden, true);
+  assert.equal(dom.document.activeElement, dom.byId('crop-add-toggle'));
 });
 
 test('save shows loading, preserves inputs after failure, and offers a returned server duplicate', async () => {
@@ -251,12 +298,16 @@ test('save shows loading, preserves inputs after failure, and offers a returned 
   await Promise.resolve();
 
   assert.equal(dom.byId('crop-save').disabled, true);
+  assert.equal(dom.byId('crop-add-toggle').disabled, true);
+  dom.byId('crop-add-toggle').click();
+  assert.equal(form.hidden, false);
   assert.match(dom.byId('crop-save').textContent, /saving/i);
   assert.equal(name.value, 'Amaranth');
   assert.equal(color.value, '#123ABC');
   rejectCreate(new Error('network down'));
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(dom.byId('crop-save').disabled, false);
+  assert.equal(form.hidden, false);
   assert.equal(name.value, 'Amaranth');
   assert.equal(color.value, '#123ABC');
   assert.match(dom.byId('crop-form-message').textContent, /could not|failed|try again/i);
@@ -273,13 +324,17 @@ test('a concurrent duplicate is offered for explicit selection after create retu
   });
   dom.byId('crop-add-toggle').click();
   dom.byId('crop-name').value = 'Taro';
+  dom.byId('crop-save').focus();
   dom.byId('crop-create-form').fire('submit');
   await new Promise(resolve => setImmediate(resolve));
 
   assert.deepEqual(selection, []);
   assert.match(dom.byId('crop-form-message').textContent, /already exists|duplicate/i);
-  dom.root.querySelector('[data-action="select-duplicate"]').click();
+  const choose = dom.root.querySelector('[data-action="select-duplicate"]');
+  assert.equal(dom.document.activeElement, choose);
+  choose.click();
   assert.deepEqual(selection, ['crop-taro']);
+  assert.equal(dom.document.activeElement, cropButton(dom, 'crop-taro'));
 });
 
 test('an unmatched server uniqueness conflict points workers back to crop search', async () => {
@@ -327,6 +382,25 @@ test('new crop names are normalized and remain plain text in the crop list', asy
   assert.ok(hostileCard);
   assert.equal(hostileCard.querySelector('.nm').textContent, hostileName);
   assert.doesNotMatch(pickerSource, /\.innerHTML\s*=/);
+});
+
+test('successful Save moves focus to the newly created crop card', async () => {
+  let dom;
+  dom = loadPicker({ onCreate: async (name, hex) => {
+    const crop = { id: 'crop-new', hex, name: { en: name }, isResolved: true };
+    dom.catalog.all().push(crop);
+    dom.picker.render({ selectedCropId: crop.id });
+    return { status: 'created', crop };
+  } });
+  dom.byId('crop-add-toggle').click();
+  dom.byId('crop-name').value = 'Amaranth';
+  const save = dom.byId('crop-save');
+  save.focus();
+  dom.byId('crop-create-form').fire('submit');
+  await new Promise(resolve => setImmediate(resolve));
+
+  assert.equal(dom.byId('crop-create-form').hidden, true);
+  assert.equal(dom.document.activeElement, cropButton(dom, 'crop-new'));
 });
 
 test('suggested colors are stable for a name and a valid user override is retained', () => {
@@ -413,4 +487,5 @@ test('picker markup is labelled, keyboard accessible, ordered, and staged for Ta
   assert.match(stylesSource, /\.crop-custom-list\s*\{[^}]*max-height:[^}]*overflow-y:auto/s);
   assert.match(stylesSource, /@media\s*\(max-width:\s*700px\)[\s\S]*\.crop-custom-list\s*\{[^}]*max-height:/);
   assert.match(stylesSource, /\.crop-add-toggle[^}]*min-height:40px/s);
+  assert.match(stylesSource, /\.crop-btn\s+\.nm\s*\{[^}]*overflow-wrap:\s*anywhere/s);
 });

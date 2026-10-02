@@ -246,6 +246,14 @@ input,textarea{font:inherit;color:inherit;background:none;border:none;outline:no
   gap:0;
   padding:10px 12px 0;
 }
+.map-legend:not(.collapsed) #map-legend-rows{
+  max-height:45vh;
+  overflow-y:auto;
+  overscroll-behavior:contain;
+  -webkit-overflow-scrolling:touch;
+  scrollbar-width:thin;
+  scrollbar-color:var(--border-strong) transparent;
+}
 .map-legend:not(.collapsed) .lgd-head{
   align-self:stretch;
   margin:8px -12px 0 -12px;
@@ -644,7 +652,7 @@ input,textarea{font:inherit;color:inherit;background:none;border:none;outline:no
 }
 :root[data-theme="dark"] .crop-btn .swatch{border-color:rgba(255,255,255,.15)}
 .crop-btn .info{flex:1;min-width:0;line-height:1.15}
-.crop-btn .nm{font-weight:600;font-size:13px;color:var(--text)}
+.crop-btn .nm{font-weight:600;font-size:13px;color:var(--text);overflow-wrap:anywhere}
 .crop-btn .ct{font-size:10px;color:var(--muted);margin-top:1px;font-family:'IBM Plex Mono',monospace;text-transform:uppercase;letter-spacing:0.04em}
 .crop-btn .chk{
   width:18px;height:18px;border-radius:50%;
@@ -1122,6 +1130,7 @@ input,textarea{font:inherit;color:inherit;background:none;border:none;outline:no
   .map-tool-btn{flex:1;justify-content:center;min-width:0}
   .map-zoom button{width:34px}
   .map-legend{left:8px;top:74px;max-width:calc(100% - 16px)}
+  .map-legend:not(.collapsed) #map-legend-rows{max-height:34vh;}
   .scrubber-wrap{padding:10px 14px}
   .scrubber-top{align-items:flex-start;gap:8px}
   .scrubber-top .readout{text-align:right;white-space:normal}

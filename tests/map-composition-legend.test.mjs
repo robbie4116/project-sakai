@@ -117,6 +117,18 @@ test('expanded coverage legend stays attached to the pull-down tab anchor', () =
   assert.doesNotMatch(setLegendCollapsed, /headText\.textContent\s*=\s*collapsed\s*\?/);
 });
 
+test('expanded crop legend bounds and scrolls its rows on desktop and narrow screens', () => {
+  assert.match(
+    cssSource,
+    /\.map-legend:not\(\.collapsed\)\s+#map-legend-rows\s*\{[^}]*max-height:\s*45vh;[^}]*overflow-y:\s*auto;/s,
+  );
+  assert.match(cssSource, /\.map-legend:not\(\.collapsed\)\s+#map-legend-rows\s*\{[^}]*overscroll-behavior:\s*contain;/s);
+  assert.match(
+    cssSource,
+    /@media\s*\(max-width:\s*700px\)[\s\S]*?\.map-legend:not\(\.collapsed\)\s+#map-legend-rows\s*\{[^}]*max-height:\s*34vh;/,
+  );
+});
+
 test('offline desktop staging includes the shared legend source files', () => {
   assert.match(prepareDistSource, /cpSync\(tanimanSrc, join\(DIST, 'index\.html'\)\)/);
   assert.match(prepareDistSource, /'app\.js', 'data\.js', 'styles\.css', 'config\.js'/);

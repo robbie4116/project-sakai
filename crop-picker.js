@@ -85,6 +85,18 @@
       return Boolean(crop && crop.isResolved !== false);
     }
 
+    function focusCrop(cropId) {
+      const cropButton = [...root.querySelectorAll('.crop-btn')].find(button => button.dataset.cropId === cropId);
+      const target = cropButton || search;
+      if (target && typeof target.focus === 'function') target.focus({ preventScroll: true });
+    }
+
+    function focusDuplicateChoice() {
+      const choice = root.querySelector('[data-action="select-duplicate"]');
+      const target = choice || nameInput;
+      if (target && typeof target.focus === 'function') target.focus({ preventScroll: true });
+    }
+
     function targetCrops() {
       return crops().filter(crop => isTarget(crop) && resolved(crop));
     }
@@ -154,14 +166,17 @@
       check.setAttribute('aria-hidden', 'true');
       button.append(swatch, info, check);
       button.addEventListener('click', () => {
+        const shouldRestoreFocus = document.activeElement === button;
         if (action === 'select-duplicate') {
           state.formOpen = false;
           clearMessage();
           options.onSelect(crop.id);
           render();
+          if (shouldRestoreFocus) focusCrop(crop.id);
           return;
         }
         options.onSelect(crop.id);
+        if (shouldRestoreFocus) focusCrop(crop.id);
       });
       return button;
     }
@@ -215,6 +230,7 @@
       addToggle.hidden = isTauri;
       addToggle.textContent = tr('cropAdd');
       addToggle.setAttribute('aria-expanded', String(state.formOpen));
+      addToggle.disabled = state.saving;
       if (!state.formOpen || isTauri) {
         formMessage.replaceChildren();
         formMessage.textContent = '';
@@ -267,6 +283,7 @@
       state.duplicateCrop = match.crop;
       showMessage(match.isTarget ? 'cropTargetNameExists' : 'cropDuplicateExists', {}, 'status');
       render();
+      focusDuplicateChoice();
     }
 
     function validateForm(name, hex) {
@@ -309,6 +326,7 @@
           state.duplicateCrop = created.crop;
           showMessage('cropDuplicateExists', {}, 'status');
           render();
+          focusDuplicateChoice();
           return;
         }
         if (!created || created.status !== 'created' || !created.crop) {
@@ -321,6 +339,7 @@
         colorInput.value = suggestedColor('');
         clearMessage();
         render();
+        focusCrop(created.crop.id);
       } catch (error) {
         state.saving = false;
         const message = String(error && error.message || '').toLowerCase();
@@ -340,6 +359,7 @@
       renderCustom();
     });
     addToggle.addEventListener('click', () => {
+      if (state.saving) return;
       state.formOpen = !state.formOpen;
       if (state.formOpen) {
         clearMessage();
@@ -364,13 +384,14 @@
     colorInput.addEventListener('change', () => { state.colorTouched = true; });
     form.addEventListener('submit', save);
     cancelButton.addEventListener('click', () => {
+      if (state.saving) return;
       state.formOpen = false;
-      state.saving = false;
       state.colorTouched = false;
       nameInput.value = '';
       colorInput.value = suggestedColor('');
       clearMessage();
       render();
+      addToggle.focus({ preventScroll: true });
     });
 
     render();
