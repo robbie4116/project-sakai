@@ -683,7 +683,7 @@ input,textarea{font:inherit;color:inherit;background:none;border:none;outline:no
 }
 .crop-custom-list .crop-btn{flex:0 0 auto}
 .crop-empty{padding:10px 8px;color:var(--muted);font-size:12px}
-.crop-selected-status{color:var(--accent);font-size:11px;line-height:1.35}
+.crop-selected-status{color:var(--accent);font-size:11px;line-height:1.35;overflow-wrap:anywhere}
 .crop-add-toggle,.crop-save,.crop-cancel{
   min-height:40px;padding:8px 10px;border:1px solid var(--border-strong);
   border-radius:8px;font-size:12px;font-weight:600;text-align:center;
@@ -1153,7 +1153,7 @@ input,textarea{font:inherit;color:inherit;background:none;border:none;outline:no
   .crop-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}
   .crop-btn{min-width:0;padding:8px;gap:8px}
   .crop-btn .swatch{width:22px;height:22px;border-radius:6px}
-  .crop-btn .nm{font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .crop-btn .nm{font-size:12px;white-space:normal;overflow-wrap:anywhere}
   .crop-btn .ct{display:none}
   .crop-picker{gap:12px}
   .crop-custom-list{max-height:180px;grid-auto-rows:minmax(42px,auto)}

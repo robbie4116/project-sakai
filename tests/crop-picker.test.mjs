@@ -488,4 +488,10 @@ test('picker markup is labelled, keyboard accessible, ordered, and staged for Ta
   assert.match(stylesSource, /@media\s*\(max-width:\s*700px\)[\s\S]*\.crop-custom-list\s*\{[^}]*max-height:/);
   assert.match(stylesSource, /\.crop-add-toggle[^}]*min-height:40px/s);
   assert.match(stylesSource, /\.crop-btn\s+\.nm\s*\{[^}]*overflow-wrap:\s*anywhere/s);
+  assert.match(stylesSource, /\.crop-selected-status\s*\{[^}]*overflow-wrap:\s*anywhere/s);
+  const mobileStyles = stylesSource.slice(stylesSource.indexOf('@media (max-width: 700px)'));
+  assert.match(mobileStyles, /\.crop-btn\s+\.nm\s*\{[^}]*overflow-wrap:\s*anywhere/s);
+  assert.doesNotMatch(mobileStyles, /\.crop-btn\s+\.nm\s*\{[^}]*white-space:\s*nowrap|\.crop-btn\s+\.nm\s*\{[^}]*text-overflow:\s*ellipsis/);
+  assert.match(mobileStyles, /\.crop-custom-list\s*\{[^}]*max-height:180px[^}]*grid-auto-rows:minmax\(42px,auto\)/s);
+  assert.match(mobileStyles, /\.crop-custom-list\s+\.crop-btn\s*\{[^}]*min-height:42px/);
 });
