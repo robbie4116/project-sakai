@@ -201,6 +201,29 @@ test('concurrent 23505 creates share one authoritative recovery refresh', async 
   assert.deepEqual(results.map(result => result.value.status), ['duplicate', 'duplicate']);
 });
 
+test('duplicate recovery uses its authoritative row when a later forced refresh supersedes it', async () => {
+  const recoveryFetch = deferred();
+  const laterFetch = deferred();
+  const { catalog, apiCalls } = makeContext({
+    fetch: () => apiCalls.fetch === 1 ? recoveryFetch.promise : laterFetch.promise,
+    insert: async () => { throw Object.assign(new Error('duplicate'), { code: '23505' }); },
+  });
+
+  const duplicatePromise = catalog.create('Rice', '#BBBBBB');
+  while (apiCalls.fetch < 1) await new Promise(resolve => setImmediate(resolve));
+  const latestRefresh = catalog.refresh({ force: true });
+  await new Promise(resolve => setImmediate(resolve));
+  laterFetch.resolve([]);
+  await latestRefresh;
+  recoveryFetch.resolve([{ id: UUID_A, name: 'Rice', hex: '#E0C060' }]);
+
+  const result = await duplicatePromise;
+  assert.strictEqual(apiCalls.fetch, 2);
+  assert.strictEqual(result.status, 'duplicate');
+  assert.strictEqual(result.crop.id, `crop_${UUID_A}`);
+  assert.strictEqual(catalog.isResolved(`crop_${UUID_A}`), false);
+});
+
 test('a duplicate with no locally matchable normalized name keeps refreshed crops and provides search guidance', async () => {
   const { catalog } = makeContext({
     fetch: async () => [{ id: UUID_A, name: 'Cafe\u0301', hex: '#E0C060' }],

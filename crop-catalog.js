@@ -216,7 +216,7 @@
     return () => listeners.delete(listener);
   }
 
-  function refresh(options) {
+  function refresh(options, onFetched) {
     if (isTauri) return Promise.resolve(crops);
     const force = Boolean(options && options.force);
     if (!force) {
@@ -234,6 +234,7 @@
     request = Promise.resolve()
       .then(() => window.fetchCustomCrops())
       .then(rows => {
+        if (typeof onFetched === 'function') onFetched(rows);
         if (generation === refreshGeneration && mutation === mutationGeneration) {
           setCustomRows(rows);
           persistCache();
@@ -250,9 +251,11 @@
   function refreshAfterDuplicate() {
     if (duplicateRecoveryPromise) return duplicateRecoveryPromise;
     const olderRequests = Array.from(pendingRefreshes);
+    let authoritativeRows = [];
     let recovery;
     recovery = Promise.allSettled(olderRequests)
-      .then(() => refresh({ force: true }))
+      .then(() => refresh({ force: true }, rows => { authoritativeRows = rows; }))
+      .then(() => authoritativeRows)
       .finally(() => {
         if (duplicateRecoveryPromise === recovery) duplicateRecoveryPromise = null;
       });
@@ -279,8 +282,10 @@
       return { status: 'created', crop };
     } catch (error) {
       if (!error || error.code !== '23505') throw error;
-      await refreshAfterDuplicate();
-      const duplicate = findCustomByName(displayName);
+      const authoritativeRows = await refreshAfterDuplicate();
+      const duplicate = findCustomByName(displayName) || (Array.isArray(authoritativeRows) ? authoritativeRows : [])
+        .map(cropFromRow)
+        .find(crop => crop && !targetNames.has(nameKey(crop.name.en)) && nameKey(crop.name.en) === nameKey(displayName));
       if (duplicate) return { status: 'duplicate', crop: duplicate };
       throw new Error('A crop with a matching name already exists. Search the crop list to find it.');
     }
