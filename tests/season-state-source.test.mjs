@@ -3,6 +3,9 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 const appSource = await readFile(new URL('../app.js', import.meta.url), 'utf8');
+const cropExportSource = await readFile(new URL('../crop-export.js', import.meta.url), 'utf8');
+const htmlSource = await readFile(new URL('../taniman.html', import.meta.url), 'utf8');
+const tauriStageSource = await readFile(new URL('../src-tauri/scripts/prepare-dist.mjs', import.meta.url), 'utf8');
 
 test('plot state stores seasons instead of crop-index month mask cells', () => {
   assert.match(appSource, /function emptySeasons\(/);
@@ -43,7 +46,29 @@ test('export writes ML-ready seasons csv with georeferenced rows', () => {
 });
 
 test('metadata documents recurring inclusive date windows', () => {
-  assert.match(appSource, /schema_version:\s*4/);
+  assert.match(appSource, /schema_version:\s*5/);
   assert.match(appSource, /recurring annual/);
   assert.match(appSource, /inclusive/);
+});
+
+test('export includes a crop lookup, sparse crop counts, and all non-target season rows', () => {
+  assert.match(appSource, /CropExport\.buildCropLookupRows\(/);
+  assert.match(appSource, /CropExport\.buildPlotCropCounts\(/);
+  assert.match(appSource, /folder\.file\('crops\.csv'/);
+  assert.match(appSource, /folder\.file\('plot_crop_counts\.csv'/);
+  assert.match(appSource, /other_crop_cells/);
+  assert.match(appSource, /is_resolved/);
+});
+
+test('all season and label text fields are CSV escaped, including raw crop IDs', () => {
+  assert.match(appSource, /csvEscape\(row\.season_id\)/);
+  assert.match(appSource, /csvEscape\(row\.crop_id\)/);
+  assert.match(appSource, /csvEscape\(row\.farmer_id\)/);
+  assert.match(cropExportSource, /csvEscape\(crop\.crop_name\)/);
+  assert.match(cropExportSource, /csvEscape\(count\.crop_id\)/);
+});
+
+test('crop export helpers load before app.js in web and Tauri builds', () => {
+  assert.match(htmlSource, /<script src="crop-export\.js"><\/script>[\s\S]*s1\.src = 'app\.js'/);
+  assert.match(tauriStageSource, /'crop-picker\.js',\s*'crop-export\.js'/);
 });

@@ -76,12 +76,24 @@ Use the "Save all (.zip)" button in the app footer. Exports:
 - `seasons.csv` - authoritative ML ground truth; one row per `season_id` plus
   `cell_idx`, with `crop_id`, inclusive recurring `start_mmdd`/`end_mmdd`,
   `wraps_year`, WGS84 cell center/bounds, row, and column
+- `crops.csv` - joinable crop class lookup (`crop_id`, display name, color,
+  target flag, and whether the ID resolves to a catalog crop). Referenced IDs
+  missing from the catalog are included as unresolved placeholders.
+- `plot_crop_counts.csv` - sparse counts grouped by plot and crop ID. Counts
+  are derived from `seasons.csv` rows, so the same cell in overlapping seasons
+  contributes once per season.
 - `labels/plot_NNN.png` - color-coded label map per plot
 - `labels.csv` - compatibility per-season/cell labels with crop names
-- `plots.csv` - Paoay plot metadata and season row counts
-- `farmers.csv` - farmer IDs and plot lists
+- `plots.csv` - Paoay plot metadata, target-crop row counts, and an
+  `other_crop_cells` count for custom or unresolved crops
+- `farmers.csv` - farmer IDs, plot lists, and crop IDs as a JSON array in the
+  `crops` column
 - `metadata.json` - schema version, recurring annual date encoding, Sentinel-2
   alignment notes, farmer names, notes, plot coordinates, and crop summaries
+
+Use `seasons.csv` as the training-label source and join it to `crops.csv` by
+`crop_id`. Crop colors in the PNG label maps are for visual inspection only and
+are not the class labels.
 
 All exported plot records are generated Paoay plots with `plot_area=paoay` and
 `plot_source=field_grid`.

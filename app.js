@@ -10,6 +10,7 @@ const PAOAY_POLY = window.PAOAY_POLY;
 const PAOAY_PLOTS = window.PAOAY_PLOTS;
 const CROPS = window.CROPS;
 const CropCatalog = window.TANIMAN_CROP_CATALOG;
+const CropExport = window.TANIMAN_CROP_EXPORT;
 const T     = window.STRINGS;
 const PLOTS = PAOAY_PLOTS;
 const CORE_PLOT_COUNT = PAOAY_PLOTS.length;
@@ -1558,10 +1559,12 @@ document.getElementById('btn-save').onclick = async () => {
     'plot_idx,season_id,cell_idx,cell_row,cell_col,crop_id,start_mmdd,end_mmdd,wraps_year,center_lat,center_lng,lat_s,lat_n,lng_w,lng_e,farmer_id\n';
   let labelsCsv =
     'plot_idx,plot_area,plot_source,plot_row,plot_col,farmer_id,season_id,cell_idx,cell_row,cell_col,crop_id,crop_en,start_mmdd,end_mmdd,wraps_year,center_lat,center_lng,lat_s,lat_n,lng_w,lng_e\n';
+  const targetCrops = CROPS.filter(crop => CropCatalog.isTarget(crop.id));
   let plotsCsv =
     'plot_idx,plot_area,plot_source,plot_row,plot_col,centerLat,centerLng,farmer_id,farmer_name,note,photo_count,season_count,total_season_cells,' +
-    CROPS.map(c=>`${c.id}_cells`).join(',') + '\n';
-  const farmerMap = new Map(); // farmer_id -> { name, plots:[], patches }
+    targetCrops.map(c=>`${c.id}_cells`).join(',') + ',other_crop_cells\n';
+  const allSeasonExportRows = [];
+  const farmerMap = new Map(); // farmer_id -> { name, plots:[], patches, crops:Set }
   const metaPlots = [];
 
   // canvas for PNG label render
@@ -1577,24 +1580,27 @@ document.getElementById('btn-save').onclick = async () => {
     const plotSource = plot.source || 'field_grid';
     const farmerId = (p.farmerId || '').trim();
     const farmerName = (p.farmer || '').trim();
-    const note = (p.note || '').replaceAll('"', '""').replaceAll('\n', ' ');
+    const note = p.note || '';
 
     const seasonRows = seasonExportRows({ plotIdx: idx, plot, plotData: p, grid: GRID, farmerId });
-    const cellCounts = new Array(CROPS.length).fill(0);
+    for (const row of seasonRows) allSeasonExportRows.push(row);
+    const cropCounts = CropExport.buildPlotCropCounts(seasonRows);
+    const cropCountById = new Map(cropCounts.map(count => [count.crop_id, count.season_cell_rows]));
+    const otherCropCells = cropCounts.reduce((sum, count) =>
+      sum + (CropCatalog.isTarget(count.crop_id) ? 0 : count.season_cell_rows), 0);
     for (const row of seasonRows) {
-      const cropIdx = cropIndexFromId(row.crop_id);
-      if (cropIdx >= 0) cellCounts[cropIdx]++;
       seasonsCsv += [
-        row.plot_idx, row.season_id, row.cell_idx, row.cell_row, row.cell_col,
-        row.crop_id, row.start_mmdd, row.end_mmdd, row.wraps_year,
+        row.plot_idx, csvEscape(row.season_id), row.cell_idx, row.cell_row, row.cell_col,
+        csvEscape(row.crop_id), csvEscape(row.start_mmdd), csvEscape(row.end_mmdd), row.wraps_year,
         row.center_lat, row.center_lng, row.lat_s, row.lat_n, row.lng_w, row.lng_e,
         csvEscape(row.farmer_id),
       ].join(',') + '\n';
-      const crop = CROPS[cropIdx] || { name: { en: row.crop_id } };
+      const crop = CropCatalog.byId(row.crop_id) || { name: { en: `Unknown crop (${row.crop_id})` } };
       labelsCsv += [
-        row.plot_idx, plotArea, plotSource, plot.r, plot.c, csvEscape(farmerId),
-        row.season_id, row.cell_idx, row.cell_row, row.cell_col,
-        row.crop_id, csvEscape(crop.name.en), row.start_mmdd, row.end_mmdd, row.wraps_year,
+        row.plot_idx, csvEscape(plotArea), csvEscape(plotSource), plot.r, plot.c, csvEscape(farmerId),
+        csvEscape(row.season_id), row.cell_idx, row.cell_row, row.cell_col,
+        csvEscape(row.crop_id), csvEscape(crop.name.en || crop.name[state.lang] || row.crop_id),
+        csvEscape(row.start_mmdd), csvEscape(row.end_mmdd), row.wraps_year,
         row.center_lat, row.center_lng, row.lat_s, row.lat_n, row.lng_w, row.lng_e,
       ].join(',') + '\n';
     }
@@ -1616,9 +1622,10 @@ document.getElementById('btn-save').onclick = async () => {
     // plots.csv — one row per plot
     const photos = (p.photos || []).filter(ph => ph && (ph.url || ph.dataUrl));
     plotsCsv += [
-      idx, plotArea, plotSource, plot.r, plot.c, plot.centerLat, plot.centerLng,
+      idx, csvEscape(plotArea), csvEscape(plotSource), plot.r, plot.c, plot.centerLat, plot.centerLng,
       csvEscape(farmerId), csvEscape(farmerName), csvEscape(note), photos.length,
-      (p.seasons || []).length, seasonRows.length, ...cellCounts,
+      (p.seasons || []).length, seasonRows.length,
+      ...targetCrops.map(crop => cropCountById.get(crop.id) || 0), otherCropCells,
     ].join(',') + '\n';
 
     // Photos export
@@ -1636,7 +1643,9 @@ document.getElementById('btn-save').onclick = async () => {
       if (farmerName && !f.name) f.name = farmerName;
       f.plots.push(idx);
       f.patches += seasonRows.length;
-      cellCounts.forEach((n,ci)=>{ if (n>0) f.crops.add(CROPS[ci].id); });
+      for (const row of seasonRows) {
+        if (row.crop_id != null && String(row.crop_id) !== '') f.crops.add(String(row.crop_id));
+      }
     }
 
     // metadata
@@ -1652,29 +1661,41 @@ document.getElementById('btn-save').onclick = async () => {
       photo_count: photos.length,
       season_count: (p.seasons || []).length,
       season_cell_rows: seasonRows.length,
-      crops: CROPS.map((crop,ci) => ({
-        id: crop.id,
-        en: crop.name.en,
-        season_cell_rows: cellCounts[ci],
-      })).filter(x => x.season_cell_rows > 0),
+      crops: cropCounts.map(count => {
+        const crop = CropCatalog.byId(count.crop_id);
+        return {
+          id: count.crop_id,
+          en: crop?.name?.en || `Unknown crop (${count.crop_id})`,
+          is_target: CropCatalog.isTarget(count.crop_id),
+          is_resolved: CropCatalog.isResolved(count.crop_id),
+          season_cell_rows: count.season_cell_rows,
+        };
+      }),
       seasons: cloneSeasons(p.seasons),
     });
   }
 
+  const cropLookupRows = CropExport.buildCropLookupRows(allSeasonExportRows, CropCatalog.all());
+  const plotCropCountRows = CropExport.buildPlotCropCounts(allSeasonExportRows);
+  const cropsCsv = CropExport.buildCropsCsv(cropLookupRows);
+  const plotCropCountsCsv = CropExport.buildPlotCropCountsCsv(plotCropCountRows);
+
   // farmers.csv
   let farmersCsv = 'farmer_id,farmer_name,plot_count,plot_indices,total_patches,crops\n';
   for (const [id, f] of farmerMap.entries()) {
-    farmersCsv += `${csvEscape(id)},${csvEscape(f.name)},${f.plots.length},${csvEscape(f.plots.join(';'))},${f.patches},${csvEscape([...f.crops].join(';'))}\n`;
+    farmersCsv += `${csvEscape(id)},${csvEscape(f.name)},${f.plots.length},${csvEscape(f.plots.join(';'))},${f.patches},${csvEscape(JSON.stringify([...f.crops]))}\n`;
   }
 
   folder.file('seasons.csv', seasonsCsv);
   folder.file('labels.csv', labelsCsv);
   folder.file('plots.csv', plotsCsv);
   folder.file('farmers.csv', farmersCsv);
+  folder.file('crops.csv', cropsCsv);
+  folder.file('plot_crop_counts.csv', plotCropCountsCsv);
   folder.file('metadata.json', JSON.stringify({
     survey_area: 'Paoay, Atok, Benguet',
     surveyed_at: new Date().toISOString(),
-    schema_version: 4,
+    schema_version: 5,
     grid_resolution: `${GRID}x${GRID}`,
     authoritative_ground_truth_file: 'seasons.csv',
     date_encoding: {
@@ -1684,7 +1705,7 @@ document.getElementById('btn-save').onclick = async () => {
     },
     coordinate_reference_system: 'EPSG:4326',
     sentinel2_alignment_note: 'Use WGS84 cell centers or bounds from seasons.csv to sample Sentinel-2 bands and vegetation indices for a chosen target year.',
-    crops: CROPS.map(c => ({ id:c.id, hex:c.hex, name:c.name })),
+    crops: cropLookupRows,
     farmers: [...farmerMap.entries()].map(([id, f]) => ({
       id, name: f.name, plot_count: f.plots.length,
       plot_indices: f.plots, total_patches: f.patches,
@@ -1815,8 +1836,7 @@ function toast(msg){
 }
 
 function csvEscape(value) {
-  const s = value == null ? '' : String(value);
-  return /[",\n]/.test(s) ? `"${s.replaceAll('"', '""')}"` : s;
+  return CropExport.csvEscape(value);
 }
 
 // ── EVENT WIRING ──────────────────────────────────────────────────
