@@ -138,7 +138,7 @@ test('deleteCustomCrop validates UUIDs, calls the crop cleanup RPC, and normaliz
   const { api, calls } = loadAdapter({ rpcResult: { data: '7', error: null } });
 
   assert.strictEqual(await api.deleteCustomCrop(id), 7);
-  assert.deepEqual(JSON.parse(JSON.stringify(calls.slice(-1))), [['rpc', 'delete_crop_and_seasons', { crop_id: id }]]);
+  assert.deepEqual(JSON.parse(JSON.stringify(calls.slice(-1))), [['rpc', 'delete_crop_and_seasons', { p_crop_id: id }]]);
   await assert.rejects(api.deleteCustomCrop('not-a-uuid'), /UUID/i);
 });
 

@@ -47,7 +47,7 @@
   window.deleteCustomCrop = async function (id) {
     if (!isUuid(id)) throw new Error('Custom crop ID must be a UUID.');
     if (!isOnline()) throw new Error('offline');
-    const { data, error } = await initClient().rpc('delete_crop_and_seasons', { crop_id: id });
+    const { data, error } = await initClient().rpc('delete_crop_and_seasons', { p_crop_id: id });
     if (error) throw error;
     return normalizedRemovedSeasonCount(data);
   };
