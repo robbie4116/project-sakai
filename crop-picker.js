@@ -3,6 +3,7 @@
   'use strict';
 
   const FALLBACK_HEX = '#9CA3AF';
+  const SUGGESTED_COLORS = ['#2563EB', '#C026D3', '#0891B2', '#BE123C', '#4F46E5', '#0F766E'];
 
   function create(options) {
     const root = options.root;
@@ -14,8 +15,6 @@
     const targetHeading = root.querySelector('#crop-target-heading');
     const otherHeading = root.querySelector('#crop-other-heading');
     const count = root.querySelector('#crop-count');
-    const search = root.querySelector('#crop-search');
-    const searchLabel = root.querySelector('#crop-search-label');
     const customList = root.querySelector('#crop-custom-list');
     const selectedStatus = root.querySelector('#crop-selected-status');
     const addToggle = root.querySelector('#crop-add-toggle');
@@ -32,7 +31,6 @@
     const state = {
       selectedCropId: options.selectedCropId || '',
       lang: options.lang || 'en',
-      query: '',
       formOpen: false,
       saving: false,
       colorTouched: false,
@@ -87,7 +85,7 @@
 
     function focusCrop(cropId) {
       const cropButton = [...root.querySelectorAll('.crop-btn')].find(button => button.dataset.cropId === cropId);
-      const target = cropButton || search;
+      const target = cropButton || addToggle;
       if (target && typeof target.focus === 'function') target.focus({ preventScroll: true });
     }
 
@@ -111,16 +109,13 @@
         (catalog && typeof catalog.byId === 'function' ? catalog.byId(state.selectedCropId) : null);
     }
 
-    function colorPalette() {
-      const palette = targetCrops().map(crop => crop.hex).filter(validHex);
-      return palette.length ? palette : ['#22C55E', '#FFC629', '#FF6A1F'];
-    }
-
     function suggestedColor(name) {
       const normalized = normalizeName(name).toLowerCase();
       let hash = 0;
       for (const char of normalized) hash = ((hash * 31) + char.codePointAt(0)) >>> 0;
-      const palette = colorPalette();
+      const used = new Set(crops().map(crop => String(crop.hex || '').toUpperCase()).filter(validHex));
+      const available = SUGGESTED_COLORS.filter(hex => !used.has(hex));
+      const palette = available.length ? available : SUGGESTED_COLORS;
       return palette[hash % palette.length];
     }
 
@@ -189,28 +184,22 @@
 
     function renderCustom() {
       const list = customCrops();
-      const query = nameKey(state.query);
-      const filtered = list.filter(crop => !query || nameKey(crop.name && crop.name.en).includes(query));
       otherHeading.textContent = tr('cropOtherCrops');
-      count.textContent = tr('cropCount', { shown: filtered.length, total: list.length });
-      customList.replaceChildren(...filtered.map(crop =>
+      count.textContent = tr('cropCount', { shown: list.length, total: list.length });
+      customList.replaceChildren(...list.map(crop =>
         createButton(crop, crop.id === state.selectedCropId)));
-      if (!filtered.length) {
+      if (!list.length) {
         const empty = document.createElement('p');
         empty.className = 'crop-empty';
-        empty.textContent = query ? tr('cropNoMatches') : tr('cropNoCrops');
+        empty.textContent = tr('cropNoCrops');
         customList.append(empty);
       }
 
       const selected = selectedCrop();
       const selectedIsUnknown = selected && !resolved(selected);
-      const selectedIsCustom = selected && resolved(selected) && !isTarget(selected);
-      const selectedVisible = selectedIsCustom && filtered.some(crop => crop.id === selected.id);
       selectedStatus.textContent = selectedIsUnknown
         ? tr('cropSelectedUnknown', { name: displayName(selected) })
-        : selectedIsCustom && !selectedVisible
-          ? tr('cropSelectedHidden', { name: displayName(selected) })
-          : '';
+        : '';
       selectedStatus.hidden = !selectedStatus.textContent;
     }
 
@@ -263,11 +252,6 @@
     function render() {
       targetGroup.hidden = false;
       otherGroup.hidden = isTauri;
-      searchLabel.textContent = tr('cropSearchLabel');
-      search.placeholder = tr('cropSearchPlaceholder');
-      search.type = 'search';
-      search.value = state.query;
-      search.setAttribute('aria-controls', 'crop-custom-list');
       renderTargets();
       if (!isTauri) renderCustom();
       renderForm();
@@ -354,10 +338,6 @@
       }
     }
 
-    search.addEventListener('input', () => {
-      state.query = search.value;
-      renderCustom();
-    });
     addToggle.addEventListener('click', () => {
       if (state.saving) return;
       state.formOpen = !state.formOpen;

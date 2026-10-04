@@ -128,8 +128,6 @@ function makeDom() {
   const otherHeading = node('div', 'crop-other-heading-row', otherGroup);
   node('h4', 'crop-other-heading', otherHeading);
   node('span', 'crop-count', otherHeading);
-  node('label', 'crop-search-label', otherGroup);
-  node('input', 'crop-search', otherGroup);
   node('div', 'crop-custom-list', otherGroup);
   node('div', 'crop-selected-status', otherGroup);
   node('button', 'crop-add-toggle', otherGroup);
@@ -199,32 +197,16 @@ function cropButton(dom, id) {
   return dom.root.querySelector(`[data-crop-id="${id}"]`);
 }
 
-test('target crop cards stay visible while search filters only custom crops', () => {
+test('other crops stay visible without a search control', () => {
   const dom = loadPicker();
   const targetList = dom.byId('crop-target-list');
   const customList = dom.byId('crop-custom-list');
 
   assert.equal(targetList.children.length, 3);
   assert.equal(customList.children.length, 2);
-  const search = dom.byId('crop-search');
-  search.value = 'mang';
-  search.fire('input');
-
-  assert.equal(targetList.children.length, 3);
-  assert.equal(customList.children.length, 1);
-  assert.equal(customList.children[0].dataset.cropId, 'crop-mango');
-  assert.match(dom.byId('crop-count').textContent, /1.*2|2.*1/);
-});
-
-test('selected custom crop remains clearly indicated when search hides its card', () => {
-  const dom = loadPicker();
-  dom.picker.render({ selectedCropId: 'crop-mango', lang: 'en' });
-  const search = dom.byId('crop-search');
-  search.value = 'taro';
-  search.fire('input');
-
-  assert.equal(cropButton(dom, 'crop-mango'), null);
-  assert.match(dom.byId('crop-selected-status').textContent, /Mango.*search|search.*Mango/i);
+  assert.equal(dom.byId('crop-search'), null);
+  assert.equal(dom.byId('crop-search-label'), null);
+  assert.match(dom.byId('crop-count').textContent, /2/);
 });
 
 test('an unresolved selected ID gets a visible warning instead of disappearing from the picker', () => {
@@ -337,7 +319,7 @@ test('a concurrent duplicate is offered for explicit selection after create retu
   assert.equal(dom.document.activeElement, cropButton(dom, 'crop-taro'));
 });
 
-test('an unmatched server uniqueness conflict points workers back to crop search', async () => {
+test('an unmatched server uniqueness conflict points workers back to the crop list', async () => {
   const dom = loadPicker({ onCreate: async () => {
     throw new Error('A crop with a matching name already exists. Search the crop list to find it.');
   } });
@@ -346,7 +328,7 @@ test('an unmatched server uniqueness conflict points workers back to crop search
   dom.byId('crop-create-form').fire('submit');
   await new Promise(resolve => setImmediate(resolve));
 
-  assert.match(dom.byId('crop-form-message').textContent, /search the list|find it/i);
+  assert.match(dom.byId('crop-form-message').textContent, /select it from the list/i);
   assert.equal(dom.byId('crop-name').value, 'Rare Crop');
 });
 
@@ -414,7 +396,7 @@ test('suggested colors are stable for a name and a valid user override is retain
   const color = first.byId('crop-color');
   const suggestion = color.value;
   assert.equal(suggestion, second.byId('crop-color').value);
-  assert.ok(['#22C55E', '#FFC629', '#FF6A1F'].includes(suggestion));
+  assert.ok(!['#22C55E', '#FFC629', '#FF6A1F', '#E9A23B', '#8758A8'].includes(suggestion));
 
   color.value = '#123ABC';
   color.fire('input');
@@ -461,8 +443,7 @@ test('picker control strings are translated in English, Tagalog, and Ilocano', (
   vm.runInContext(dataSource, context);
   const strings = context.window.STRINGS;
   const required = [
-    'cropTargets', 'cropOtherCrops', 'cropCount', 'cropSearchLabel', 'cropSearchPlaceholder',
-    'cropNoMatches', 'cropSelectedHidden', 'cropSelectedUnknown', 'cropAdd', 'cropNameLabel', 'cropNamePlaceholder',
+    'cropTargets', 'cropOtherCrops', 'cropCount', 'cropNoCrops', 'cropSelectedUnknown', 'cropAdd', 'cropNameLabel', 'cropNamePlaceholder',
     'cropColorLabel', 'cropNameHelp', 'cropSave', 'cropSaving', 'cropCancel', 'cropNameRequired',
     'cropNameTooLong', 'cropTargetNameExists', 'cropDuplicateExists', 'cropSelectExisting',
     'cropDuplicateSearch', 'cropCatalogUnavailable', 'cropSaveFailed', 'cropColorInvalid',
@@ -477,7 +458,7 @@ test('picker control strings are translated in English, Tagalog, and Ilocano', (
 
 test('picker markup is labelled, keyboard accessible, ordered, and staged for Tauri', () => {
   assert.match(htmlSource, /id="crop-target-group"[^>]*aria-labelledby="crop-target-heading"/);
-  assert.match(htmlSource, /id="crop-search-label"[^>]*for="crop-search"/);
+  assert.doesNotMatch(htmlSource, /id="crop-search(?:-label)?"/);
   assert.match(htmlSource, /id="crop-name"[^>]*required[^>]*maxlength="160"/);
   assert.match(htmlSource, /id="crop-form-message"[^>]*aria-live="polite"/);
   assert.match(htmlSource, /<script src="crop-catalog\.js"><\/script>\s*<script src="crop-picker\.js"><\/script>/);
