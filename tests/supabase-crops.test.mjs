@@ -4,10 +4,23 @@ import test from 'node:test';
 import vm from 'node:vm';
 
 const syncSource = await readFile(new URL('../supabase-sync.js', import.meta.url), 'utf8');
+const cropSqlSource = await readFile(new URL('../docs/supabase-add-crops.sql', import.meta.url), 'utf8');
 
-function loadAdapter({ online = true, result = { data: null, error: null } } = {}) {
+function sqlFunction(source, name) {
+  const start = source.indexOf(`create or replace function public.${name}()`);
+  assert.notEqual(start, -1, `Expected SQL to define ${name}`);
+  const end = source.indexOf('$$;', start);
+  assert.notEqual(end, -1, `Expected SQL function ${name} to end`);
+  return source.slice(start, end + 3);
+}
+
+function loadAdapter({ online = true, result = { data: null, error: null }, rpcResult = result } = {}) {
   const calls = [];
   const client = {
+    rpc(name, args) {
+      calls.push(['rpc', name, args]);
+      return Promise.resolve(rpcResult);
+    },
     from(table) {
       calls.push(['from', table]);
       return {
@@ -110,4 +123,39 @@ test('catalog reads and inserts reject offline without creating a Supabase clien
   await assert.rejects(api.fetchCustomCrops(), { message: 'offline' });
   await assert.rejects(api.insertCustomCrop('Ube', '#714B9E'), { message: 'offline' });
   assert.deepEqual(calls, []);
+});
+
+test('deleteCustomCrop rejects offline without creating a Supabase client', async () => {
+  const id = '123e4567-e89b-12d3-a456-426614174000';
+  const { api, calls } = loadAdapter({ online: false });
+
+  await assert.rejects(api.deleteCustomCrop(id), { message: 'offline' });
+  assert.deepEqual(calls, []);
+});
+
+test('deleteCustomCrop validates UUIDs, calls the crop cleanup RPC, and normalizes its count', async () => {
+  const id = '123e4567-e89b-12d3-a456-426614174000';
+  const { api, calls } = loadAdapter({ rpcResult: { data: '7', error: null } });
+
+  assert.strictEqual(await api.deleteCustomCrop(id), 7);
+  assert.deepEqual(JSON.parse(JSON.stringify(calls.slice(-1))), [['rpc', 'delete_crop_and_seasons', { crop_id: id }]]);
+  await assert.rejects(api.deleteCustomCrop('not-a-uuid'), /UUID/i);
+});
+
+test('deleteCustomCrop rejects RPC errors and clamps invalid RPC counts to zero', async () => {
+  const id = '123e4567-e89b-12d3-a456-426614174000';
+  const rpcError = Object.assign(new Error('delete denied'), { code: '42501' });
+  const failure = loadAdapter({ rpcResult: { data: null, error: rpcError } });
+  await assert.rejects(failure.api.deleteCustomCrop(id), error => error === rpcError);
+
+  const invalidCount = loadAdapter({ rpcResult: { data: '-2', error: null } });
+  assert.strictEqual(await invalidCount.api.deleteCustomCrop(id), 0);
+});
+
+test('plot custom-crop validation locks every new canonical crop and preserves dangling legacy IDs only on unchanged seasons', () => {
+  const validation = sqlFunction(cropSqlSource, 'validate_plot_custom_crops');
+
+  assert.match(validation, /tg_op\s*=\s*'UPDATE'\s+and\s+new\.seasons\s+is\s+not\s+distinct\s+from\s+old\.seasons\s+then\s+return\s+new;/i);
+  assert.match(validation, /perform\s+1\s+from\s+public\.crops\s+where\s+id\s*=\s*custom_id\s+for\s+key\s+share;/i);
+  assert.doesNotMatch(validation, /old_entry|continue;/i);
 });

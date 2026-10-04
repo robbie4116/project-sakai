@@ -23,7 +23,7 @@ function sqlBetween(source, startMarker, endMarker) {
   return source.slice(start, end);
 }
 
-test('crop migration is repeatable and grants app roles read and insert access only', () => {
+test('crop migration is repeatable and grants app roles read, insert, and controlled deletion access', () => {
   assert.match(sqlSource, /create table if not exists public\.crops\s*\(/i);
   assert.match(sqlSource, /create unique index if not exists crops_normalized_name_uq/i);
   assert.match(sqlSource, /alter table public\.crops enable row level security/i);
@@ -32,12 +32,19 @@ test('crop migration is repeatable and grants app roles read and insert access o
   const grants = sqlSource.match(/\bgrant\b[^;]*;/gi) ?? [];
   assert.deepEqual(grants.map((grant) => grant.replace(/\s+/g, ' ').trim().toLowerCase()), [
     'grant select, insert on table public.crops to anon, authenticated;',
+    'grant execute on function public.delete_crop_and_seasons(uuid) to anon, authenticated;',
   ]);
 
   assert.match(sqlSource, /drop policy if exists crops_public_read on public\.crops/i);
   assert.match(sqlSource, /create policy crops_public_read on public\.crops\s+for select to anon, authenticated using \(true\)/i);
   assert.match(sqlSource, /drop policy if exists crops_public_insert on public\.crops/i);
   assert.match(sqlSource, /create policy crops_public_insert on public\.crops\s+for insert to anon, authenticated with check \(true\)/i);
+
+  assert.match(sqlSource, /revoke all on function public\.delete_crop_and_seasons\(uuid\) from public/i);
+  assert.match(sqlSource, /create or replace function public\.delete_crop_and_seasons\(p_crop_id uuid\)\s+returns bigint\s+language plpgsql\s+security definer\s+set search_path = pg_catalog/i);
+  assert.match(sqlSource, /create or replace function public\.validate_plot_custom_crops\(\)\s+returns trigger\s+language plpgsql\s+security definer\s+set search_path = pg_catalog/i);
+  assert.match(sqlSource, /drop trigger if exists validate_plot_custom_crops_before_write on public\.plots/i);
+  assert.match(sqlSource, /create trigger validate_plot_custom_crops_before_write\s+before insert or update of seasons on public\.plots\s+for each row execute function public\.validate_plot_custom_crops\(\)/i);
 });
 
 test('crop migration requires non-null names and #RRGGBB hex colors', () => {
@@ -64,7 +71,21 @@ test('crop migration reserves every built-in display name using the shared norma
   assert.ok(uniqueIndex.includes(`onpublic.crops((lower(${normalizedName})))`));
 });
 
-test('crop migration does not reset plots or mutate storage', () => {
+test('crop migration limits plot changes to the controlled crop-deletion cleanup', () => {
   assert.doesNotMatch(sqlSource, /\bdrop\s+table\b|\btruncate\b/i);
-  assert.doesNotMatch(sqlSource, /\b(?:create|alter|drop|truncate|insert|update|delete)\b[^;]*(?:public\.plots|storage\.)/i);
+  assert.doesNotMatch(sqlSource, /\b(?:create|alter|drop|truncate|insert|update|delete)\b[^;]*storage\./i);
+
+  const deleteCropFunction = sqlSource.match(
+    /create or replace function public\.delete_crop_and_seasons\(p_crop_id uuid\).*?\$\$;/is,
+  )?.[0];
+  assert.ok(deleteCropFunction, 'Expected the controlled crop-deletion function');
+  assert.match(deleteCropFunction, /update public\.plots as p\s+set seasons = changed\.seasons,\s+updated_at = now\(\)/i);
+  assert.match(deleteCropFunction, /delete from public\.crops where id = p_crop_id/i);
+  assert.doesNotMatch(deleteCropFunction, /\b(?:alter|drop|truncate|insert|delete)\b[^;]*public\.plots/i);
+
+  const uncontrolledSql = sqlSource
+    .replace(deleteCropFunction, '')
+    .replace(/drop trigger if exists validate_plot_custom_crops_before_write on public\.plots\s*;/i, '')
+    .replace(/create trigger validate_plot_custom_crops_before_write.*?public\.validate_plot_custom_crops\(\)\s*;/is, '');
+  assert.doesNotMatch(uncontrolledSql, /\bpublic\.plots\b/i);
 });

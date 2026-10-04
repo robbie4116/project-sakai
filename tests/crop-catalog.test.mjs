@@ -15,11 +15,11 @@ function deferred() {
   return { promise, resolve, reject };
 }
 
-function makeContext({ cache, tauri = false, fetch, insert } = {}) {
+function makeContext({ cache, tauri = false, fetch, insert, remove } = {}) {
   const store = new Map();
   if (cache !== undefined) store.set(CACHE_KEY, cache);
   const storageCalls = [];
-  const apiCalls = { fetch: 0, insert: [] };
+  const apiCalls = { fetch: 0, insert: [], remove: [] };
   const crops = [
     { id: 'lettuce', hex: '#22C55E', name: { en: 'Lettuce', tl: 'Letsugas', il: 'Letsugas' } },
     { id: 'potato', hex: '#FFC629', name: { en: 'Potato', tl: 'Patatas', il: 'Patatas' } },
@@ -37,6 +37,11 @@ function makeContext({ cache, tauri = false, fetch, insert } = {}) {
     apiCalls.insert.push([name, hex]);
     if (insert) return insert(name, hex);
     return { id: UUID_B, name, hex };
+  };
+  window.deleteCustomCrop = async id => {
+    apiCalls.remove.push(id);
+    if (remove) return remove(id);
+    return 0;
   };
   const context = { window, localStorage };
   vm.runInNewContext(catalogSource, context, { filename: 'crop-catalog.js' });
@@ -334,6 +339,53 @@ test('Tauri mode ignores cache and remote catalog calls and stays target-only', 
   assert.deepEqual(Array.from(catalog.all(), crop => crop.id), ['lettuce', 'potato', 'carrot']);
   await catalog.refresh();
   await assert.rejects(catalog.create('Amaranth', '#258C55'), /unavailable|offline|Tauri/i);
-  assert.deepEqual(apiCalls, { fetch: 0, insert: [] });
+  assert.deepEqual(apiCalls, { fetch: 0, insert: [], remove: [] });
   assert.deepEqual(storageCalls, []);
+});
+
+test('remove deletes a confirmed custom crop only after the server confirms deletion', async () => {
+  const { catalog, apiCalls, store } = makeContext({
+    cache: cache([{ id: UUID_A, name: 'Amaranth', hex: '#258C55' }]),
+    remove: async id => {
+      assert.strictEqual(id, UUID_A);
+      return '4';
+    },
+  });
+  let notifications = 0;
+  catalog.subscribe(() => notifications++);
+
+  const removedSeasons = await catalog.remove(`crop_${UUID_A}`);
+
+  assert.strictEqual(removedSeasons, 4);
+  assert.deepEqual(apiCalls.remove, [UUID_A]);
+  assert.strictEqual(catalog.isResolved(`crop_${UUID_A}`), false);
+  assert.deepEqual(JSON.parse(store.get(CACHE_KEY)).rows, []);
+  assert.strictEqual(notifications, 1);
+});
+
+test('remove rejects target, unknown, malformed, and Tauri crop IDs without server calls', async () => {
+  const { catalog, apiCalls } = makeContext({
+    cache: cache([{ id: UUID_A, name: 'Amaranth', hex: '#258C55' }]),
+  });
+  for (const id of ['lettuce', 'crop_missing', 'crop_not-a-uuid', UUID_A, '']) {
+    await assert.rejects(catalog.remove(id));
+  }
+  assert.deepEqual(apiCalls.remove, []);
+
+  const offline = makeContext({ tauri: true });
+  await assert.rejects(offline.catalog.remove(`crop_${UUID_A}`), /unavailable|offline|Tauri/i);
+  assert.deepEqual(offline.apiCalls.remove, []);
+});
+
+test('remove retains the custom crop and cache when server deletion fails', async () => {
+  const { catalog, store, apiCalls } = makeContext({
+    cache: cache([{ id: UUID_A, name: 'Amaranth', hex: '#258C55' }]),
+    remove: async () => { throw new Error('delete rejected'); },
+  });
+
+  await assert.rejects(catalog.remove(`crop_${UUID_A}`), /delete rejected/);
+
+  assert.deepEqual(apiCalls.remove, [UUID_A]);
+  assert.strictEqual(catalog.byId(`crop_${UUID_A}`).name.en, 'Amaranth');
+  assert.deepEqual(JSON.parse(store.get(CACHE_KEY)).rows, [{ id: UUID_A, name: 'Amaranth', hex: '#258C55' }]);
 });

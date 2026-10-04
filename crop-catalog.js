@@ -299,6 +299,30 @@
     }
   }
 
+  function removedSeasonCount(value) {
+    const count = Number(value);
+    return Number.isFinite(count) && count >= 0 ? count : 0;
+  }
+
+  async function remove(cropId) {
+    if (isTauri) throw new Error('Custom crops are unavailable in the offline app.');
+    const id = cropIdentity(cropId);
+    if (id == null || targetById.has(id)) throw new Error('Only custom crops can be removed.');
+    if (!id.startsWith('crop_') || !isUuid(id.slice('crop_'.length)) || !customById.has(id)) {
+      throw new Error('Unknown custom crop.');
+    }
+    if (typeof window.deleteCustomCrop !== 'function') throw new Error('Custom crop catalog is unavailable.');
+
+    const removed = await window.deleteCustomCrop(id.slice('crop_'.length));
+    mutationGeneration++;
+    customById.delete(id);
+    confirmedById.delete(id);
+    rebuild();
+    persistCache();
+    notify();
+    return removedSeasonCount(removed);
+  }
+
   /**
    * Public catalog API.
    * all() returns the live, stable CROPS array; each crop has id, hex, name,
@@ -308,6 +332,7 @@
    * refresh() resolves to that array. create() resolves to
    * {status:'created'|'duplicate', crop}; failures reject with an Error.
    * normalizeName() returns trimmed text with internal whitespace collapsed.
+   * remove() resolves to the nonnegative number of removed season entries.
    */
   window.TANIMAN_CROP_CATALOG = {
     all,
@@ -318,6 +343,7 @@
     subscribe,
     refresh,
     create,
+    remove,
     normalizeName,
   };
 })();

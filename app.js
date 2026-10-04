@@ -1177,6 +1177,33 @@ function selectCrop(cropId){
   schedSave();
 }
 
+async function removeCustomCrop(cropId) {
+  const removedSeasons = await CropCatalog.remove(cropId);
+  for (const [key, plot] of Object.entries(state.plots)) {
+    if (!plot || !Array.isArray(plot.seasons)) continue;
+    const idx = Number(key);
+    const hadCrop = plot.seasons.some(season => season && season.cropId === cropId);
+    if (!hadCrop) continue;
+    plot.seasons = plot.seasons.filter(season => season && season.cropId !== cropId);
+    // Queue the sanitized plot so its remaining local metadata and pending
+    // photos are kept while the deleted crop cannot be restored remotely.
+    markCloudDirty(idx);
+  }
+  undoStack.length = 0;
+  redoStack.length = 0;
+  updateUndoBtn();
+  CropCatalog.registerReferences(state.plots);
+  saveState();
+  renderCanvas();
+  drawPlotsOnMap();
+  updateLegend();
+  updateProgress();
+  updatePlotHeader();
+  refreshMetaToggle();
+  if (drawer && drawer.classList.contains('on')) loadMetadataIntoDrawer();
+  return removedSeasons;
+}
+
 function buildPalette(){
   if (!cropPickerInstance) {
     cropPickerInstance = window.TANIMAN_CROP_PICKER.create({
@@ -1190,6 +1217,7 @@ function buildPalette(){
         if (result.status === 'created') selectCrop(result.crop.id);
         return result;
       },
+      onRemove: removeCustomCrop,
     });
   }
   cropPickerInstance.render({ selectedCropId: state.selectedCropId, lang: state.lang });

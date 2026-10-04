@@ -678,6 +678,16 @@ input,textarea{font:inherit;color:inherit;background:none;border:none;outline:no
   padding:1px 3px 1px 1px;scrollbar-width:thin;scrollbar-color:var(--border-strong) transparent;
 }
 .crop-custom-list .crop-btn{flex:0 0 auto}
+.crop-custom-row{display:flex;align-items:stretch;gap:6px;margin-bottom:6px}
+.crop-custom-row .crop-btn{flex:1;min-width:0}
+.crop-remove{
+  flex:0 0 auto;min-height:40px;padding:7px 9px;border:1px solid rgba(239,68,68,.5);
+  border-radius:8px;background:transparent;color:var(--danger);font-size:11px;font-weight:700;
+}
+.crop-remove:hover:not(:disabled){background:rgba(239,68,68,.1);border-color:var(--danger)}
+.crop-remove:disabled,.crop-btn:disabled{opacity:.55;cursor:wait}
+.crop-remove-message{margin:7px 2px 1px;color:var(--text-dim);font-size:11px;line-height:1.4}
+.crop-remove-message.is-error{color:var(--danger)}
 .crop-empty{padding:10px 8px;color:var(--muted);font-size:12px}
 .crop-selected-status{color:var(--accent);font-size:11px;line-height:1.35;overflow-wrap:anywhere}
 .crop-add-toggle,.crop-save,.crop-cancel{
@@ -1154,6 +1164,7 @@ input,textarea{font:inherit;color:inherit;background:none;border:none;outline:no
   .crop-picker{gap:12px}
   .crop-custom-list{max-height:180px;grid-auto-rows:minmax(42px,auto)}
   .crop-custom-list .crop-btn{height:100%;min-height:42px}
+  .crop-remove{min-height:42px}
   .crop-form-field input[type="text"],.crop-add-toggle,.crop-save,.crop-cancel{min-height:42px}
 
   .ftr{height:auto;min-height:56px;padding:8px 14px;gap:10px;flex-wrap:wrap}

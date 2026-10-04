@@ -33,11 +33,15 @@
       lang: options.lang || 'en',
       formOpen: false,
       saving: false,
+      removing: false,
       colorTouched: false,
       duplicateCrop: null,
       messageKey: '',
       messageValues: {},
       messageKind: 'status',
+      removalMessageKey: '',
+      removalMessageValues: {},
+      removalMessageKind: 'status',
     };
 
     function strings() {
@@ -86,6 +90,11 @@
     function focusCrop(cropId) {
       const cropButton = [...root.querySelectorAll('.crop-btn')].find(button => button.dataset.cropId === cropId);
       const target = cropButton || addToggle;
+      if (target && typeof target.focus === 'function') target.focus({ preventScroll: true });
+    }
+
+    function focusRemoveCrop(cropId) {
+      const target = root.querySelector(`[data-remove-crop-id="${cropId}"]`) || addToggle;
       if (target && typeof target.focus === 'function') target.focus({ preventScroll: true });
     }
 
@@ -143,6 +152,7 @@
       button.dataset.cropId = crop.id;
       button.setAttribute('aria-pressed', String(isSelected));
       if (action) button.dataset.action = action;
+      button.disabled = state.removing;
       if (isSelected) button.style.borderColor = validHex(crop.hex) ? crop.hex : FALLBACK_HEX;
 
       const swatch = document.createElement('span');
@@ -176,6 +186,18 @@
       return button;
     }
 
+    function createRemoveButton(crop) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'crop-remove';
+      button.dataset.removeCropId = crop.id;
+      button.textContent = tr('cropRemove');
+      button.setAttribute('aria-label', tr('cropRemoveLabel', { name: displayName(crop) }));
+      button.disabled = state.removing;
+      button.addEventListener('click', () => removeCrop(crop, button));
+      return button;
+    }
+
     function renderTargets() {
       targetHeading.textContent = tr('cropTargets');
       targetList.replaceChildren(...targetCrops().map(crop =>
@@ -186,13 +208,26 @@
       const list = customCrops();
       otherHeading.textContent = tr('cropOtherCrops');
       count.textContent = tr('cropCount', { shown: list.length, total: list.length });
-      customList.replaceChildren(...list.map(crop =>
-        createButton(crop, crop.id === state.selectedCropId)));
+      customList.replaceChildren(...list.map(crop => {
+        const row = document.createElement('div');
+        row.className = 'crop-custom-row';
+        row.append(
+          createButton(crop, crop.id === state.selectedCropId),
+          createRemoveButton(crop));
+        return row;
+      }));
       if (!list.length) {
         const empty = document.createElement('p');
         empty.className = 'crop-empty';
         empty.textContent = tr('cropNoCrops');
         customList.append(empty);
+      }
+      if (state.removalMessageKey) {
+        const message = document.createElement('p');
+        message.className = 'crop-remove-message' + (state.removalMessageKind === 'error' ? ' is-error' : '');
+        message.textContent = tr(state.removalMessageKey, state.removalMessageValues);
+        message.setAttribute('role', state.removalMessageKind === 'error' ? 'alert' : 'status');
+        customList.append(message);
       }
 
       const selected = selectedCrop();
@@ -219,7 +254,7 @@
       addToggle.hidden = isTauri;
       addToggle.textContent = tr('cropAdd');
       addToggle.setAttribute('aria-expanded', String(state.formOpen));
-      addToggle.disabled = state.saving;
+      addToggle.disabled = state.saving || state.removing;
       if (!state.formOpen || isTauri) {
         formMessage.replaceChildren();
         formMessage.textContent = '';
@@ -230,16 +265,18 @@
       nameHelp.textContent = tr('cropNameHelp');
       nameInput.placeholder = tr('cropNamePlaceholder');
       nameInput.required = true;
+      nameInput.disabled = state.saving || state.removing;
       // maxlength counts UTF-16 code units; the catalog and database count
       // Unicode characters. Let the submit validator enforce the exact limit.
       nameInput.maxLength = 160;
       colorInput.type = 'color';
+      colorInput.disabled = state.saving || state.removing;
       colorInput.value = validHex(colorInput.value) ? colorInput.value : suggestedColor(nameInput.value);
       saveButton.type = 'submit';
-      saveButton.disabled = state.saving;
+      saveButton.disabled = state.saving || state.removing;
       saveButton.textContent = state.saving ? tr('cropSaving') : tr('cropSave');
       cancelButton.type = 'button';
-      cancelButton.disabled = state.saving;
+      cancelButton.disabled = state.saving || state.removing;
       cancelButton.textContent = tr('cropCancel');
       formMessage.replaceChildren();
       formMessage.textContent = state.messageKey ? tr(state.messageKey, state.messageValues) : '';
@@ -282,7 +319,7 @@
 
     async function save(event) {
       event.preventDefault();
-      if (state.saving || isTauri) return;
+      if (state.saving || state.removing || isTauri) return;
       state.formOpen = true;
       clearMessage();
       const result = validateForm(nameInput.value, colorInput.value);
@@ -338,8 +375,56 @@
       }
     }
 
+    async function removeCrop(crop, button) {
+      if (state.removing || state.saving || isTarget(crop)) return;
+      const removalIndex = customCrops().findIndex(item => item.id === crop.id);
+      const confirmed = typeof window.confirm === 'function' && window.confirm(
+        tr('cropRemoveConfirm', { name: displayName(crop) }));
+      if (!confirmed) return;
+      if (typeof options.onRemove !== 'function') {
+        state.removalMessageKey = 'cropRemoveFailed';
+        state.removalMessageValues = {};
+        state.removalMessageKind = 'error';
+        render();
+        focusRemoveCrop(crop.id);
+        return;
+      }
+
+      state.removing = true;
+      state.removalMessageKey = '';
+      render();
+      try {
+        const removedSeasons = await options.onRemove(crop.id);
+        state.removing = false;
+        state.removalMessageKey = 'cropRemoveSuccess';
+        state.removalMessageValues = { name: displayName(crop), count: Number(removedSeasons) || 0 };
+        state.removalMessageKind = 'status';
+        const wasSelected = state.selectedCropId === crop.id;
+        render();
+        if (wasSelected) {
+          const fallback = targetCrops()[0];
+          if (fallback) {
+            options.onSelect(fallback.id);
+            focusCrop(fallback.id);
+          }
+        } else {
+          const remaining = customCrops();
+          const adjacent = remaining[Math.min(removalIndex, remaining.length - 1)];
+          if (adjacent) focusRemoveCrop(adjacent.id);
+          else if (typeof addToggle.focus === 'function') addToggle.focus({ preventScroll: true });
+        }
+      } catch (error) {
+        state.removing = false;
+        state.removalMessageKey = 'cropRemoveFailed';
+        state.removalMessageValues = {};
+        state.removalMessageKind = 'error';
+        render();
+        focusRemoveCrop(crop.id);
+      }
+    }
+
     addToggle.addEventListener('click', () => {
-      if (state.saving) return;
+      if (state.saving || state.removing) return;
       state.formOpen = !state.formOpen;
       if (state.formOpen) {
         clearMessage();
@@ -355,7 +440,7 @@
     });
     nameInput.addEventListener('invalid', event => {
       event.preventDefault();
-      if (state.saving) return;
+      if (state.saving || state.removing) return;
       state.formOpen = true;
       showMessage('cropNameRequired');
       renderForm();
@@ -364,7 +449,7 @@
     colorInput.addEventListener('change', () => { state.colorTouched = true; });
     form.addEventListener('submit', save);
     cancelButton.addEventListener('click', () => {
-      if (state.saving) return;
+      if (state.saving || state.removing) return;
       state.formOpen = false;
       state.colorTouched = false;
       nameInput.value = '';

@@ -4,6 +4,7 @@ import test from 'node:test';
 import vm from 'node:vm';
 
 const pickerSource = await readFile(new URL('../crop-picker.js', import.meta.url), 'utf8').catch(() => '');
+const appSource = await readFile(new URL('../app.js', import.meta.url), 'utf8');
 const dataSource = await readFile(new URL('../data.js', import.meta.url), 'utf8');
 const htmlSource = await readFile(new URL('../taniman.html', import.meta.url), 'utf8');
 const stagingSource = await readFile(new URL('../src-tauri/scripts/prepare-dist.mjs', import.meta.url), 'utf8');
@@ -87,6 +88,8 @@ class Element {
       if (action && node.dataset.action === action[1]) return true;
       const cropId = selector.match(/^\[data-crop-id="([^"]+)"\]$/);
       if (cropId && node.dataset.cropId === cropId[1]) return true;
+      const removeCropId = selector.match(/^\[data-remove-crop-id="([^"]+)"\]$/);
+      if (removeCropId && node.dataset.removeCropId === removeCropId[1]) return true;
       return false;
     };
     const visit = node => {
@@ -173,9 +176,9 @@ function createCatalog() {
   };
 }
 
-function loadPicker({ tauri = false, onCreate = async () => ({ status: 'created', crop: null }), onSelect = () => {} } = {}) {
+function loadPicker({ tauri = false, onCreate = async () => ({ status: 'created', crop: null }), onRemove = async () => 0, onSelect = () => {}, confirm = () => true } = {}) {
   const dom = makeDom();
-  const window = { ...(tauri ? { __TAURI__: {} } : {}) };
+  const window = { confirm, ...(tauri ? { __TAURI__: {} } : {}) };
   const context = { window, document: dom.document, console };
   vm.createContext(context);
   vm.runInContext(dataSource, context);
@@ -187,6 +190,7 @@ function loadPicker({ tauri = false, onCreate = async () => ({ status: 'created'
     selectedCropId: 'lettuce',
     lang: 'en',
     onCreate,
+    onRemove,
     onSelect,
   });
   picker.render({ selectedCropId: 'lettuce', lang: 'en' });
@@ -196,6 +200,140 @@ function loadPicker({ tauri = false, onCreate = async () => ({ status: 'created'
 function cropButton(dom, id) {
   return dom.root.querySelector(`[data-crop-id="${id}"]`);
 }
+
+function removeButton(dom, id) {
+  return dom.root.querySelector(`[data-remove-crop-id="${id}"]`);
+}
+
+test('only custom crops have adjacent accessible remove controls', () => {
+  const dom = loadPicker();
+  const mango = cropButton(dom, 'crop-mango');
+  const removeMango = removeButton(dom, 'crop-mango');
+
+  assert.ok(mango);
+  assert.ok(removeMango);
+  assert.equal(removeMango.tagName, 'BUTTON');
+  assert.match(removeMango.getAttribute('aria-label'), /remove mango/i);
+  assert.equal(mango.contains(removeMango), false);
+  assert.equal(removeButton(dom, 'lettuce'), null);
+  assert.equal(removeButton(dom, 'potato'), null);
+  assert.equal(removeButton(dom, 'carrot'), null);
+});
+
+test('removing a custom crop confirms its name and keeps focus and state when cancelled', async () => {
+  const calls = [];
+  const confirmations = [];
+  const dom = loadPicker({
+    confirm: message => { confirmations.push(message); return false; },
+    onRemove: async id => calls.push(id),
+  });
+  const remove = removeButton(dom, 'crop-mango');
+  remove.focus();
+  remove.click();
+  await Promise.resolve();
+
+  assert.equal(calls.length, 0);
+  assert.equal(confirmations.length, 1);
+  assert.match(confirmations[0], /Mango/);
+  assert.match(confirmations[0], /permanently remove/i);
+  assert.match(confirmations[0], /painted cells.*every plot/i);
+  assert.equal(dom.document.activeElement, remove);
+  assert.equal(remove.disabled, false);
+});
+
+test('accepting removal calls onRemove once and disables picker controls while pending', async () => {
+  let resolveRemove;
+  const calls = [];
+  const dom = loadPicker({
+    confirm: () => true,
+    onRemove: id => {
+      calls.push(id);
+      return new Promise(resolve => { resolveRemove = resolve; });
+    },
+  });
+  const remove = removeButton(dom, 'crop-mango');
+  remove.click();
+  remove.click();
+  await Promise.resolve();
+
+  assert.deepEqual(calls, ['crop-mango']);
+  assert.equal(cropButton(dom, 'lettuce').disabled, true);
+  assert.equal(cropButton(dom, 'crop-taro').disabled, true);
+  assert.equal(removeButton(dom, 'crop-mango').disabled, true);
+  assert.equal(removeButton(dom, 'crop-taro').disabled, true);
+  assert.equal(dom.byId('crop-add-toggle').disabled, true);
+  resolveRemove(3);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(cropButton(dom, 'lettuce').disabled, false);
+});
+
+test('a pending removal disables an open add form and blocks direct submission', async () => {
+  let resolveRemove;
+  const created = [];
+  const dom = loadPicker({
+    confirm: () => true,
+    onCreate: async (...args) => { created.push(args); return { status: 'created', crop: null }; },
+    onRemove: () => new Promise(resolve => { resolveRemove = resolve; }),
+  });
+  dom.byId('crop-add-toggle').click();
+  dom.byId('crop-name').value = 'Amaranth';
+  dom.byId('crop-color').value = '#123ABC';
+  removeButton(dom, 'crop-mango').click();
+  await Promise.resolve();
+
+  assert.equal(dom.byId('crop-name').disabled, true);
+  assert.equal(dom.byId('crop-color').disabled, true);
+  dom.byId('crop-create-form').fire('submit');
+  await Promise.resolve();
+  assert.deepEqual(created, []);
+
+  resolveRemove(0);
+  await new Promise(resolve => setImmediate(resolve));
+});
+
+test('remove success focuses the fallback selection and failure returns focus to the same Remove control', async () => {
+  let dom;
+  const selected = [];
+  dom = loadPicker({
+    confirm: () => true,
+    onSelect: id => selected.push(id),
+    onRemove: async id => {
+      dom.catalog.all().splice(dom.catalog.all().findIndex(crop => crop.id === id), 1);
+      return 1;
+    },
+  });
+  dom.picker.render({ selectedCropId: 'crop-mango' });
+  removeButton(dom, 'crop-mango').click();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(selected, ['lettuce']);
+  assert.equal(dom.document.activeElement, cropButton(dom, 'lettuce'));
+
+  const failing = loadPicker({ confirm: () => true, onRemove: async () => { throw new Error('offline'); } });
+  failing.picker.render({ selectedCropId: 'crop-mango' });
+  failing.removeButton = removeButton(failing, 'crop-mango');
+  failing.removeButton.click();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.ok(cropButton(failing, 'crop-mango'));
+  assert.equal(cropButton(failing, 'crop-mango').getAttribute('aria-pressed'), 'true');
+  assert.match(failing.root.querySelector('.crop-remove-message').textContent, /could not|failed|try again/i);
+  assert.equal(failing.document.activeElement, removeButton(failing, 'crop-mango'));
+});
+
+test('removing an unselected custom crop focuses a surviving adjacent Remove control', async () => {
+  let dom;
+  dom = loadPicker({
+    confirm: () => true,
+    onRemove: async id => {
+      dom.catalog.all().splice(dom.catalog.all().findIndex(crop => crop.id === id), 1);
+      return 0;
+    },
+  });
+
+  removeButton(dom, 'crop-mango').click();
+  await new Promise(resolve => setImmediate(resolve));
+
+  assert.equal(dom.document.activeElement, removeButton(dom, 'crop-taro'));
+});
 
 test('other crops stay visible without a search control', () => {
   const dom = loadPicker();
@@ -447,6 +585,7 @@ test('picker control strings are translated in English, Tagalog, and Ilocano', (
     'cropColorLabel', 'cropNameHelp', 'cropSave', 'cropSaving', 'cropCancel', 'cropNameRequired',
     'cropNameTooLong', 'cropTargetNameExists', 'cropDuplicateExists', 'cropSelectExisting',
     'cropDuplicateSearch', 'cropCatalogUnavailable', 'cropSaveFailed', 'cropColorInvalid',
+    'cropRemove', 'cropRemoveLabel', 'cropRemoveConfirm', 'cropRemoveSuccess', 'cropRemoveFailed',
   ];
   for (const lang of ['en', 'tl', 'il']) {
     for (const key of required) {
@@ -454,6 +593,20 @@ test('picker control strings are translated in English, Tagalog, and Ilocano', (
       assert.notEqual(strings[lang][key].trim(), '', `${lang}.${key} should not be empty`);
     }
   }
+});
+
+test('the app sanitizes deleted crop seasons while preserving dirty plot sync work', () => {
+  const removeCustomCrop = appSource.match(/async function removeCustomCrop\(cropId\) \{([\s\S]*?)\n\}/)?.[0] || '';
+
+  assert.match(appSource, /async function removeCustomCrop\(cropId\)/);
+  assert.match(appSource, /await CropCatalog\.remove\(cropId\)/);
+  assert.match(removeCustomCrop, /season\.cropId !== cropId/);
+  assert.match(removeCustomCrop, /markCloudDirty\(idx\)/);
+  assert.doesNotMatch(removeCustomCrop, /cloudDirty\.delete\(idx\)/);
+  assert.doesNotMatch(removeCustomCrop, /delete plot\._dirty_at/);
+  assert.match(removeCustomCrop, /undoStack\.length = 0/);
+  assert.match(removeCustomCrop, /redoStack\.length = 0/);
+  assert.match(appSource, /onRemove:\s*removeCustomCrop/);
 });
 
 test('picker markup is labelled, keyboard accessible, ordered, and staged for Tauri', () => {

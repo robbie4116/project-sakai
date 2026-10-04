@@ -35,6 +35,23 @@
     return data;
   };
 
+  function isUuid(value) {
+    return typeof value === 'string' && /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(value);
+  }
+
+  function normalizedRemovedSeasonCount(value) {
+    const count = Number(value);
+    return Number.isFinite(count) && count >= 0 ? count : 0;
+  }
+
+  window.deleteCustomCrop = async function (id) {
+    if (!isUuid(id)) throw new Error('Custom crop ID must be a UUID.');
+    if (!isOnline()) throw new Error('offline');
+    const { data, error } = await initClient().rpc('delete_crop_and_seasons', { crop_id: id });
+    if (error) throw error;
+    return normalizedRemovedSeasonCount(data);
+  };
+
   // Encode photos array -> photo_url column value
   function encodePhotos(photos) {
     if (!photos || !photos.length) return null;
