@@ -1,12 +1,16 @@
 // supabase-sync.js
-// Handles all Supabase read/write. Exposes: syncInit, syncPlots, syncOnNavigate, uploadPhoto.
-// Loaded before app.js. Falls back silently if Supabase SDK is unavailable (offline).
+// Network calls only. Seasons are read from public.seasons and written through
+// the apply_season_cells RPC; plot notes/photos live in public.plots.
+// Every failing call throws an Error carrying {code, status} so callers can
+// classify it with TANIMAN_OUTBOX.classifySyncError.
 
 (function () {
   'use strict';
   if (window.__TAURI__) return;
 
   let db = null;
+  const SEASON_COLUMNS = 'id,plot_idx,class_id,crop_id,remark,start_mmdd,end_mmdd,cells,updated_at';
+  const PAGE_SIZE = 1000;
 
   function isOnline() {
     return navigator.onLine && typeof supabase !== 'undefined';
@@ -19,205 +23,142 @@
     return db;
   }
 
-  window.fetchCustomCrops = async function () {
-    if (!isOnline()) throw new Error('offline');
-    const { data, error } = await initClient().from('crops')
-      .select('id,name,hex,created_at').order('name');
-    if (error) throw error;
-    return data || [];
-  };
+  function requireClient() {
+    const client = isOnline() ? initClient() : null;
+    if (!client) throw Object.assign(new Error('offline'), { status: 0 });
+    return client;
+  }
 
-  window.insertCustomCrop = async function (name, hex) {
-    if (!isOnline()) throw new Error('offline');
-    const { data, error } = await initClient().from('crops')
-      .insert({ name, hex }).select('id,name,hex,created_at').single();
-    if (error) throw error;
-    return data;
-  };
+  function syncError(error, status) {
+    return Object.assign(new Error(error.message || 'Supabase request failed'), {
+      code: error.code, status, details: error.details,
+    });
+  }
 
   function isUuid(value) {
     return typeof value === 'string' && /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(value);
   }
 
-  function normalizedRemovedSeasonCount(value) {
-    const count = Number(value);
-    return Number.isFinite(count) && count >= 0 ? count : 0;
-  }
+  // ── Crop names (class 4) ─────────────────────────────────────────
+  window.fetchCustomCrops = async function () {
+    const { data, error, status } = await requireClient().from('crops')
+      .select('id,name,hex,created_at').order('name');
+    if (error) throw syncError(error, status);
+    return data || [];
+  };
+
+  window.insertCustomCrop = async function (name, hex) {
+    const { data, error, status } = await requireClient().from('crops')
+      .insert({ name, hex }).select('id,name,hex,created_at').single();
+    if (error) throw syncError(error, status);
+    return data;
+  };
 
   window.deleteCustomCrop = async function (id) {
     if (!isUuid(id)) throw new Error('Custom crop ID must be a UUID.');
-    if (!isOnline()) throw new Error('offline');
-    const { data, error } = await initClient().rpc('delete_crop_and_seasons', { p_crop_id: id });
-    if (error) throw error;
-    return normalizedRemovedSeasonCount(data);
+    const { data, error, status } = await requireClient().rpc('delete_crop', { p_crop_id: id });
+    if (error) throw syncError(error, status);
+    const count = Number(data);
+    return Number.isFinite(count) && count >= 0 ? count : 0;
   };
 
-  // Encode photos array -> photo_url column value
+  // ── Seasons ──────────────────────────────────────────────────────
+  window.fetchAllSeasons = async function () {
+    const client = requireClient();
+    const rows = [];
+    for (let from = 0; ; from += PAGE_SIZE) {
+      const { data, error, status } = await client.from('seasons')
+        .select(SEASON_COLUMNS).order('id').range(from, from + PAGE_SIZE - 1);
+      if (error) throw syncError(error, status);
+      rows.push(...(data || []));
+      if (!data || data.length < PAGE_SIZE) return rows;
+    }
+  };
+
+  window.fetchPlotSeasons = async function (plotIdx) {
+    const { data, error, status } = await requireClient().from('seasons')
+      .select(SEASON_COLUMNS).eq('plot_idx', plotIdx);
+    if (error) throw syncError(error, status);
+    return data || [];
+  };
+
+  // Returns the season row after the change, or null if it no longer exists.
+  window.applySeasonCells = async function (delta) {
+    const { data, error, status } = await requireClient().rpc('apply_season_cells', {
+      p_id: delta.id,
+      p_plot_idx: delta.plotIdx,
+      p_class_id: delta.classId,
+      p_crop_id: delta.cropId,
+      p_remark: delta.remark || null,
+      p_start: delta.start,
+      p_end: delta.end,
+      p_add: delta.add,
+      p_remove: delta.remove,
+    });
+    if (error) throw syncError(error, status);
+    return data && data.id ? data : null;
+  };
+
+  window.clearPlotRemote = async function (plotIdx) {
+    const { error, status } = await requireClient().rpc('clear_plot', { p_plot_idx: plotIdx });
+    if (error) throw syncError(error, status);
+  };
+
+  // ── Plot notes and photos ────────────────────────────────────────
   function encodePhotos(photos) {
-    if (!photos || !photos.length) return null;
-    const urls = photos.map(p => p.url).filter(u => u != null);
+    const urls = (photos || []).map(p => p && p.url).filter(u => u != null);
     if (!urls.length) return null;
-    if (urls.length === 1) return urls[0];
-    return JSON.stringify(urls);
+    return urls.length === 1 ? urls[0] : JSON.stringify(urls);
   }
 
-  // Decode photo_url column value -> photos array
   function decodePhotos(photoUrl) {
     if (!photoUrl) return [];
     if (photoUrl.startsWith('[')) {
       try {
-        const parsed = JSON.parse(photoUrl);
-        return parsed.map(url => ({ url, dataUrl: null }));
+        return JSON.parse(photoUrl).map(url => ({ url, dataUrl: null }));
       } catch (e) {
         return [{ url: photoUrl, dataUrl: null }];
       }
     }
     return [{ url: photoUrl, dataUrl: null }];
   }
+  window.decodePhotos = decodePhotos;
 
-  // Convert app state plot object -> Supabase row
-  function plotToRow(idx, plotData, deviceId) {
-    return {
-      plot_idx: idx,
-      seasons: Array.isArray(plotData.seasons) ? plotData.seasons : [],
-      farmer_id: plotData.farmerId || '',
-      farmer: plotData.farmer || '',
-      note: plotData.note || '',
-      photo_url: encodePhotos(plotData.photos) ?? (plotData.photo_url || null),
-      device_id: deviceId,
-      updated_at: new Date().toISOString(),
-    };
-  }
-
-  // Convert Supabase row -> app state plot object
-  function rowToPlot(row) {
-    return {
-      seasons: Array.isArray(row.seasons) ? row.seasons : [],
-      farmerId: row.farmer_id || '',
-      farmer: row.farmer || '',
-      note: row.note || '',
-      photos: decodePhotos(row.photo_url), photo_url: null, photo: null,
-      _synced_at: row.updated_at,
-    };
-  }
-
-  window.syncInit = async function (state, onMerge, shouldMerge) {
-    if (!isOnline()) return false;
-    const client = initClient();
-    if (!client) return false;
-    try {
-      const { data, error } = await client.from('plots').select('*');
-      if (error) { console.warn('syncInit fetch error:', error.message); return false; }
-      for (const row of data) {
-        if (shouldMerge && !shouldMerge(row.plot_idx)) continue;
-        const local = state.plots[row.plot_idx];
-        const localTs = local && local._synced_at ? new Date(local._synced_at) : new Date(0);
-        const remoteTs = new Date(row.updated_at);
-        if (remoteTs > localTs) {
-          state.plots[row.plot_idx] = rowToPlot(row);
-          onMerge(row.plot_idx);
-        }
-      }
-      return true;
-    } catch (e) {
-      console.warn('syncInit error:', e);
-      return false;
-    }
+  window.fetchPlotMeta = async function () {
+    const { data, error, status } = await requireClient().from('plots')
+      .select('plot_idx,note,photo_url,updated_at');
+    if (error) throw syncError(error, status);
+    return data || [];
   };
 
-  window.syncPlots = async function (indices, state, deviceId) {
-    if (!isOnline()) return false;
-    const client = initClient();
-    if (!client) return false;
-    const rows = indices
-      .filter(idx => state.plots[idx])
-      .map(idx => plotToRow(idx, state.plots[idx], deviceId));
-    if (!rows.length) return false;
+  window.upsertPlotMeta = async function (plotIdx, plotData) {
     try {
-      const { error } = await client
-        .from('plots')
-        .upsert(rows, { onConflict: 'plot_idx' });
-      if (error) {
-        console.warn('syncPlots error:', error.message);
-        return false;
-      }
-      for (const row of rows) {
-        if (state.plots[row.plot_idx]) {
-          state.plots[row.plot_idx]._synced_at = row.updated_at;
-        }
-      }
+      const { error } = await requireClient().from('plots').upsert({
+        plot_idx: plotIdx,
+        note: plotData.note || '',
+        photo_url: encodePhotos(plotData.photos),
+        updated_at: new Date().toISOString(),
+      }, { onConflict: 'plot_idx' });
+      if (error) { console.warn('upsertPlotMeta error:', error.message); return false; }
       return true;
     } catch (e) {
-      console.warn('syncPlots error:', e);
-      return false;
-    }
-  };
-
-  window.syncOnNavigate = async function (idx, state, onMerge, shouldMerge) {
-    if (!isOnline()) return false;
-    const client = initClient();
-    if (!client) return false;
-    try {
-      const { data, error } = await client
-        .from('plots')
-        .select('*')
-        .eq('plot_idx', idx)
-        .maybeSingle();
-      if (error || !data) return false;
-      if (shouldMerge && !shouldMerge(idx)) return false;
-      const local = state.plots[idx];
-      const localTs = local && local._synced_at ? new Date(local._synced_at) : new Date(0);
-      const remoteTs = new Date(data.updated_at);
-      if (remoteTs > localTs) {
-        state.plots[idx] = rowToPlot(data);
-        onMerge(idx);
-      }
-      return true;
-    } catch (e) {
-      // silently ignore - keep local state
-      return false;
-    }
-  };
-
-  window.deletePlot = async function (idx) {
-    if (!isOnline()) return false;
-    const client = initClient();
-    if (!client) return false;
-    try {
-      const { error } = await client
-        .from('plots')
-        .delete()
-        .eq('plot_idx', idx);
-      if (error) {
-        console.warn('deletePlot error:', error.message);
-        return false;
-      }
-      return true;
-    } catch (e) {
-      console.warn('deletePlot error:', e);
+      console.warn('upsertPlotMeta error:', e);
       return false;
     }
   };
 
   window.uploadPhoto = async function (plotIdx, dataUrl, suffix) {
-    if (!isOnline()) return null;
-    const client = initClient();
-    if (!client) return null;
+    let client;
+    try { client = requireClient(); } catch (e) { return null; }
     try {
-      const base64 = dataUrl.split(',')[1];
-      const byteStr = atob(base64);
-      const ab = new ArrayBuffer(byteStr.length);
-      const ua = new Uint8Array(ab);
-      for (let i = 0; i < byteStr.length; i++) ua[i] = byteStr.charCodeAt(i);
-      const blob = new Blob([ab], { type: 'image/jpeg' });
-      const safeSuffix = suffix || Date.now();
-      const path = `plot_${String(plotIdx).padStart(3, '0')}_${safeSuffix}.jpg`;
-      const { error } = await client.storage.from('photos').upload(path, blob, {
-        contentType: 'image/jpeg',
-      });
+      const byteStr = atob(dataUrl.split(',')[1]);
+      const bytes = new Uint8Array(byteStr.length);
+      for (let i = 0; i < byteStr.length; i++) bytes[i] = byteStr.charCodeAt(i);
+      const blob = new Blob([bytes], { type: 'image/jpeg' });
+      const path = `plot_${String(plotIdx).padStart(3, '0')}_${suffix || Date.now()}.jpg`;
+      const { error } = await client.storage.from('photos').upload(path, blob, { contentType: 'image/jpeg' });
       if (error) { console.warn('uploadPhoto error:', error.message); return null; }
-      const { data } = client.storage.from('photos').getPublicUrl(path);
-      return data.publicUrl;
+      return client.storage.from('photos').getPublicUrl(path).data.publicUrl;
     } catch (e) {
       console.warn('uploadPhoto error:', e);
       return null;
