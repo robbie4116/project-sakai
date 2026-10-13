@@ -1,64 +1,22 @@
-// ── Taniman v3 ───────────────────────────────────────────────────
-// Redesign adds: per-cell crop calendar (12 months), proper per-crop colors,
-// optional Farmer ID + roster view, month scrubber on the map.
+// ── Taniman v6 ───────────────────────────────────────────────────
+// Sentinel-2 aligned grid (one cell = one 10 m pixel), land-cover classes,
+// per-season sync through the apply_season_cells RPC.
 
 // ── CONFIG ────────────────────────────────────────────────────────
 const GRID = 50;
-const STORAGE_KEY = 'taniman_v4_atok_paoay';
+const STORAGE_KEY = 'taniman_v6_s2grid';
 const ATOK_POLY = window.ATOK_POLY;
 const PAOAY_POLY = window.PAOAY_POLY;
-const PAOAY_PLOTS = window.PAOAY_PLOTS;
-const CROPS = window.CROPS;
+const PLOTS = window.PLOTS;
+const GridMath = window.TANIMAN_GRID;
+const Classes = window.TANIMAN_CLASSES;
+const Outbox = window.TANIMAN_OUTBOX;
+const LabelExport = window.TANIMAN_LABEL_EXPORT;
+const CROPS = window.CROPS;                 // set by crop-catalog.js: class-4 crop names only
 const CropCatalog = window.TANIMAN_CROP_CATALOG;
-const CropExport = window.TANIMAN_CROP_EXPORT;
 const T     = window.STRINGS;
-const PLOTS = PAOAY_PLOTS;
-const CORE_PLOT_COUNT = PAOAY_PLOTS.length;
-const PAOAY_GRID_BOUNDS = PAOAY_PLOTS.reduce((bounds, plot) => ({
-  latS: Math.min(bounds.latS, plot.latS),
-  latN: Math.max(bounds.latN, plot.latN),
-  lngW: Math.min(bounds.lngW, plot.lngW),
-  lngE: Math.max(bounds.lngE, plot.lngE),
-}), {
-  latS: Infinity,
-  latN: -Infinity,
-  lngW: Infinity,
-  lngE: -Infinity,
-});
-const ATOK_DETAIL_BOUNDS = ATOK_POLY.reduce((bounds, [lat, lng]) => ({
-  n: Math.max(bounds.n, lat),
-  s: Math.min(bounds.s, lat),
-  e: Math.max(bounds.e, lng),
-  w: Math.min(bounds.w, lng),
-}), {
-  n: -Infinity,
-  s: Infinity,
-  e: -Infinity,
-  w: Infinity,
-});
+const GRID_BOUNDS = GridMath.gridBoundsLatLng(PLOTS);
 const GEOMETRY_EPSILON = 1e-12;
-
-function pointInPolygon(lat, lng, poly) {
-  let inside = false;
-  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
-    const yi = poly[i][0], xi = poly[i][1];
-    const yj = poly[j][0], xj = poly[j][1];
-    const intersects = ((yi > lat) !== (yj > lat)) &&
-      (lng < (xj - xi) * (lat - yi) / (yj - yi) + xi);
-    if (intersects) inside = !inside;
-  }
-  return inside;
-}
-
-function pointInRect(lat, lng, rect) {
-  return lat >= rect.latS && lat <= rect.latN && lng >= rect.lngW && lng <= rect.lngE;
-}
-
-function classifyZone(lat, lng) {
-  if (pointInPolygon(lat, lng, PAOAY_POLY)) return 'paoay';
-  if (pointInPolygon(lat, lng, ATOK_POLY)) return 'atok';
-  return 'outside';
-}
 
 const MONTH_SHORT = ['J','F','M','A','M','J','J','A','S','O','N','D'];
 const MONTH_FULL  = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
@@ -83,7 +41,6 @@ const {
   isValidMmdd,
   rangeWrapsYear,
   seasonsOverlap,
-  seasonExportRows,
 } = SeasonUtils;
 function maskHas(mask, m) { return !!(mask & (1<<m)); }
 function maskToLabel(mask) {
@@ -96,43 +53,25 @@ const state = loadState() || {
   lang: 'en',
   theme: 'dark',
   brush: 1,
-  selectedCropId: 'lettuce',
   plotIdx: 0,
   plots: {},
-  paintStartDate: '01-01',
-  paintEndDate: '12-31',
   viewMonth: -1,              // -1 = all months; 0..11 = scrub to month
   viewMonths: ALL_MONTHS,     // mask of months displayed on map/canvas
   mixedStyle: 'diagonal',
   showTweaks: false,
-  version: 4,
+  version: 6,
 };
+// Every session starts with nothing selected (spec section 4): the brush
+// selection and dates are never restored from storage.
+state.selection = { classKey: null, cropId: null, remark: '' };
+state.paintStartDate = null;
+state.paintEndDate = null;
+state.datesAuto = false;
+delete state.selectedCropId;
+delete state.crop;
 
-function migrateCropSelection(savedState, crops, catalog) {
-  if (typeof savedState.selectedCropId === 'string' && savedState.selectedCropId.trim()) {
-    // Preserve unresolved IDs so a later catalog refresh can resolve them.
-  } else {
-    const targetCrops = crops.filter(crop => catalog.isTarget(crop.id));
-    const legacyIndex = savedState.crop;
-    const validLegacyIndex = Number.isInteger(legacyIndex) && legacyIndex >= 0 && legacyIndex < targetCrops.length;
-    savedState.selectedCropId = validLegacyIndex ? targetCrops[legacyIndex].id : (targetCrops[0]?.id || 'lettuce');
-  }
-  delete savedState.crop;
-  return savedState.selectedCropId;
-}
-
-migrateCropSelection(state, CROPS, CropCatalog);
 if (!state.plots || typeof state.plots !== 'object' || Array.isArray(state.plots)) state.plots = {};
-// Register labels before initMap() or the first canvas/readout render.
 CropCatalog.registerReferences(state.plots);
-
-// fill in any missing keys (state was loaded from a previous version)
-const invalidActivePaintRangeAtStartup =
-  !isValidMmdd(state.paintStartDate) || !isValidMmdd(state.paintEndDate);
-if (invalidActivePaintRangeAtStartup) {
-  state.paintStartDate = '01-01';
-  state.paintEndDate = '12-31';
-}
 if (state.viewMonth === undefined) state.viewMonth = -1;
 state.viewMonths = normalizeViewMonths(state.viewMonths, state.viewMonth);
 state.viewMonth = viewMonthFromMask(state.viewMonths);
@@ -140,35 +79,20 @@ if (!state.mixedStyle) state.mixedStyle = 'diagonal';
 if (!PLOTS[state.plotIdx]) state.plotIdx = 0;
 
 // Per-plot data structure:
-//   p.seasons = recurring annual crop windows with painted cell indexes
-//   p.farmerId = 'F-001' | ''
-//   p.farmer  = '' (legacy: human name)
+//   p.seasons = [{ id, classId, cropId, remark, start, end, cells }]
+//     id is deterministic: Classes.seasonId(plotIdx, meta)
 //   p.note, p.photos
 function emptySeasons() { return []; }
-function newSeasonId() {
-  return 'season_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 8);
-}
 function ensurePlot(idx) {
   let p = state.plots[idx];
-  if (!p) {
-    p = state.plots[idx] = { seasons: emptySeasons(), farmerId:'', farmer:'', note:'', photos:[] };
-    return p;
-  }
+  if (!p) p = state.plots[idx] = { seasons: emptySeasons(), note: '', photos: [] };
   if (!Array.isArray(p.seasons)) p.seasons = [];
-  delete p.cells;
-  delete p.labels;
-  if (p.farmerId === undefined) p.farmerId = '';
+  if (p.note === undefined) p.note = '';
   if (p.photos === undefined) p.photos = [];
+  delete p.farmerId;
+  delete p.farmer;
   return p;
 }
-
-// device id (kept for future cloud sync)
-function getDeviceId() {
-  let id = localStorage.getItem('taniman_device_id');
-  if (!id) { id = 'dev_'+Math.random().toString(36).slice(2,10); localStorage.setItem('taniman_device_id', id); }
-  return id;
-}
-const DEVICE_ID = getDeviceId();
 
 // URL overrides
 const _params = new URLSearchParams(location.search);
@@ -231,7 +155,12 @@ function loadState(){
 }
 function saveState(){
   try {
-    const out = { ...state, plots:{} };
+    const out = { ...state, plots:{}, outbox: outbox.toJSON(), metaDirty: [...metaDirty] };
+    delete out.selection;
+    delete out.paintStartDate;
+    delete out.paintEndDate;
+    delete out.datesAuto;
+    delete out.paintMonths;
     for (const k of Object.keys(state.plots)) {
       const p = state.plots[k];
       out.plots[k] = { ...p, seasons: cloneSeasons(p.seasons) };
@@ -376,9 +305,6 @@ function restoreCloudDirtyQueue() {
 }
 
 // ── CELL DATA QUERIES ─────────────────────────────────────────────
-function cropIndexFromId(cropId) {
-  return CROPS.findIndex(c => c.id === cropId);
-}
 function escapeHtml(value) {
   return String(value == null ? '' : value).replace(/[&<>"']/g, char => ({
     '&': '&amp;',
@@ -412,94 +338,68 @@ function seasonMonthsMask(start, end) {
   }
   return mask || ALL_MONTHS;
 }
-function activePaintSeasonData() {
-  const crop = CropCatalog.byId(state.selectedCropId);
-  if (!crop || !CropCatalog.isResolved(state.selectedCropId) || !isValidMmdd(state.paintStartDate) || !isValidMmdd(state.paintEndDate)) return null;
-  return { cropId: crop.id, start: state.paintStartDate, end: state.paintEndDate };
-}
 function activePaintMonthsMask() {
   const data = activePaintSeasonData();
   return data ? seasonMonthsMask(data.start, data.end) : ALL_MONTHS;
 }
-function isCropSelected(crop, selectedCropId) {
-  return Boolean(crop && crop.id === selectedCropId);
+function seasonHex(season) {
+  return Classes.seasonColor(season, CropCatalog);
 }
-function cropsForPalette(crops, selectedCropId, catalog) {
-  const visibleCrops = Array.from(crops || []);
-  const selectedCrop = catalog.byId(selectedCropId);
-  if (selectedCrop && !visibleCrops.some(crop => crop.id === selectedCrop.id)) visibleCrops.push(selectedCrop);
-  return visibleCrops;
+function currentSelectionStatus() {
+  return Classes.selectionStatus(
+    { ...state.selection, start: state.paintStartDate, end: state.paintEndDate },
+    id => CropCatalog.isResolved(id));
 }
-function cellVisibleCropIds(p, cellIdx, viewMonths = state.viewMonths) {
+function activePaintSeasonData() {
+  return Classes.paintMeta(
+    { ...state.selection, start: state.paintStartDate, end: state.paintEndDate },
+    id => CropCatalog.isResolved(id));
+}
+function cellVisibleColors(p, cellIdx, viewMonths = state.viewMonths) {
   const out = [];
   const seen = new Set();
   for (const season of p.seasons || []) {
     if (!Array.isArray(season.cells) || !season.cells.includes(cellIdx)) continue;
     if (!seasonIntersectsViewMonths(season, viewMonths)) continue;
-    if (!seen.has(season.cropId)) {
-      seen.add(season.cropId);
-      out.push(season.cropId);
-    }
+    const hex = seasonHex(season);
+    if (!seen.has(hex)) { seen.add(hex); out.push(hex); }
   }
   return out;
 }
-function cellVisibleCrops(p, cellIdx) {
-  return cellVisibleCropIds(p, cellIdx).map(cropIndexFromId).filter(i => i >= 0);
-}
 function plotCompositionForView(idx, viewMonths = state.viewMonths) {
+  const plot = PLOTS[idx];
   const p = state.plots[idx];
-  const gridCells = GRID * GRID;
-  const counts = new Array(CROPS.length).fill(0);
-  const percentages = new Array(CROPS.length).fill(0);
-  if (!p || !Array.isArray(p.seasons)) {
-    return {
-      crop: null,
-      cropIdx: -1,
-      counts,
-      percentages,
-      totalVisibleCells: 0,
-      visiblePaintedCells: 0,
-      emptyCells: gridCells,
-      nonZeroCropCount: 0,
-      isMixed: false,
-    };
-  }
-
-  const visibleCells = new Uint8Array(gridCells);
-  const cropCellSeen = new Set();
-  for (const season of p.seasons || []) {
+  const gridCells = GridMath.validCellCount(plot);
+  const counts = new Array(Classes.ALL.length).fill(0);
+  const percentages = new Array(Classes.ALL.length).fill(0);
+  const visibleCells = new Set();
+  const seen = new Set();
+  for (const season of (p && p.seasons) || []) {
     if (!seasonIntersectsViewMonths(season, viewMonths)) continue;
-    const cropIdx = cropIndexFromId(season.cropId);
-    if (cropIdx < 0) continue;
+    const legendIdx = Classes.legendIndex(season.classId);
     for (const cellIdx of season.cells || []) {
-      if (!Number.isInteger(cellIdx) || cellIdx < 0 || cellIdx >= gridCells) continue;
-      const key = `${cropIdx}:${cellIdx}`;
-      if (cropCellSeen.has(key)) continue;
-      cropCellSeen.add(key);
-      counts[cropIdx]++;
-      visibleCells[cellIdx] = 1;
+      if (!GridMath.isCellInBounds(plot, cellIdx)) continue;
+      const key = `${legendIdx}:${cellIdx}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      counts[legendIdx]++;
+      visibleCells.add(cellIdx);
     }
   }
-
   const totalVisibleCells = counts.reduce((sum, n) => sum + n, 0);
-  let visiblePaintedCells = 0;
-  for (let i=0; i<visibleCells.length; i++) if (visibleCells[i]) visiblePaintedCells++;
-  const emptyCells = Math.max(0, gridCells - visiblePaintedCells);
-  for (let i=0; i<counts.length; i++) percentages[i] = totalVisibleCells ? counts[i] / totalVisibleCells : 0;
-
+  for (let i = 0; i < counts.length; i++) percentages[i] = totalVisibleCells ? counts[i] / totalVisibleCells : 0;
   const max = Math.max(...counts);
-  const cropIdx = max > 0 ? counts.indexOf(max) : -1;
-  const nonZeroCropCount = counts.filter(n => n > 0).length;
+  const topIdx = max > 0 ? counts.indexOf(max) : -1;
+  const nonZero = counts.filter(n => n > 0).length;
   return {
-    crop: cropIdx >= 0 ? CROPS[cropIdx] : null,
-    cropIdx,
+    top: topIdx >= 0 ? Classes.ALL[topIdx] : null,
     counts,
     percentages,
     totalVisibleCells,
-    visiblePaintedCells,
-    emptyCells,
-    nonZeroCropCount,
-    isMixed: nonZeroCropCount > 1,
+    visiblePaintedCells: visibleCells.size,
+    emptyCells: Math.max(0, gridCells - visibleCells.size),
+    nonZeroCropCount: nonZero,
+    isMixed: nonZero > 1,
   };
 }
 function plotHasPaint(idx) {
@@ -509,7 +409,7 @@ function plotHasPaint(idx) {
 function plotHasData(idx) {
   const p = state.plots[idx];
   if (!p) return false;
-  return plotHasPaint(idx) || p.farmer || p.farmerId || p.note || (p.photos && p.photos.length);
+  return plotHasPaint(idx) || p.note || (p.photos && p.photos.length);
 }
 function dominantCropForView(idx) {
   return plotCompositionForView(idx);
@@ -567,28 +467,28 @@ function updateUndoBtn() {
 }
 
 // ── MIXED-CELL DRAWING ───────────────────────────────────────────
-function drawMixedCell(ctx, x0, y0, w, h, cropIdxs, style){
-  if (cropIdxs.length === 0) return;
-  if (cropIdxs.length > 4) style = 'stripes';
-  if (cropIdxs.length === 1){
-    ctx.fillStyle = CROPS[cropIdxs[0]].hex;
+function drawMixedCell(ctx, x0, y0, w, h, colors, style){
+  if (colors.length === 0) return;
+  if (colors.length > 4) style = 'stripes';
+  if (colors.length === 1){
+    ctx.fillStyle = colors[0];
     ctx.fillRect(x0, y0, w+0.5, h+0.5);
     return;
   }
   if (style === 'stripes'){
-    const bw = w / cropIdxs.length;
-    for (let i=0; i<cropIdxs.length; i++){
-      ctx.fillStyle = CROPS[cropIdxs[i]].hex;
+    const bw = w / colors.length;
+    for (let i=0; i<colors.length; i++){
+      ctx.fillStyle = colors[i];
       ctx.fillRect(x0 + i*bw, y0, bw + 0.6, h + 0.5);
     }
     return;
   }
-  if (style === 'diagonal' && cropIdxs.length === 2){
-    ctx.fillStyle = CROPS[cropIdxs[0]].hex;
+  if (style === 'diagonal' && colors.length === 2){
+    ctx.fillStyle = colors[0];
     ctx.beginPath();
     ctx.moveTo(x0, y0); ctx.lineTo(x0+w+0.5, y0); ctx.lineTo(x0+w+0.5, y0+h+0.5); ctx.closePath();
     ctx.fill();
-    ctx.fillStyle = CROPS[cropIdxs[1]].hex;
+    ctx.fillStyle = colors[1];
     ctx.beginPath();
     ctx.moveTo(x0, y0); ctx.lineTo(x0+w+0.5, y0+h+0.5); ctx.lineTo(x0, y0+h+0.5); ctx.closePath();
     ctx.fill();
@@ -598,11 +498,11 @@ function drawMixedCell(ctx, x0, y0, w, h, cropIdxs, style){
   const hw = w/2, hh = h/2;
   const slots = [[0,0],[hw,0],[0,hh],[hw,hh]];
   let order;
-  if (cropIdxs.length === 2) order = [0, 1, 1, 0];
-  else if (cropIdxs.length === 3) order = [0, 1, 2, 0];
+  if (colors.length === 2) order = [0, 1, 1, 0];
+  else if (colors.length === 3) order = [0, 1, 2, 0];
   else order = [0, 1, 2, 3];
   for (let i=0; i<4; i++){
-    ctx.fillStyle = CROPS[cropIdxs[order[i]]].hex;
+    ctx.fillStyle = colors[order[i]];
     ctx.fillRect(x0 + slots[i][0], y0 + slots[i][1], hw + 0.6, hh + 0.6);
   }
 }
