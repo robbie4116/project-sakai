@@ -1,100 +1,68 @@
 # Taniman - Paoay Crop Map
 
-Field data collection app for ground-truth crop mapping in Paoay, Atok, Benguet.
+Field labeling app for ground-truth land-cover mapping in Paoay, Atok, Benguet.
+Each label cell is exactly one 10 m pixel of the Sentinel-2 training composites.
 
 ## Setup (one-time, before first deploy)
 
-### 1. Generate the Paoay boundary
+### 1. The Sentinel-2 grid
+
+The grid is fixed to the Sentinel-2 training composite
+(`Sentinel2_CSPlus_2024_01_H1.tif`): EPSG:32651 (UTM 51N), 10 m pixels, origin
+(258690, 1841210), 571 × 494 px. It is tiled into 120 plots (12 columns × 10
+rows) of 50 × 50 cells (500 m × 500 m). The last plot column and row are
+partial; cells past the composite are greyed out and cannot be painted. The
+constants live in `plot_grid.py` (Python) and `grid.js` (browser). The Paoay
+boundary is drawn on the map for reference only.
+
+No `.tif` file is needed. If you have the composite, you can check it matches:
 
 ```bash
-python scripts/extract_paoay_boundary.py
+python -c "import rasterio;s=rasterio.open('Sentinel2_CSPlus_2024_01_H1.tif');print(s.crs,s.transform,s.width,s.height)"
 ```
 
-This extracts the Paoay barangay boundary from the faeldon Philippines JSON maps
-2019 barangay hires GeoJSON source and writes:
+It should print EPSG:32651, origin (258690, 1841210), 10 m and 571 × 494.
 
-- `boundaries/Benguet_Atok_Paoay_boundary.geojson`
-
-The existing Atok municipality boundary remains the outer offline boundary.
-Paoay is the training-domain reference outline; editing tiles cover the reference
-Sentinel-2 raster extent, with Paoay membership carried in the export.
-
-### 2. Generate tile assets
+### 2. Plot images
 
 ```bash
 pip install -r requirements-dev.txt
-python generate_plots.py
+python generate_plots.py                # all 120 plots + the data.js grid block
+python generate_plots.py --only 0,13    # re-render a few plots
+python generate_plots.py --skip-images  # only rewrite the data.js grid block
 ```
 
-The current web labeling grid and imagery need no local source rasters. For
-legacy offline map assets only, `generate_tiles.py` requires these rasters:
+This fetches Esri World Imagery (zoom 18), caches tiles in `.tile-cache/`, and
+warps them onto each plot's UTM square as `tiles/plots/plot_NNN.jpg`
+(1000 × 1000, 0.5 m/px). It also rewrites the generated block at the top of
+`data.js` (`GRID`, `PLOTS`). The images are committed; you only need to re-run
+this if the grid changes. Esri's terms restrict bulk downloads; this is a
+one-time, non-commercial render for this thesis app only.
 
-- `atok_satellite.tif` - high-detail Atok satellite raster for offline map tiles and Paoay plot crops
-- `benguet_satellite.tif` - wider low-zoom satellite context map tiles
-
-Tile outputs:
-
-- `tiles/s2-plots/` - current UTM-aligned labeling imagery
-- `tiles/plots/` - legacy geographic-grid plot images
-- `tiles/map/` - high-detail offline Atok map tiles
-- `tiles/context/` - wider low-zoom offline satellite context tiles for zoomed-out orientation
-
-After tile generation, the static web app and downloadable Tauri app can render
-Atok/Paoay locally. Plotting is fixed to the Sentinel-2 raster grid; there
-is no Add Plot workflow.
+`generate_tiles.py` is the legacy Tauri tile builder and now refuses to run,
+because it would overwrite the Sentinel-2 grid in `data.js`.
 
 ### 3. Configure Supabase
 
 Edit `config.js` with your Supabase project URL and anon key.
 
-For a **new Supabase project only**, run `docs/supabase-setup.sql` to create the
-plot table and photo bucket. This is a destructive reset script: it drops and
-recreates `public.plots`, wiping its existing rows. For a project that already
-contains field data, follow the existing-project instructions below instead.
+The repository owner runs `docs/supabase-foundation.sql` **once** in the
+Supabase SQL Editor when this version deploys. It is **destructive**: it drops
+and recreates `public.plots` and `public.seasons`, wiping all plot notes, photo
+links and painted labels. Shared crop names in `public.crops` are kept (except
+names that are now classes: carrot, cabbage, potato). Optionally run
+`docs/supabase-foundation-smoke.sql` afterwards; it leaves no data behind.
 
-### Existing Supabase project: add shared crops
-
-Run these steps in order before deploying the shared-crop feature:
-
-1. Back up the project data if desired.
-2. In the SQL Editor for the existing project configured in `config.js`, run
-   `docs/supabase-add-crops.sql`.
-3. Verify that the `public.crops` table exists in the project's table list.
-4. Merge or push the feature to `main`. Vercel automatically deploys the app
-   from `main`.
-5. Open the web app in two browsers and add a crop in the first. Reload the
-   second, select the shared crop, and paint with it. Export the data and verify
-   its name in `crops.csv` and its labeled season rows in `seasons.csv` and
-   `plot_crop_counts.csv`.
-
-No new Vercel environment variable, Supabase project, key, photo bucket, or
-manual seed rows are needed. The additive crop migration creates the catalog
-table and its validation and access policies; it does not modify existing plot
-rows. **Do not run `docs/supabase-setup.sql` on an existing project** because it
-drops and recreates `public.plots`.
-
-If the app deploys before the migration is applied, the built-in target crops
-remain available, but saving a new shared crop will fail until the catalog table
-is installed.
-
-### Reset Supabase for season schema (destructive)
-
-1. Open Supabase Dashboard.
-2. Select the project used by `config.js`.
-3. Open SQL Editor.
-4. Paste the full contents of `docs/supabase-setup.sql`.
-5. Run it. This wipes existing plot rows. Do not use this reset procedure on an
-   existing project with data you need to keep.
-6. Reload the deployed app.
-
-For a fresh project that will use shared crops, run
-`docs/supabase-add-crops.sql` after this setup script. Existing projects should
-run only the additive crop migration described above.
+The schema stores one row per season (plot + class + crop name or remark +
+dates) in `public.seasons`. The app writes cells only through the atomic
+`apply_season_cells` RPC, so two people editing the same plot never erase each
+other's work. `clear_plot` and `delete_crop` are RPCs too.
 
 ### 4. Deploy to Vercel
 
 Push to GitHub. Connect the repo in Vercel; no build settings are needed because
-the app is static.
+the app is static. Vercel deploys `main` automatically, so merge app changes
+only after the matching Supabase script has been run.
 
 ## Local development
 
@@ -103,36 +71,73 @@ python -m http.server 8080
 # Open http://localhost:8080/taniman.html
 ```
 
+Tests:
+
+```bash
+node --test tests/*.test.mjs
+python -m pytest tests/test_plot_grid.py
+```
+
+## Classes
+
+| class_id | Class | Dates |
+|---|---|---|
+| 1 | Carrot | required |
+| 2 | Cabbage | required |
+| 3 | Potato | required |
+| 4 | Other cultivated (needs a crop name from the shared list) | required |
+| 5 | Forest / woody | default all year |
+| 6 | Built-up | default all year |
+| 7 | Bare / fallow | default all year |
+| 8 | Grass / shrub | default all year |
+| (none) | Other (needs a remark) | required |
+
+Painting is blocked until the selection is complete. Nothing is selected when
+the page loads.
+
 ## Data export
 
 Use the "Save all (.zip)" button in the app footer. Exports:
 
-- `seasons.csv` - authoritative ML ground truth; one row per `season_id` plus
-  `cell_idx`, with `crop_id`, inclusive recurring `start_mmdd`/`end_mmdd`,
-  `wraps_year`, WGS84 cell center/bounds, row, and column
-- `crops.csv` - joinable crop class lookup (`crop_id`, display name, color,
-  target flag, and whether the ID resolves to a catalog crop). Referenced IDs
-  missing from the catalog are included as unresolved placeholders.
-- `plot_crop_counts.csv` - sparse counts grouped by plot and crop ID. Counts
-  are derived from `seasons.csv` rows, so the same cell in overlapping seasons
-  contributes once per season.
-- `labels/plot_NNN.png` - color-coded label map per plot
-- `labels.csv` - compatibility per-season/cell labels with crop names
-- `plots.csv` - Paoay plot metadata, target-crop row counts, and an
-  `other_crop_cells` count for custom or unresolved crops
-- `farmers.csv` - farmer IDs, plot lists, and crop IDs as a JSON array in the
-  `crops` column
-- `metadata.json` - schema version, recurring annual date encoding, Sentinel-2
-  alignment notes, farmer names, notes, plot coordinates, and crop summaries
+- `seasons.csv` - the authoritative training labels, one row per season × cell:
+  `plot_idx, season_id, field_id, class_id, class_name, crop_name, remark,
+  start_mmdd, end_mmdd, wraps_year, s2_row, s2_col, utm_x, utm_y, center_lat,
+  center_lng`. `s2_row`/`s2_col` index the Sentinel-2 composite pixel;
+  `utm_x`/`utm_y` are the pixel center in EPSG:32651. `crop_name` is filled only
+  for class 4 and `remark` only for Other.
+- `fields.csv` - one row per connected component (4-connected cells sharing a
+  season, across plot borders), including the observed `field_id`, derived
+  `component_id`, class, dates, reference year, cell count and `plot_idxs`
+  (`;`-joined).
+- `classes.csv` - `class_id, key, class_name, hex`, plus one row per class-4
+  crop name (`class_id=4`, `key=crop:<uuid>`).
+- `plots.csv` - `plot_idx, plot_row, plot_col, valid_cols, valid_rows, note,
+  photo_count, season_count`, one `class_<id>_cells` column per class, and
+  `other_cells`.
+- `metadata.json` - schema version 6 and the grid constants (CRS, origin, pixel
+  size, width, height) so the pipeline can verify alignment.
+- `labels/plotNNN.png` - color-coded label map per plot (unlabeled cells
+  transparent, out-of-bounds cells `#404040`), and `photos/`.
 
-Use `seasons.csv` as the training-label source and join it to `crops.csv` by
-`crop_id`. Crop colors in the PNG label maps are for visual inspection only and
-are not the class labels.
-
-All exported plot records are generated Paoay plots with `plot_area=paoay` and
-`plot_source=field_grid`.
+Rows with an empty `class_id` are "Other": they are for review, not training.
+Dates use MM-DD selectors with an explicit observed crop-cycle start year.
+Choose the year and confirm the class and dates before painting. It also scopes
+the map, canvas and erase tool; erasing preserves observations from other years.
+An empty year shows all recorded years. The year and observed field ID roundtrip
+through versioned season IDs so the existing per-season RPC remains compatible.
+Rows without a verified year stay blank and are excluded from training.
+`field_id` is the observed field ID you enter; `component_id` is the generated
+connected component and is not evidence of independent agricultural fields.
+Exports also include the exact reference grid, pixel IDs and Paoay membership.
+Use [training preparation](docs/random-forest-training.md) to join verified
+labels to the dated, aligned feature stack.
+The pipeline's `config.yaml` must list grass/shrub as class 8 to match.
 
 ## Offline desktop build (Windows and macOS)
+
+The Tauri desktop build is no longer maintained: it is not updated for the
+Sentinel-2 grid, classes, or the new Supabase schema. The notes below are kept
+for reference.
 
 The repo can be built as a standalone offline field app with Tauri.
 
@@ -181,47 +186,3 @@ open /Applications/Taniman.app
 Only use this bypass for builds you trust from this repository. A normal
 double-click download experience requires paid Apple Developer ID signing and
 Apple notarization.
-
-## Sentinel-2 labeling grid
-
-The current website uses the exact grid of `Sentinel2_CSPlus_2024_01_H1.tif`:
-EPSG:32651, 10 m pixels, upper-left edge `(258690, 1841210)`, 571 columns
-and 494 rows. The 120 editing tiles are 500 m squares with 50 × 50 cells;
-they are not the paper's 50 m independent validation plots. Partial edge cells
-outside the raster are disabled. Zoom changes display size, never ground size.
-
-Run `python generate_plots.py` to regenerate `s2-grid-data.js` and the UTM-aligned
-imagery in `tiles/s2-plots/`. `generate_tiles.py` and `tiles/plots/` describe the
-legacy geographic grid and must not replace these new assets. Esri imagery is
-reference context; its capture date is not inferred as the crop observation date.
-
-Before painting, choose the crop-cycle start year, dates and class, then confirm
-the evidence. Use observed field IDs consistently across editing tiles. Exports
-record zero-based Sentinel-2 row/column, UTM centers and bounds, geographic
-footprints, year, class ID, field ID and Paoay membership. Labels outside Paoay
-are excluded by the training preparation command.
-
-Old browser labels remain in `taniman_v4_atok_paoay`; corrected labels use
-`taniman_v5_sentinel2` with a grid identifier. Native saves use separate
-`state-s2-v1.json` and backup files, preserving legacy `state.json` files.
-The connected database already uses the per-season foundation schema. Before
-merging/deploying this branch, run **`docs/supabase-s2-labels.sql`** in its SQL
-Editor. This additive migration creates the separate `s2_label_plots` JSON table
-and a crop-deletion RPC scoped to the new table. New grid plot IDs are stored in
-1000000–1000119 there. Existing `plots`, `seasons` and legacy label records are
-preserved. Crops used by another labeling dataset cannot be deleted through the
-new app. Do not rerun either destructive reset script for this change.
-Concurrent editing still follows the existing whole-plot save behavior.
-
-The crop-cycle start year also controls the canvas, map and legend's label view.
-An empty year shows all recorded years explicitly. Erasing requires a year and
-removes only that cycle's observations; clearing a whole plot still clears all
-its years. ZIP exports always contain every recorded year.
-
-See [Random Forest training preparation](docs/random-forest-training.md) to turn
-an export and a dated, aligned predictor stack into a training table. Correct
-geometry does not establish crop identity, historical crop presence, or model
-accuracy: those still need verified observations and independent field validation.
-
-Checks: `node --test tests/*.test.mjs` and
-`python -m pytest tests/test_plot_grid.py tests/test_generate_plots.py tests/test_prepare_rf_training.py`.

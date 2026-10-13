@@ -34,7 +34,9 @@ function extractFunctionBlock(source, name) {
 test('plot composition helper exposes visible cell coverage, empty cells, and mixed state', () => {
   const composition = extractFunctionBlock(appSource, 'plotCompositionForView');
 
-  assert.match(composition, /counts\s*=\s*new Array\(CROPS\.length\)\.fill\(0\)/);
+  assert.match(composition, /counts\s*=\s*new Array\(Classes\.ALL\.length\)\.fill\(0\)/);
+  assert.match(composition, /Classes\.legendIndex\(season\.classId\)/);
+  assert.match(composition, /GridMath\.isCellInBounds\(plot, cellIdx\)/);
   assert.match(composition, /emptyCells/);
   assert.match(composition, /totalVisibleCells/);
   assert.match(composition, /nonZeroCropCount/);
@@ -77,20 +79,20 @@ test('map renders proportional crop bar overlays for any painted plot', () => {
   assert.match(barHtml, /mix-seg/);
 });
 
-test('crop bar segments render in crop palette order', () => {
+test('composition bar segments render in class order', () => {
   const barHtml = extractFunctionBlock(appSource, 'compositionBarHtml');
 
   assert.match(barHtml, /composition\.counts\.map\(\(count,\s*i\)/);
-  assert.match(barHtml, /background:\$\{CROPS\[i\]\.hex\}/);
+  assert.match(barHtml, /background:\$\{Classes\.ALL\[i\]\.hex\}/);
 });
 
 test('legend aggregates visible cell coverage rather than dominant plot counts', () => {
   const legend = extractFunctionBlock(appSource, 'updateLegend');
 
   assert.match(legend, /plotCompositionForView\(plot\.idx\)/);
-  assert.match(legend, /visibleCellsByCrop/);
-  assert.match(legend, /totalVisibleCells/);
-  assert.match(legend, /coveragePct/);
+  assert.match(legend, /visibleCells\[i\] \+= count/);
+  assert.match(legend, /totalCells \+= GridMath\.validCellCount\(plot\)/);
+  assert.match(legend, /Classes\.ALL\.forEach/);
   assert.doesNotMatch(legend, /tally\[cropIdx\]\+\+/);
   assert.doesNotMatch(legend, /dominantCropForView\(plot\.idx\)/);
 });
@@ -132,5 +134,5 @@ test('expanded crop legend bounds and scrolls its rows on desktop and narrow scr
 
 test('offline desktop staging includes the shared legend source files', () => {
   assert.match(prepareDistSource, /cpSync\(tanimanSrc, join\(DIST, 'index\.html'\)\)/);
-  for (const file of ['app.js','data.js','grid.js','s2-grid-data.js','styles.css','config.js']) assert.ok(prepareDistSource.includes(`'${file}'`));
+  for (const file of ['app.js','data.js','grid.js','cycle-metadata.js','styles.css','config.js']) assert.ok(prepareDistSource.includes(`'${file}'`));
 });

@@ -9,8 +9,6 @@ Benguet_Sentinel2_Median.tif
 __pycache__/
 *.pyc
 .venv/
-.tile-cache/
-.pytest_cache/
 
 # Tauri build artifacts (offline desktop build)
 src-tauri/target/
@@ -20,3 +18,9 @@ src-tauri/dist-static/
 # Superpowers visual-companion scratch files
 .superpowers/
 .playwright-mcp/
+
+# Any local raster (Sentinel-2 composites etc.) and the Esri tile cache
+*.tif
+*.tif.aux.xml
+.tile-cache/
+.pytest_cache/

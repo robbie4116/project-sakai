@@ -14,7 +14,7 @@
 
   // This grid has different pixel identities from the original labeling grid.
   // Keep its files separate so saving never rotates or overwrites legacy labels.
-  const stateFilename = 'state-s2-v1.json';
+  const stateFilename = 'state-s2-classes-v1.json';
   const photoPrefix = 's2-v1_';
 
   // In Tauri mode, localStorage is never the source of truth. Wipe any stale

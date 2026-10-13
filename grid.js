@@ -2,7 +2,7 @@
 (function (root, factory) {
   const api = factory();
   if (typeof module === 'object' && module.exports) module.exports = api;
-  else root.TANIMAN_GRID = api;
+  root.TANIMAN_GRID = api;
 })(typeof window !== 'undefined' ? window : globalThis, function () {
   'use strict';
   const DEFAULT_GRID = Object.freeze({
@@ -85,7 +85,9 @@
 
   function validCellCount(plot) {
     const p=plotPosition(plot);
-    return p ? p.validRows*p.validCols : 0;
+    if (p) return (plot.validRows ?? p.validRows)*(plot.validCols ?? p.validCols);
+    return plot && Number.isInteger(plot.validRows) && Number.isInteger(plot.validCols)
+      ? plot.validRows*plot.validCols : 0;
   }
 
   function isInsidePaoay(lat,lng,poly) {
@@ -100,8 +102,66 @@
     return inside;
   }
 
+  // Keep the application mapping and brush APIs alongside exact geometry.
+  function cellPosition(cellIdx) {
+    return { cell_row: Math.floor(cellIdx/G.cells), cell_col: cellIdx%G.cells };
+  }
+  function cellToS2(plotIdx, cellIdx) {
+    const pr = Math.floor(plotIdx/G.plotCols), pc = plotIdx%G.plotCols;
+    const { cell_row, cell_col } = cellPosition(cellIdx);
+    return { cell_row, cell_col, s2_row: pr*G.cells+cell_row, s2_col: pc*G.cells+cell_col };
+  }
+  function s2ToCell(s2Row, s2Col) {
+    return { plotIdx: Math.floor(s2Row/G.cells)*G.plotCols+Math.floor(s2Col/G.cells),
+      cellIdx: (s2Row%G.cells)*G.cells+(s2Col%G.cells) };
+  }
+  function isCellInBounds(plot, cellIdx) {
+    if (!plot || !Number.isInteger(cellIdx) || cellIdx<0 || cellIdx>=G.cells*G.cells) return false;
+    const p = plotPosition(plot);
+    const { cell_row, cell_col } = cellPosition(cellIdx);
+    return cell_row < (plot.validRows ?? p?.validRows ?? 0)
+      && cell_col < (plot.validCols ?? p?.validCols ?? 0);
+  }
+  function brushCells(plot, row, col, size) {
+    const half = Math.floor(size/2), out = [];
+    for (let dr=-half; dr<=half; dr++) for (let dc=-half; dc<=half; dc++) {
+      const r=row+dr, c=col+dc;
+      if (r<0 || c<0 || r>=G.cells || c>=G.cells) continue;
+      const idx=r*G.cells+c;
+      if (isCellInBounds(plot,idx)) out.push(idx);
+    }
+    return out;
+  }
+  function cellUtmCenter(plotIdx, cellIdx) {
+    const { s2_row, s2_col } = cellToS2(plotIdx,cellIdx);
+    return { utm_x:G.originX+(s2_col+.5)*G.pixelM, utm_y:G.originY-(s2_row+.5)*G.pixelM };
+  }
+  function cellLatLng(plot, cellIdx) {
+    const p = plotPosition(plot);
+    if (p) {
+      const { cell_row, cell_col } = cellPosition(cellIdx);
+      const center = plotPoint(plot,cell_row+.5,cell_col+.5);
+      return { center_lat:center[0], center_lng:center[1] };
+    }
+    // Generic corner-only fixtures retain the original interpolation behavior.
+    const { cell_row, cell_col } = cellPosition(cellIdx);
+    const u=(cell_col+.5)/G.cells, v=(cell_row+.5)/G.cells;
+    const [nw,ne,se,sw] = plot.corners;
+    const mix = i => (1-u)*(1-v)*nw[i]+u*(1-v)*ne[i]+u*v*se[i]+(1-u)*v*sw[i];
+    return { center_lat:Number(mix(0).toFixed(8)), center_lng:Number(mix(1).toFixed(8)) };
+  }
+  function gridBoundsLatLng(plots) {
+    const result={latS:Infinity,latN:-Infinity,lngW:Infinity,lngE:-Infinity};
+    for (const plot of plots || []) for (const [lat,lng] of plot.corners) {
+      result.latS=Math.min(result.latS,lat); result.latN=Math.max(result.latN,lat);
+      result.lngW=Math.min(result.lngW,lng); result.lngE=Math.max(result.lngE,lng);
+    }
+    return result;
+  }
+
   return { DEFAULT_GRID, CRS:G.crs, ORIGIN_X:G.originX, ORIGIN_Y:G.originY, PIXEL_M:G.pixelM,
     S2_WIDTH:G.s2Width,S2_HEIGHT:G.s2Height,CELLS:G.cells,PLOT_M:G.cells*G.pixelM,
     PLOT_COLS:G.plotCols,PLOT_ROWS:G.plotRows,
-    utmToLatLng,isValidCell,cellGeometry,plotPoint,plotCorners,gridBounds,isInsidePaoay,validCellCount };
+    utmToLatLng,isValidCell,cellGeometry,plotPoint,plotCorners,gridBounds,isInsidePaoay,validCellCount,
+    cellPosition,cellToS2,s2ToCell,isCellInBounds,brushCells,cellUtmCenter,cellLatLng,gridBoundsLatLng };
 });

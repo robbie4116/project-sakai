@@ -6,7 +6,7 @@ import vm from 'node:vm';
 const source = readFileSync(new URL('../offline-storage.js', import.meta.url), 'utf8');
 const GRID_ID = 's2-32651-258690-1841210-10-571-494-v1';
 const directory = '/test-data';
-const current = `${directory}/state-s2-v1.json`;
+const current = `${directory}/state-s2-classes-v1.json`;
 const backup = `${current}.bak`;
 const legacy = `${directory}/state.json`;
 

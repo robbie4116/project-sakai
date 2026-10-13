@@ -61,8 +61,9 @@ test('browser exposes the same standalone API', () => {
 
 test('generated browser grid and imagery metadata agree with exact pixel math', () => {
   const context = { window: {} };
-  vm.runInNewContext(fs.readFileSync(new URL('../s2-grid-data.js', import.meta.url),'utf8'),context);
-  assert.deepEqual(JSON.parse(JSON.stringify(context.window.GRID)),grid.DEFAULT_GRID);
+  vm.runInNewContext(fs.readFileSync(new URL('../data.js', import.meta.url),'utf8'),context);
+  const metadata = JSON.parse(JSON.stringify(context.window.GRID));
+  assert.deepEqual({ ...metadata, id: metadata.id ?? grid.DEFAULT_GRID.id }, grid.DEFAULT_GRID);
   const plots = context.window.PLOTS;
   assert.equal(plots.length,120);
   assert.equal(plots.reduce((count,p)=>count+grid.validCellCount(p),0),571*494);

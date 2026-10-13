@@ -71,9 +71,10 @@ test('app language binding does not target removed quarter filter ids', () => {
   assert.doesNotMatch(appSource, /getElementById\('q-(all|rainy|cool|hot)'\)/);
 });
 
-test('app exposes startup active paint date recovery to calendar', () => {
-  assert.match(appSource, /invalidActivePaintRangeAtStartup/);
-  assert.match(appSource, /!isValidMmdd\(state\.paintStartDate\)\s*\|\|\s*!isValidMmdd\(state\.paintEndDate\)/);
+test('app never invents paint dates at startup and exposes the selection status', () => {
+  assert.doesNotMatch(appSource, /invalidActivePaintRangeAtStartup/);
+  assert.match(appSource, /state\.paintStartDate = null;/);
+  assert.match(appSource, /selectionStatus: currentSelectionStatus/);
 });
 
 test('schedule editor stylesheet targets the date selector markup', () => {

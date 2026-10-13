@@ -24,11 +24,6 @@
       <div class="brand-sub" id="brand-sub">Paoay · Atok · Benguet</div>
     </div>
     <div class="hdr-r">
-      <button class="hdr-action" id="roster-btn">
-        <span class="ico">⌂</span>
-        <span id="roster-btn-txt">Farmers</span>
-        <span class="cnt" id="hdr-farmer-count">0</span>
-      </button>
       <div class="lang-pill" role="group" aria-label="Language">
         <button class="lang-btn on" data-lang="en">EN</button>
         <button class="lang-btn" data-lang="tl">TL</button>
@@ -89,9 +84,6 @@
         <div class="ed-title">
           <div class="ed-num">
             <span id="plot-name">Plot 01</span>
-            <span class="ed-farmer-chip empty" id="ed-farmer-chip">
-              <span class="ddot"></span>No farmer assigned
-            </span>
           </div>
           <div class="ed-loc" id="plot-loc">R0 · C0 · 16.6245°N, 120.7329°E</div>
         </div>
@@ -127,8 +119,7 @@
       <div class="reference-controls">
         <label>Crop-cycle start year <input id="reference-year" type="number" min="1980" max="2100" placeholder="e.g. 2024"></label>
         <label>Observed field ID <input id="reference-field" type="text" maxlength="80" placeholder="Optional, e.g. F-001"></label>
-        <label class="reference-confirm"><input id="reference-confirmed" type="checkbox"> I verified this class and these dates for this year</label>
-        <span id="labeling-status" role="status" aria-live="polite"></span>
+        <label><input id="reference-confirmed" type="checkbox"> I verified this class and these dates for this year</label>
       </div>
       <div class="ed-body">
 
@@ -136,6 +127,7 @@
           <div class="canvas-frame" id="canvas-frame">
             <canvas id="plot-canvas" width="600" height="600"></canvas>
             <div class="brush-cursor" id="brush-cursor"></div>
+            <div class="canvas-prompt" id="canvas-prompt" role="status" aria-live="polite" hidden></div>
           </div>
           <div class="canvas-status">
             <div class="canvas-corner" id="canvas-corner">50 × 50</div>
@@ -169,7 +161,16 @@
           </div>
 
           <div class="tools-section">
-            <div class="tools-label" id="lab-crop">Crop</div>
+            <div class="tools-label" id="lab-class">Class</div>
+            <div class="crop-grid" id="class-picker" role="group" aria-labelledby="lab-class"></div>
+            <div class="field remark-field" id="other-remark-field" hidden>
+              <label id="other-remark-label" for="other-remark">What is it?</label>
+              <input id="other-remark" type="text" maxlength="200" autocomplete="off">
+            </div>
+          </div>
+
+          <div class="tools-section" id="crop-name-section" hidden>
+            <div class="tools-label" id="lab-crop">Crop name</div>
             <div class="crop-picker" id="crop-picker">
               <section class="crop-picker-group" id="crop-target-group" aria-labelledby="crop-target-heading">
                 <h4 class="crop-group-heading" id="crop-target-heading"></h4>
@@ -254,22 +255,6 @@
   </div>
   <div class="dr-body">
 
-    <!-- Farmer ID + Name -->
-    <div class="field">
-      <label id="lab-farmer-id">Farmer ID</label>
-      <input id="in-farmer-id" type="text" autocomplete="off" placeholder="F-001">
-      <div class="field-extra">
-        <span class="ph" id="ph-farmer-id">Optional · for grouping plots by owner</span>
-        <span class="sug" id="sug-farmer-id">F-001</span>
-      </div>
-    </div>
-
-    <div class="field">
-      <label id="lab-farmer">Farmer name (optional)</label>
-      <input id="in-farmer" type="text" autocomplete="off">
-      <span class="ph" id="ph-farmer">Optional</span>
-    </div>
-
     <!-- Schedule summary -->
     <div class="sched-summary">
       <div class="ss-head">
@@ -294,40 +279,26 @@
   </div>
 </aside>
 
-<!-- ROSTER MODAL -->
-<aside class="modal" id="roster-modal">
-  <div class="modal-head">
-    <div class="modal-titlewrap">
-      <h3>Farmer roster</h3>
-      <div class="modal-sub">Anonymous IDs · tap to jump to a plot</div>
-    </div>
-    <button class="modal-close" id="roster-close">×</button>
-  </div>
-  <div class="modal-body">
-    <div class="roster-search">
-      <input id="roster-search" type="text" placeholder="Search by ID or name…">
-      <span class="roster-stats" id="roster-stats">0 farmers</span>
-    </div>
-    <div class="roster-list" id="roster-list"></div>
-  </div>
-</aside>
-
 <div class="toast" id="toast"><span class="ico"></span><span id="toast-txt"></span></div>
 
 <!-- DATA + APP -->
 <script src="data.js"></script>
-<script src="s2-grid-data.js"></script>
-<script src="grid.js"></script>
 <script src="config.js"></script>
 <script src="month-view-utils.js"></script>
 <script src="season-utils.js"></script>
+<script src="grid.js"></script>
 <script src="rf-labels.js"></script>
+<script src="cycle-metadata.js"></script>
+<script src="classes.js"></script>
+<script src="season-outbox.js"></script>
+<script src="field-ids.js"></script>
+<script src="label-export.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 <script src="supabase-sync.js"></script>
 <script src="offline-storage.js"></script>
 <script src="crop-catalog.js"></script>
 <script src="crop-picker.js"></script>
-<script src="crop-export.js"></script>
+<script src="class-picker.js"></script>
 <script>
   // Boot sequence: wait for offline preload (no-op in Vercel mode),
   // then inject app.js and calendar.js in order.

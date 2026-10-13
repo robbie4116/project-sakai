@@ -3,14 +3,13 @@
 
 (function(){
 const {
-  state, CROPS, CropCatalog, MONTH_SHORT, MONTH_FULL, MONTH_FULL_LONG, ALL_MONTHS,
+  state, CROPS, CropCatalog, Classes, MONTH_SHORT, MONTH_FULL, MONTH_FULL_LONG, ALL_MONTHS,
   SeasonUtils, monthsBetween, normalizeViewMonths, viewMonthFromMask,
   maskToDisplayLabel, isBrushHiddenOnMap, tr,
 } = window.TANIMAN;
 const { isValidMmdd, rangeWrapsYear } = SeasonUtils;
 
 let scrubStart = 0, scrubEnd = 11;
-let activeDateReset = false;
 
 function scrubEndpointsFromMask(mask) {
   if (mask === ALL_MONTHS) return { s: 0, e: 11 };
@@ -89,44 +88,28 @@ function monthMaskForSeason(start, end) {
   return mask;
 }
 
-function normalizeActivePaintRange({ save = true } = {}) {
-  const shouldRecover = !!window.TANIMAN.invalidActivePaintRangeAtStartup ||
-    !isValidMmdd(state.paintStartDate) ||
-    !isValidMmdd(state.paintEndDate);
-  if (!shouldRecover) {
-    state.paintMonths = monthMaskForSeason(state.paintStartDate, state.paintEndDate);
-    return false;
-  }
-  state.paintStartDate = '01-01';
-  state.paintEndDate = '12-31';
-  state.paintMonths = monthMaskForSeason(state.paintStartDate, state.paintEndDate);
-  activeDateReset = true;
-  window.TANIMAN.invalidActivePaintRangeAtStartup = false;
-  if (save) window.TANIMAN.schedSave();
-  return true;
+function normalizeActivePaintRange() {
+  const valid = isValidMmdd(state.paintStartDate) && isValidMmdd(state.paintEndDate);
+  state.paintMonths = valid ? monthMaskForSeason(state.paintStartDate, state.paintEndDate) : ALL_MONTHS;
+  return false;
 }
 
 function readoutModel() {
-  const crop = CropCatalog.byId(state.selectedCropId) || {
-    id: state.selectedCropId || '',
-    hex: '#9CA3AF',
-    name: { en: 'Unknown crop' },
-    isResolved: false,
-  };
-  const cropName = crop.name[state.lang] || crop.name.en || 'Unknown crop';
-  const valid = isValidMmdd(state.paintStartDate) && isValidMmdd(state.paintEndDate);
-  const wrapped = valid && rangeWrapsYear(state.paintStartDate, state.paintEndDate);
-  const text = valid
-    ? tr('seasonPresentFromTo')
-      .replace('{crop}', cropName)
-      .replace('{start}', formatMmdd(state.paintStartDate))
-      .replace('{end}', formatMmdd(state.paintEndDate))
-    : tr('seasonDateResetAllYear');
+  const status = window.TANIMAN.selectionStatus();
+  const sel = state.selection;
+  const hex = Classes.selectionColor(sel, CropCatalog);
+  if (!status.ready) {
+    return { hex, text: status.message || tr(Classes.PROMPT_KEYS[status.missing]), wrapped: false, helper: '' };
+  }
+  const wrapped = rangeWrapsYear(state.paintStartDate, state.paintEndDate);
   return {
-    crop,
-    text,
+    hex,
+    text: tr('seasonPresentFromTo')
+      .replace('{crop}', Classes.selectionLabel(sel, CropCatalog, state.lang))
+      .replace('{start}', formatMmdd(state.paintStartDate))
+      .replace('{end}', formatMmdd(state.paintEndDate)),
     wrapped,
-    helper: activeDateReset ? tr('seasonDateResetAllYear') : (wrapped ? tr('seasonContinuesNextYear') : ''),
+    helper: wrapped ? tr('seasonContinuesNextYear') : '',
   };
 }
 
@@ -143,7 +126,7 @@ function escapeHtml(value) {
 function updateScheduleReadout() {
   const el = document.getElementById('sched-readout');
   const model = readoutModel();
-  const cropColor = /^#[0-9a-f]{6}$/i.test(model.crop.hex) ? model.crop.hex : '#9CA3AF';
+  const cropColor = /^#[0-9a-f]{6}$/i.test(model.hex) ? model.hex : '#9CA3AF';
   el.innerHTML =
     `<span class="crop-dot" style="background:${cropColor}"></span>` +
     `<span class="rng">${escapeHtml(model.text)}</span>` +
@@ -170,17 +153,25 @@ function clearChildren(el) {
   if (Array.isArray(el.children)) el.children.length = 0;
 }
 
+function blankOption() {
+  const option = document.createElement('option');
+  option.value = '';
+  option.textContent = '—';
+  return option;
+}
+
 function populateMonthSelect(select, { short = false } = {}) {
   if (!select) return;
   const previous = select.value;
   clearChildren(select);
+  select.appendChild(blankOption());
   for (let i=0; i<12; i++) {
     const option = document.createElement('option');
     option.value = String(i + 1);
     option.textContent = short ? monthShortLabel(i + 1) : MONTH_FULL_LONG[i];
     select.appendChild(option);
   }
-  select.value = previous || '1';
+  select.value = previous || '';
 }
 
 function populateSeasonMonthSelects() {
@@ -188,47 +179,49 @@ function populateSeasonMonthSelects() {
   populateMonthSelect(document.getElementById('season-harvest-month'), { short: true });
 }
 
-function updateDayOptions(monthSelect, daySelect, desiredDay = Number(daySelect.value) || 1) {
+function updateDayOptions(monthSelect, daySelect, desiredDay) {
   if (!monthSelect || !daySelect) return;
-  const month = Number(monthSelect.value);
-  const day = clampDayForMonth(desiredDay, month);
-  const max = SeasonUtils.MONTH_DAYS[month - 1] || SeasonUtils.MONTH_DAYS[0];
   clearChildren(daySelect);
+  if (!monthSelect.value) {
+    daySelect.appendChild(blankOption());
+    daySelect.value = '';
+    return;
+  }
+  const month = Number(monthSelect.value);
+  const max = SeasonUtils.MONTH_DAYS[month - 1];
   for (let d=1; d<=max; d++) {
     const option = document.createElement('option');
     option.value = String(d);
     option.textContent = String(d);
     daySelect.appendChild(option);
   }
-  daySelect.value = String(day);
+  daySelect.value = String(clampDayForMonth(desiredDay || 1, month));
 }
 
-function syncSeasonSelectors({ normalize = true } = {}) {
-  if (normalize) normalizeActivePaintRange();
+function syncSeasonSelectors() {
+  normalizeActivePaintRange();
   const plantedMonth = document.getElementById('season-planted-month');
   const plantedDay = document.getElementById('season-planted-day');
   const harvestMonth = document.getElementById('season-harvest-month');
   const harvestDay = document.getElementById('season-harvest-day');
+  if (!plantedMonth || !plantedDay || !harvestMonth || !harvestDay) return;
   const start = mmddToParts(state.paintStartDate);
   const end = mmddToParts(state.paintEndDate);
-  if (!plantedMonth || !plantedDay || !harvestMonth || !harvestDay || !start || !end) return;
-
-  plantedMonth.value = String(start.month);
-  updateDayOptions(plantedMonth, plantedDay, start.day);
-  harvestMonth.value = String(end.month);
-  updateDayOptions(harvestMonth, harvestDay, end.day);
+  plantedMonth.value = start ? String(start.month) : '';
+  updateDayOptions(plantedMonth, plantedDay, start && start.day);
+  harvestMonth.value = end ? String(end.month) : '';
+  updateDayOptions(harvestMonth, harvestDay, end && end.day);
 }
+window.syncSeasonSelectors = syncSeasonSelectors;
 
 function setPaintSeasonRange(start, end) {
   if (typeof window.resetReferenceConfirmation === 'function') window.resetReferenceConfirmation();
   state.paintStartDate = start;
   state.paintEndDate = end;
-  activeDateReset = false;
-  normalizeActivePaintRange({ save: false });
-  syncSeasonSelectors({ normalize: false });
+  state.datesAuto = false;
+  normalizeActivePaintRange();
   updateScheduleReadout();
   window.TANIMAN.renderCanvas();
-  window.TANIMAN.schedSave();
 }
 
 window.TANIMAN_SEASON_CONTROL = {
@@ -255,17 +248,21 @@ function wireSeasonPicker() {
   const harvestDay = document.getElementById('season-harvest-day');
   if (!plantedMonth || !plantedDay || !harvestMonth || !harvestDay) return;
 
-  const setFromSelectors = () => setPaintSeasonRange(
-    partsToMmdd(plantedMonth.value, plantedDay.value),
-    partsToMmdd(harvestMonth.value, harvestDay.value));
-
+  const setFromSelectors = () => {
+    if (!plantedMonth.value || !harvestMonth.value) return setPaintSeasonRange(null, null);
+    setPaintSeasonRange(
+      partsToMmdd(plantedMonth.value, plantedDay.value),
+      partsToMmdd(harvestMonth.value, harvestDay.value));
+  };
   plantedMonth.addEventListener('change', () => {
-    updateDayOptions(plantedMonth, plantedDay);
+    updateDayOptions(plantedMonth, plantedDay, Number(plantedDay.value) || 1);
     setFromSelectors();
   });
   plantedDay.addEventListener('change', setFromSelectors);
   harvestMonth.addEventListener('change', () => {
-    updateDayOptions(harvestMonth, harvestDay);
+    const month = Number(harvestMonth.value);
+    const lastDay = month ? SeasonUtils.MONTH_DAYS[month - 1] : 1;
+    updateDayOptions(harvestMonth, harvestDay, Number(harvestDay.value) || lastDay);
     setFromSelectors();
   });
   harvestDay.addEventListener('change', setFromSelectors);
@@ -367,8 +364,7 @@ function wireScrubber() {
 // ── INIT ──────────────────────────────────────────────────────────
 buildScrubberTrack();
 populateSeasonMonthSelects();
-normalizeActivePaintRange();
-syncSeasonSelectors({ normalize: false });
+syncSeasonSelectors();
 updateSeasonStaticLabels();
 wireSeasonPicker();
 wireScrubber();

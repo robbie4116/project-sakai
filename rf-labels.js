@@ -43,7 +43,13 @@
     if (!range) return true;
     const selected = new Set(cells);
     return seasons.some(season => {
-      if (season.cropId === selection.cropId || !(season.cells || []).some(cell=>selected.has(cell))) return false;
+      const sameClass = season.classId === undefined && selection.classId === undefined
+        ? season.cropId === selection.cropId
+        : season.classId === selection.classId && (season.classId !== 4 || season.cropId === selection.cropId);
+      if (sameClass || !(season.cells || []).some(cell=>selected.has(cell))) return false;
+      // Legacy annotations have no observed year and are excluded from training.
+      // Keep them without treating them as observations of every dated cycle.
+      if (!validYear(season.referenceYear)) return false;
       const other = absoluteRange(season);
       return !other || (range[0] <= other[1] && other[0] <= range[1]);
     });

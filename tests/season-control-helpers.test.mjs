@@ -5,6 +5,8 @@ import vm from 'node:vm';
 
 const seasonUtilsSource = await readFile(new URL('../season-utils.js', import.meta.url), 'utf8');
 const calendarSource = await readFile(new URL('../calendar.js', import.meta.url), 'utf8');
+const classesSource = await readFile(new URL('../classes.js', import.meta.url), 'utf8');
+const LETTUCE = '11111111-1111-4111-8111-111111111111';
 
 function fakeElement(id = '') {
   const classes = new Set();
@@ -55,7 +57,7 @@ function loadHelpers(initialState = {}, tanimanOverrides = {}) {
   };
   const state = {
     lang: 'en',
-    selectedCropId: 'potato',
+    selection: { classKey: 'potato', cropId: null, remark: '' },
     paintStartDate: '06-21',
     paintEndDate: '06-30',
     paintMonths: 1 << 5,
@@ -63,9 +65,15 @@ function loadHelpers(initialState = {}, tanimanOverrides = {}) {
     ...initialState,
   };
   const crops = [
-    { id: 'potato', hex: '#FFC629', name: { en: 'Potato' } },
-    { id: 'carrot', hex: '#FF6A1F', name: { en: 'Carrot' } },
+    { id: LETTUCE, hex: '#22C55E', name: { en: 'Lettuce' } },
   ];
+  const catalog = tanimanOverrides.CropCatalog || {
+    byId(id) {
+      const crop = crops.find(item => item.id === id);
+      return crop || { id, hex: '#9CA3AF', name: { en: `Unknown crop (${id})` }, isResolved: false };
+    },
+    isResolved: id => crops.some(item => item.id === id),
+  };
   let saveCount = 0;
   const context = {
     window: {
@@ -73,12 +81,11 @@ function loadHelpers(initialState = {}, tanimanOverrides = {}) {
       TANIMAN: {
         state,
         CROPS: crops,
-        CropCatalog: tanimanOverrides.CropCatalog || {
-          byId(id) {
-            const crop = crops.find(item => item.id === id);
-            return crop || { id, hex: '#9CA3AF', name: { en: `Unknown crop (${id})` }, isResolved: false };
-          },
-        },
+        CropCatalog: catalog,
+        Classes: null,
+        selectionStatus: () => context.window.TANIMAN_CLASSES.selectionStatus(
+          { ...state.selection, start: state.paintStartDate, end: state.paintEndDate },
+          id => catalog.isResolved(id)),
         MONTH_SHORT: ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'],
         MONTH_FULL: ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'],
         MONTH_FULL_LONG: ['January','February','March','April','May','June','July','August','September','October','November','December'],
@@ -96,7 +103,10 @@ function loadHelpers(initialState = {}, tanimanOverrides = {}) {
           seasonMonth: 'Month',
           seasonDay: 'Day',
           seasonContinuesNextYear: 'Continues into next year',
-          seasonDateResetAllYear: 'Date reset to all year',
+          pickClass: 'Pick a class to start painting',
+          pickCropName: 'Pick or add a crop name',
+          typeRemark: 'Type what it is first',
+          pickDates: 'Pick when it was planted and harvested',
           seasonShortcutAll: 'All {month}',
           seasonShortcutEarly: '{month} 1-10',
           seasonShortcutMid: '{month} 11-20',
@@ -115,6 +125,8 @@ function loadHelpers(initialState = {}, tanimanOverrides = {}) {
   vm.createContext(context);
   vm.runInContext(seasonUtilsSource, context);
   context.window.TANIMAN.SeasonUtils = context.window.TANIMAN_SEASONS;
+  vm.runInContext(classesSource, context);
+  context.window.TANIMAN.Classes = context.window.TANIMAN_CLASSES;
   vm.runInContext(calendarSource, context);
   return { helpers: context.window.TANIMAN_SEASON_CONTROL, window: context.window, state, elements, shortcutButtons, saveCount: () => saveCount };
 }
@@ -133,30 +145,29 @@ test('month changes clamp days to the selected month', () => {
   assert.equal(helpers.clampDayForMonth(10, 2), 10);
 });
 
-test('invalid active dates recover to all year and recompute paint months', () => {
+test('invalid active dates are never replaced; painting waits for real dates', () => {
   const { helpers, state, saveCount } = loadHelpers({ paintStartDate: '02-31', paintEndDate: '13-01' });
   helpers.normalizeActivePaintRange();
-  assert.equal(state.paintStartDate, '01-01');
-  assert.equal(state.paintEndDate, '12-31');
+  assert.equal(state.paintStartDate, '02-31');
+  assert.equal(state.paintEndDate, '13-01');
   assert.equal(state.paintMonths, (1 << 12) - 1);
-  assert.equal(saveCount() > 0, true);
+  assert.equal(helpers.readoutModel().text, 'Pick when it was planted and harvested');
+  assert.equal(saveCount(), 0);
 });
 
-test('startup-invalid marker forces full recovery after app.js safety normalization', () => {
-  const { helpers, state, elements, saveCount } = loadHelpers(
-    { paintStartDate: '01-01', paintEndDate: '06-30', paintMonths: 1 },
-    { invalidActivePaintRangeAtStartup: true },
-  );
+test('a fresh session shows blank date selectors and the pick-a-class prompt', () => {
+  const { helpers, elements } = loadHelpers({
+    selection: { classKey: null, cropId: null, remark: '' },
+    paintStartDate: null,
+    paintEndDate: null,
+  });
 
-  assert.equal(state.paintStartDate, '01-01');
-  assert.equal(state.paintEndDate, '12-31');
-  assert.equal(state.paintMonths, (1 << 12) - 1);
-  assert.equal(elements.get('season-planted-month').value, '1');
-  assert.equal(elements.get('season-planted-day').value, '1');
-  assert.equal(elements.get('season-harvest-month').value, '12');
-  assert.equal(elements.get('season-harvest-day').value, '31');
-  assert.equal(helpers.readoutModel().helper, 'Date reset to all year');
-  assert.equal(saveCount() > 0, true);
+  for (const id of ['season-planted-month', 'season-planted-day', 'season-harvest-month', 'season-harvest-day']) {
+    assert.equal(elements.get(id).value, '', id);
+  }
+  assert.equal(elements.get('season-planted-month').children[0].value, '');
+  assert.equal(helpers.readoutModel().text, 'Pick a class to start painting');
+  assert.equal(helpers.readoutModel().helper, '');
 });
 
 test('same-day and wrapped ranges format as valid readout states', () => {
@@ -191,10 +202,10 @@ test('season static labels assign distinct month and day accessible names', () =
   assert.equal(elements.get('season-harvest-day').getAttribute('aria-label'), 'Harvest Day');
 });
 
-test('crop readout refresh does not mutate the active range', () => {
+test('class readout refresh does not mutate the active range', () => {
   const { helpers, state } = loadHelpers({ paintStartDate: '06-21', paintEndDate: '06-30' });
   const first = helpers.readoutModel();
-  state.selectedCropId = 'carrot';
+  state.selection.classKey = 'carrot';
   const second = helpers.readoutModel();
   assert.match(first.text, /Potato/);
   assert.match(second.text, /Carrot/);
@@ -202,16 +213,27 @@ test('crop readout refresh does not mutate the active range', () => {
   assert.equal(state.paintEndDate, '06-30');
 });
 
-test('unresolved crop readout always renders safe text and a neutral color dot', () => {
-  const { helpers, window, elements } = loadHelpers({ selectedCropId: '<img src=x onerror=alert(1)>' });
+test('an Other remark renders as escaped text with the Other color', () => {
+  const { helpers, window, elements } = loadHelpers({
+    selection: { classKey: 'other', cropId: null, remark: '<img src=x onerror=alert(1)>' },
+  });
 
   const model = helpers.readoutModel();
   window.updateScheduleReadout();
 
-  assert.match(model.text, /Unknown crop/);
-  assert.match(elements.get('sched-readout').innerHTML, /background:#9CA3AF/);
+  assert.match(model.text, /^Other: <img/);
+  assert.match(elements.get('sched-readout').innerHTML, /background:#F472B6/);
   assert.match(elements.get('sched-readout').innerHTML, /&lt;img/);
   assert.doesNotMatch(elements.get('sched-readout').innerHTML, /<img/);
+});
+
+test('class 4 with a deleted crop name prompts for a crop name; a known one shows its name', () => {
+  const missing = loadHelpers({ selection: { classKey: 'other_cultivated', cropId: 'gone', remark: '' } });
+  assert.equal(missing.helpers.readoutModel().text, 'Pick or add a crop name');
+
+  const known = loadHelpers({ selection: { classKey: 'other_cultivated', cropId: LETTUCE, remark: '' } });
+  assert.match(known.helpers.readoutModel().text, /^Lettuce present from Jun 21 to Jun 30$/);
+  assert.equal(known.helpers.readoutModel().hex, '#22C55E');
 });
 
 test('season control no longer exposes preset or shortcut helpers', () => {

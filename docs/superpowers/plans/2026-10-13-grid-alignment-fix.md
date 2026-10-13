@@ -47,4 +47,14 @@ trigger, anonymous app table privileges, crop RPC execute privilege and existing
 legacy tables. A read-only REST request using the app's configured connection
 returned HTTP 200 for all expected columns. No synthetic labels were written
 to the live project. The database migration prerequisite is satisfied; Git merge
-and deployment have not been performed.
+and deployment had not yet been performed at that checkpoint.
+
+Merge reconciliation: origin/main added the class picker and atomic per-season
+foundation while this work was being reviewed. The combined app preserves that
+foundation and its existing RPC. Observed years and field IDs roundtrip through
+versioned season IDs; no additional foundation schema migration is needed.
+The applied s2_label_plots migration remains additive compatibility storage;
+the active app uses public.seasons rather than the older JSON save adapter.
+Undated legacy annotations remain exportable for review, are excluded from
+training, and do not prevent new dated observations. Schedule summaries display
+each observation's year, including an explicit Undated label.

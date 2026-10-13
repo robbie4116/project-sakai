@@ -25,6 +25,18 @@ test('different crops conflict only when absolute crop-cycle dates overlap', () 
   assert.equal(labels.hasConflict([a],{...a,cropId:'carrot'},[0]),false);
 });
 
+test('class-based target crops with null crop names still conflict',()=>{
+  const a={classId:1,cropId:null,start:'01-01',end:'03-01',referenceYear:2024,cells:[0]};
+  assert.equal(labels.hasConflict([a],{...a,classId:2},[0]),true);
+  assert.equal(labels.hasConflict([a],{...a,classId:1},[0]),false);
+});
+
+test('undated legacy annotations do not block a dated observation',()=>{
+  const legacy={classId:1,cropId:null,start:'01-01',end:'03-01',cells:[0]};
+  assert.equal(labels.hasConflict([legacy],{...legacy,classId:2,referenceYear:2024},[0]),false);
+  assert.equal(labels.hasConflict([{...legacy,referenceYear:2024}],{...legacy,classId:2,referenceYear:2024},[0]),true);
+});
+
 test('remote storage uses a separate index range and rejects invalid plot indices', () => {
   assert.equal(labels.cloudPlotIdx(0),1000000);
   assert.equal(labels.cloudPlotIdx(119),1000119);

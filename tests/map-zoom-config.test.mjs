@@ -92,14 +92,19 @@ test('map tile generation preserves full XYZ tile extents instead of stretching 
   assert.match(tileGeneratorSource, /OUTSIDE_TILE_FILL\s*=\s*\(\s*14\s*,\s*26\s*,\s*14\s*\)/);
 });
 
-test('map uses separate context and detail bounds', () => {
+test('map fits the Sentinel-2 grid and limits panning to about 1 km around it', () => {
   const initMapBlock = extractFunctionBlock('initMap');
   const contextLayerBlock = extractFunctionBlock('makeContextTileLayer');
   const detailLayerBlock = extractFunctionBlock('makeDetailTileLayer');
 
   assert.equal(readBoundsConstant(appSource, 'MAP_CONTEXT_BOUNDS'), true);
   assert.equal(readBoundsConstant(appSource, 'MAP_DETAIL_BOUNDS'), true);
-  assert.match(initMapBlock, /maxBounds:\s*L\.latLngBounds/);
+  assert.match(appSource, /const MAP_DETAIL_BOUNDS = L\.latLngBounds\(\s*\[GRID_BOUNDS\.latS, GRID_BOUNDS\.lngW\],\s*\[GRID_BOUNDS\.latN, GRID_BOUNDS\.lngE\]\s*\)/);
+  assert.match(appSource, /const GRID_MAX_BOUNDS = MAP_DETAIL_BOUNDS\.pad\(0\.2\)/);
+  assert.match(initMapBlock, /maxBounds:\s*GRID_MAX_BOUNDS/);
+  assert.match(initMapBlock, /map\.fitBounds\(MAP_DETAIL_BOUNDS\)/);
+  assert.doesNotMatch(initMapBlock, /ATOK_POLY/);
+  assert.match(initMapBlock, /L\.polygon\(PAOAY_POLY/);
   assert.match(contextLayerBlock, /bounds:\s*MAP_CONTEXT_BOUNDS/);
   assert.match(detailLayerBlock, /bounds:\s*MAP_DETAIL_BOUNDS/);
 });
@@ -150,7 +155,7 @@ test('map max zoom stays within the native Atok raster detail', () => {
   assert.match(tileGeneratorSource, /DETAIL_MAX_ZOOM\s*=\s*14/);
 });
 
-test('offline plot canvas draws the selected plot crop before label overlays', () => {
+test('plot canvas draws the rendered plot image before label overlays', () => {
   const renderCanvasBlock = extractFunctionBlock('renderCanvas');
   const getPlotTileBlock = extractFunctionBlock('getPlotTile');
 
@@ -159,8 +164,8 @@ test('offline plot canvas draws the selected plot crop before label overlays', (
   assert.match(getPlotTileBlock, /if\s*\(\s*!plot\s*\|\|\s*!plot\.tilePath\s*\)\s*return\s+null/);
   assert.match(getPlotTileBlock, /img\.src\s*=\s*plot\.tilePath/);
   assert.match(renderCanvasBlock, /const\s+tile\s*=\s*getPlotTile\(state\.plotIdx\)/);
-  assert.match(renderCanvasBlock, /if\s*\(\s*tile\s*&&\s*tile\.complete\s*&&\s*tile\.naturalWidth\s*>\s*0\s*\)/);
-  assert.match(renderCanvasBlock, /ctx\.drawImage\(tile,\s*0,\s*0,\s*w,\s*h\)/);
+  assert.match(renderCanvasBlock, /if\s*\(\s*tile\s*&&\s*tile\.complete\s*&&\s*tile\.naturalWidth\s*>\s*0\s*\)\s*ctx\.drawImage\(tile,\s*0,\s*0,\s*w,\s*h\)/);
+  assert.ok(renderCanvasBlock.indexOf('getPlotTile(') < renderCanvasBlock.indexOf('drawMixedCell('));
 });
 
 test('plot canvas uses device-pixel backing resolution instead of browser-upscaled pixels', () => {
@@ -173,33 +178,27 @@ test('plot canvas uses device-pixel backing resolution instead of browser-upscal
   assert.match(fitCanvasBlock, /canvas\.height\s*=\s*Math\.round\(size\s*\*\s*dpr\)/);
 });
 
-test('online plot canvas uses imagery already reprojected to the reference grid', () => {
+test('plot canvas no longer stitches live or offline map tiles', () => {
   const renderCanvasBlock = extractFunctionBlock('renderCanvas');
-  const getMapTileImageBlock = extractFunctionBlock('getMapTileImage');
 
-  assert.match(renderCanvasBlock, /getPlotTile\(state\.plotIdx\)/);
-  assert.doesNotMatch(renderCanvasBlock, /drawMapTileBackground\(/);
-  assert.match(getMapTileImageBlock, /const\s+isExternal\s*=\s*urlTemplate\.startsWith\('http'\)/);
-  assert.match(getMapTileImageBlock, /if\s*\(\s*isExternal\s*\)\s*img\.crossOrigin\s*=\s*'anonymous'/);
+  assert.doesNotMatch(appSource, /function\s+(drawMapTileBackground|getMapTileImage|latLngToGlobalPixel)\s*\(/);
+  assert.doesNotMatch(renderCanvasBlock, /useOnlineImagery|ESRI_TILE_TEMPLATE/);
 });
 
-test('missing plot imagery never falls back to stretched geographic imagery', () => {
+test('plot canvas greys out cells beyond the Sentinel-2 composite and shows one line per cell', () => {
   const renderCanvasBlock = extractFunctionBlock('renderCanvas');
-  const drawMapTileBlock = extractFunctionBlock('drawMapTileBackground');
 
-  assert.match(appSource, /function\s+drawMapTileBackground\s*\(/);
-  assert.match(appSource, /function\s+getMapTileImage\s*\(/);
-  assert.match(appSource, /function\s+latLngToGlobalPixel\s*\(/);
-  assert.match(appSource, /tiles\/map\/\{z\}\/\{x\}\/\{y\}\.jpg/);
-  assert.match(renderCanvasBlock, /const\s+plot\s*=\s*PLOTS\[state\.plotIdx\]/);
-  assert.doesNotMatch(renderCanvasBlock, /drawMapTileBackground\(/);
-  assert.match(renderCanvasBlock, /Loading aligned reference imagery/);
-  assert.match(appSource, /function\s+drawMapTileBackground\s*\([^)]*zoom\s*=\s*MAP_DETAIL_MAX_ZOOM/);
-  assert.match(drawMapTileBlock, /ctx\.drawImage\(/);
-  assert.doesNotMatch(renderCanvasBlock, /outside_custom|tublay/i);
+  assert.match(renderCanvasBlock, /plot\.validCols < GRID \|\| plot\.validRows < GRID/);
+  assert.match(renderCanvasBlock, /ctx\.fillRect\(plot\.validCols \* cellW, 0, w - plot\.validCols \* cellW, h\)/);
+  assert.match(renderCanvasBlock, /ctx\.fillRect\(0, plot\.validRows \* cellH, plot\.validCols \* cellW, h - plot\.validRows \* cellH\)/);
+  assert.match(renderCanvasBlock, /for \(let i=1;i<GRID;i\+\+\)/);
+  assert.match(renderCanvasBlock, /GridMath\.validCellCount\(plot\)/);
 });
 
-test('cloud sync waits four seconds after the latest dirty plot action', () => {
-  assert.equal(readNumericConstant(appSource, 'CLOUD_SYNC_DELAY'), 4000);
-  assert.match(appSource, /setTimeout\(\(\)\s*=>\s*\{\s*flushCloudSync\(\)\.catch\(e\s*=>\s*console\.warn\('cloud sync failed:',\s*e\)\);\s*\},\s*CLOUD_SYNC_DELAY\)/);
+test('cloud sync debounces edits for 1.5 seconds and retries every 30 seconds', () => {
+  assert.equal(readNumericConstant(appSource, 'CLOUD_SYNC_DELAY'), 1500);
+  assert.equal(readNumericConstant(appSource, 'CLOUD_RETRY_DELAY'), 30000);
+  assert.match(appSource, /function scheduleCloudFlush\(delay = CLOUD_SYNC_DELAY\)/);
+  assert.match(appSource, /setTimeout\(\(\)\s*=>\s*\{\s*flushCloudSync\(\)\.catch\(e\s*=>\s*console\.warn\('cloud sync failed:',\s*e\)\);\s*\},\s*delay\)/);
+  assert.match(appSource, /scheduleCloudFlush\(CLOUD_RETRY_DELAY\)/);
 });

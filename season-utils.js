@@ -63,60 +63,6 @@
       rangeSegments(bStart, bEnd).some(([bs, be]) => as <= be && bs <= ae));
   }
 
-  function roundCoord(n) {
-    return Number(n.toFixed(7));
-  }
-
-  function cellGeometry(plot, cellIdx, grid) {
-    if (plot && Number.isInteger(plot.pr) && Number.isInteger(plot.pc)) {
-      const gridMath = typeof module !== 'undefined' && module.exports ? require('./grid.js') : root.TANIMAN_GRID;
-      return gridMath.cellGeometry(plot, cellIdx);
-    }
-    const cell_row = Math.floor(cellIdx / grid);
-    const cell_col = cellIdx % grid;
-    const latStep = (plot.latN - plot.latS) / grid;
-    const lngStep = (plot.lngE - plot.lngW) / grid;
-    const lat_n = plot.latN - cell_row * latStep;
-    const lat_s = lat_n - latStep;
-    const lng_w = plot.lngW + cell_col * lngStep;
-    const lng_e = lng_w + lngStep;
-    return {
-      cell_row,
-      cell_col,
-      lat_s: roundCoord(lat_s),
-      lat_n: roundCoord(lat_n),
-      lng_w: roundCoord(lng_w),
-      lng_e: roundCoord(lng_e),
-      center_lat: roundCoord((lat_s + lat_n) / 2),
-      center_lng: roundCoord((lng_w + lng_e) / 2),
-    };
-  }
-
-  function seasonExportRows({ plotIdx, plot, plotData, grid, farmerId = '' }) {
-    const rows = [];
-    for (const season of plotData.seasons || []) {
-      if (!isValidMmdd(season.start) || !isValidMmdd(season.end)) continue;
-      for (const cellIdx of season.cells || []) {
-        const geometry = cellGeometry(plot, cellIdx, grid);
-        if (!geometry) continue;
-        rows.push({
-          plot_idx: plotIdx,
-          season_id: season.id,
-          cell_idx: cellIdx,
-          ...geometry,
-          crop_id: season.cropId,
-          start_mmdd: season.start,
-          end_mmdd: season.end,
-          wraps_year: rangeWrapsYear(season.start, season.end),
-          farmer_id: farmerId,
-          reference_year: season.referenceYear ?? '',
-          field_id: season.fieldId || '',
-        });
-      }
-    }
-    return rows;
-  }
-
   const api = {
     MONTH_DAYS,
     parseMmdd,
@@ -126,8 +72,6 @@
     seasonIncludesMmdd,
     shortcutRange,
     seasonsOverlap,
-    cellGeometry,
-    seasonExportRows,
   };
 
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

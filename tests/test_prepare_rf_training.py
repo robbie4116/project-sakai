@@ -4,6 +4,7 @@ import importlib.util
 import json
 from pathlib import Path
 import tempfile
+import subprocess
 import unittest
 
 import numpy as np
@@ -66,6 +67,38 @@ class TrainingTests(unittest.TestCase):
         rasters = rasters or [dict(path=str(self.raster()), start_date='2024-01-01', end_date='2024-01-15')]
         self.manifest.write_text(json.dumps(dict(reference_year=2024, rasters=rasters)))
         return self.module().prepare_training(self.labels, self.metadata, self.manifest, self.output)
+
+    def test_current_browser_export_joins_without_contract_translation(self):
+        # A synthetic map observation exercises the actual JS exporter and Python reader.
+        repository = SCRIPT.parent.parent
+        js = """
+const Export = require('./label-export.js');
+const Grid = require('./grid.js');
+const plot = { idx: 0, pr: 0, pc: 0, validCols: 50, validRows: 50 };
+const season = { id: 'synthetic', classId: 1, start: '01-01', end: '06-30', cells: [1], referenceYear: 2024, fieldId: 'observed-fixture' };
+const out = Export.buildExport({ plots: [plot], plotData: { 0: { seasons: [season, {...season, id: 'legacy', cells: [2], referenceYear: null}, {...season, id: 'other', classId: null, cells: [3], remark: 'review'}] } }, paoayPoly: [[16,120],[17,120],[17,121],[16,121]] });
+process.stdout.write(JSON.stringify(out));
+"""
+        result = subprocess.run(['node', '-e', js], cwd=repository, text=True, capture_output=True, check=True)
+        export = json.loads(result.stdout)
+        self.labels.write_text(export['seasonsCsv'])
+        self.metadata.write_text(export['metadataJson'])
+        grid = json.loads(export['metadataJson'])['reference_grid']
+        path = self.base / 'export-features.tif'
+        with rasterio.open(path, 'w', driver='GTiff', width=grid['s2Width'], height=grid['s2Height'], count=1,
+                           dtype='float32', crs=grid['crs'], transform=from_origin(grid['originX'], grid['originY'], grid['pixelM'], grid['pixelM'])) as ds:
+            ds.write(np.full((1, grid['s2Height'], grid['s2Width']), .75, dtype='float32'))
+            ds.set_band_description(1, 'NDVI')
+        report = self.run_training([dict(path=str(path), start_date='2024-01-01', end_date='2024-01-15')])
+        with self.output.open() as handle:
+            row = next(csv.DictReader(handle))
+        self.assertEqual(row['crop_id'], 'carrot')
+        self.assertEqual(row['class_id'], '1')
+        self.assertEqual(row['pixel_id'], 'r0_c1')
+        self.assertEqual(row['field_id'], 'observed-fixture')
+        self.assertEqual(report['samples_written'], 1)
+        self.assertEqual(report['exclusions']['reference_year_mismatch'], 1)
+        self.assertEqual(report['exclusions']['invalid_class'], 1)
 
     def test_extracts_correct_pixel_indices_and_reports_missing_fields(self):
         self.write_labels([self.row(), self.row()])

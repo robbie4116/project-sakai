@@ -1,54 +1,23 @@
-// ── Taniman v3 ───────────────────────────────────────────────────
-// Redesign adds: per-cell crop calendar (12 months), proper per-crop colors,
-// optional Farmer ID + roster view, month scrubber on the map.
+// ── Taniman v6 ───────────────────────────────────────────────────
+// Sentinel-2 aligned grid (one cell = one 10 m pixel), land-cover classes,
+// per-season sync through the apply_season_cells RPC.
 
 // ── CONFIG ────────────────────────────────────────────────────────
-const GridMath = window.TANIMAN_GRID;
-const RFLabels = window.TANIMAN_RF_LABELS;
-const GRID = GridMath.DEFAULT_GRID.cells;
-const STORAGE_KEY = 'taniman_v5_sentinel2';
+const GRID = 50;
+const STORAGE_KEY = 'taniman_v6_s2grid';
 const ATOK_POLY = window.ATOK_POLY;
 const PAOAY_POLY = window.PAOAY_POLY;
-const CROPS = window.CROPS;
-const CropCatalog = window.TANIMAN_CROP_CATALOG;
-const CropExport = window.TANIMAN_CROP_EXPORT;
-const T     = window.STRINGS;
 const PLOTS = window.PLOTS;
-const GRID_BOUNDS = GridMath.gridBounds();
-const ATOK_DETAIL_BOUNDS = ATOK_POLY.reduce((bounds, [lat, lng]) => ({
-  n: Math.max(bounds.n, lat),
-  s: Math.min(bounds.s, lat),
-  e: Math.max(bounds.e, lng),
-  w: Math.min(bounds.w, lng),
-}), {
-  n: -Infinity,
-  s: Infinity,
-  e: -Infinity,
-  w: Infinity,
-});
+const GridMath = window.TANIMAN_GRID;
+const RFLabels = window.TANIMAN_RF_LABELS;
+const Classes = window.TANIMAN_CLASSES;
+const Outbox = window.TANIMAN_OUTBOX;
+const LabelExport = window.TANIMAN_LABEL_EXPORT;
+const CROPS = window.CROPS;                 // set by crop-catalog.js: class-4 crop names only
+const CropCatalog = window.TANIMAN_CROP_CATALOG;
+const T     = window.STRINGS;
+const GRID_BOUNDS = GridMath.gridBoundsLatLng(PLOTS);
 const GEOMETRY_EPSILON = 1e-12;
-
-function pointInPolygon(lat, lng, poly) {
-  let inside = false;
-  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
-    const yi = poly[i][0], xi = poly[i][1];
-    const yj = poly[j][0], xj = poly[j][1];
-    const intersects = ((yi > lat) !== (yj > lat)) &&
-      (lng < (xj - xi) * (lat - yi) / (yj - yi) + xi);
-    if (intersects) inside = !inside;
-  }
-  return inside;
-}
-
-function pointInRect(lat, lng, rect) {
-  return lat >= rect.latS && lat <= rect.latN && lng >= rect.lngW && lng <= rect.lngE;
-}
-
-function classifyZone(lat, lng) {
-  if (pointInPolygon(lat, lng, PAOAY_POLY)) return 'paoay';
-  if (pointInPolygon(lat, lng, ATOK_POLY)) return 'atok';
-  return 'outside';
-}
 
 const MONTH_SHORT = ['J','F','M','A','M','J','J','A','S','O','N','D'];
 const MONTH_FULL  = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
@@ -73,7 +42,6 @@ const {
   isValidMmdd,
   rangeWrapsYear,
   seasonsOverlap,
-  seasonExportRows,
 } = SeasonUtils;
 function maskHas(mask, m) { return !!(mask & (1<<m)); }
 function maskToLabel(mask) {
@@ -86,21 +54,22 @@ const state = loadState() || {
   lang: 'en',
   theme: 'dark',
   brush: 1,
-  selectedCropId: 'carrot',
   plotIdx: 0,
   plots: {},
-  paintStartDate: '01-01',
-  paintEndDate: '12-31',
   viewMonth: -1,              // -1 = all months; 0..11 = scrub to month
   viewMonths: ALL_MONTHS,     // mask of months displayed on map/canvas
   mixedStyle: 'diagonal',
   showTweaks: false,
-  version: 5,
-  gridId: GridMath.DEFAULT_GRID.id,
-  referenceYear: '',
-  fieldId: '',
+  version: 6,
 };
-// Evidence confirmation is session-only and resets when the selection changes.
+// Every session starts with nothing selected (spec section 4): the brush
+// selection and dates are never restored from storage.
+state.selection = { classKey: null, cropId: null, remark: '' };
+state.paintStartDate = null;
+state.paintEndDate = null;
+state.datesAuto = false;
+state.referenceYear = state.referenceYear ?? '';
+state.fieldId = state.fieldId || '';
 let referenceConfirmed = false;
 function resetReferenceConfirmation() {
   referenceConfirmed = false;
@@ -108,32 +77,11 @@ function resetReferenceConfirmation() {
   if (control) control.checked = false;
 }
 window.resetReferenceConfirmation = resetReferenceConfirmation;
+delete state.selectedCropId;
+delete state.crop;
 
-function migrateCropSelection(savedState, crops, catalog) {
-  if (typeof savedState.selectedCropId === 'string' && savedState.selectedCropId.trim()) {
-    // Preserve unresolved IDs so a later catalog refresh can resolve them.
-  } else {
-    const targetCrops = crops.filter(crop => catalog.isTarget(crop.id));
-    const legacyIndex = savedState.crop;
-    const validLegacyIndex = Number.isInteger(legacyIndex) && legacyIndex >= 0 && legacyIndex < targetCrops.length;
-    savedState.selectedCropId = validLegacyIndex ? targetCrops[legacyIndex].id : (targetCrops[0]?.id || 'lettuce');
-  }
-  delete savedState.crop;
-  return savedState.selectedCropId;
-}
-
-migrateCropSelection(state, CROPS, CropCatalog);
 if (!state.plots || typeof state.plots !== 'object' || Array.isArray(state.plots)) state.plots = {};
-// Register labels before initMap() or the first canvas/readout render.
 CropCatalog.registerReferences(state.plots);
-
-// fill in any missing keys (state was loaded from a previous version)
-const invalidActivePaintRangeAtStartup =
-  !isValidMmdd(state.paintStartDate) || !isValidMmdd(state.paintEndDate);
-if (invalidActivePaintRangeAtStartup) {
-  state.paintStartDate = '01-01';
-  state.paintEndDate = '12-31';
-}
 if (state.viewMonth === undefined) state.viewMonth = -1;
 state.viewMonths = normalizeViewMonths(state.viewMonths, state.viewMonth);
 state.viewMonth = viewMonthFromMask(state.viewMonths);
@@ -141,35 +89,20 @@ if (!state.mixedStyle) state.mixedStyle = 'diagonal';
 if (!PLOTS[state.plotIdx]) state.plotIdx = 0;
 
 // Per-plot data structure:
-//   p.seasons = recurring annual crop windows with painted cell indexes
-//   p.farmerId = 'F-001' | ''
-//   p.farmer  = '' (legacy: human name)
+//   p.seasons = [{ id, classId, cropId, remark, start, end, cells }]
+//     id is deterministic: Classes.seasonId(plotIdx, meta)
 //   p.note, p.photos
 function emptySeasons() { return []; }
-function newSeasonId() {
-  return 'season_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 8);
-}
 function ensurePlot(idx) {
   let p = state.plots[idx];
-  if (!p) {
-    p = state.plots[idx] = { seasons: emptySeasons(), farmerId:'', farmer:'', note:'', photos:[] };
-    return p;
-  }
+  if (!p) p = state.plots[idx] = { seasons: emptySeasons(), note: '', photos: [] };
   if (!Array.isArray(p.seasons)) p.seasons = [];
-  delete p.cells;
-  delete p.labels;
-  if (p.farmerId === undefined) p.farmerId = '';
+  if (p.note === undefined) p.note = '';
   if (p.photos === undefined) p.photos = [];
+  delete p.farmerId;
+  delete p.farmer;
   return p;
 }
-
-// device id (kept for future cloud sync)
-function getDeviceId() {
-  let id = localStorage.getItem('taniman_device_id');
-  if (!id) { id = 'dev_'+Math.random().toString(36).slice(2,10); localStorage.setItem('taniman_device_id', id); }
-  return id;
-}
-const DEVICE_ID = getDeviceId();
 
 // URL overrides
 const _params = new URLSearchParams(location.search);
@@ -187,7 +120,6 @@ let painting = false, lastIdx = -1;
 let imgCache = {};
 let lastSaveAt = Date.now();
 let detailDraft = null;
-let mapTileCache = {};
 
 function visiblePlots() {
   return PLOTS;
@@ -227,13 +159,17 @@ function loadState(){
       if (!raw) return null;
       s = JSON.parse(raw);
     }
-    if (s.gridId !== GridMath.DEFAULT_GRID.id) return null;
     return s;
   } catch(e){ console.warn('load failed', e); return null; }
 }
 function saveState(){
   try {
-    const out = { ...state, plots:{} };
+    const out = { ...state, plots:{}, outbox: outbox.toJSON(), metaDirty: [...metaDirty] };
+    delete out.selection;
+    delete out.paintStartDate;
+    delete out.paintEndDate;
+    delete out.datesAuto;
+    delete out.paintMonths;
     for (const k of Object.keys(state.plots)) {
       const p = state.plots[k];
       out.plots[k] = { ...p, seasons: cloneSeasons(p.seasons) };
@@ -249,45 +185,81 @@ function saveState(){
 }
 
 // ── CLOUD SYNC ───────────────────────────────────────────────────
-const cloudDirty = new Set();
+// Season cells sync as per-season deltas through apply_season_cells (spec
+// section 8). Plot note/photos sync as a slim plots row. The outbox is saved
+// with state so unsent edits survive reloads.
+const outbox = Outbox.create(state.outbox);
+const metaDirty = new Set(Array.isArray(state.metaDirty) ? state.metaDirty : []);
+delete state.outbox;
+delete state.metaDirty;
 let cloudTimer = null;
-const CLOUD_SYNC_DELAY = 4000;
+let flushPromise = null;
+const CLOUD_SYNC_DELAY = 1500;
 const CLOUD_RETRY_DELAY = 30000;
 
-function hasSyncPlots() { return typeof window.syncPlots === 'function'; }
-function hasSyncInit() { return typeof window.syncInit === 'function'; }
-function hasSyncOnNavigate() { return typeof window.syncOnNavigate === 'function'; }
-function isCloudDirty(idx) {
-  const p = state.plots[idx];
-  return cloudDirty.has(idx) || !!(p && p._dirty_at);
-}
-function mayMergeRemote(idx) { return !isCloudDirty(idx); }
+function hasCloud() { return typeof window.applySeasonCells === 'function'; }
+// Queued or in flight: the local copy of this season is newer than the server's.
+function isSeasonPending(id) { return outbox.has(id); }
 function hasPendingPhotoUpload(idx) {
   const p = state.plots[idx];
   return !!(p && p.photos && p.photos.some(ph => ph && ph.dataUrl && !ph.url));
 }
-function cloudRetryIndices(indices) {
-  const candidates = indices
-    ? indices.map(Number)
-    : Object.keys(state.plots).map(Number);
-  return [...new Set(candidates)]
-    .filter(idx => Number.isInteger(idx) && state.plots[idx])
-    .filter(idx => isCloudDirty(idx) || hasPendingPhotoUpload(idx));
+
+function scheduleCloudFlush(delay = CLOUD_SYNC_DELAY) {
+  if (!hasCloud()) return;
+  clearTimeout(cloudTimer);
+  cloudTimer = setTimeout(() => {
+    flushCloudSync().catch(e => console.warn('cloud sync failed:', e));
+  }, delay);
 }
 
-function afterRemoteMerge(idx) {
-  if (isCloudDirty(idx)) return;
-  ensurePlot(idx);
+function queueSeasonChange(plotIdx, season, add, remove) {
+  outbox.record(Outbox.metaFromSeason(plotIdx, season), add, remove);
+  scheduleCloudFlush();
+}
+
+function queueMetaChange(plotIdx) {
+  metaDirty.add(plotIdx);
+  scheduleCloudFlush();
+}
+
+function afterRemoteChange(idx) {
   CropCatalog.registerReferences(state.plots);
   updateMapPlot(idx);
   if (idx === state.plotIdx) {
     renderCanvas();
     updatePlotHeader();
     refreshMetaToggle();
-    if (drawer && drawer.classList.contains('on')) loadMetadataIntoDrawer();
+    if (drawer && drawer.classList.contains('on')) renderScheduleSummary();
   }
   updateProgress();
-  saveState();
+  schedSave();
+}
+
+function applyServerSeason(plotIdx, seasonId, row) {
+  const p = ensurePlot(plotIdx);
+  const i = p.seasons.findIndex(s => s.id === seasonId);
+  if (!row) {
+    if (i >= 0) p.seasons.splice(i, 1);
+  } else if (i >= 0) {
+    p.seasons[i] = Outbox.seasonFromRow(row);
+  } else {
+    p.seasons.push(Outbox.seasonFromRow(row));
+  }
+  afterRemoteChange(plotIdx);
+}
+
+async function refreshPlotFromServer(idx) {
+  if (typeof window.fetchPlotSeasons !== 'function') return;
+  try {
+    const rows = await window.fetchPlotSeasons(idx);
+    const p = ensurePlot(idx);
+    p.seasons = Outbox.mergeRemoteSeasons(p.seasons, rows.map(Outbox.seasonFromRow), isSeasonPending);
+    clearUndoForPlot(idx);
+    afterRemoteChange(idx);
+  } catch (e) {
+    console.warn('plot refresh failed:', e);
+  }
 }
 
 async function uploadPendingPhotos(idx) {
@@ -306,81 +278,82 @@ async function uploadPendingPhotos(idx) {
   return changed;
 }
 
-async function flushCloudSync(indices) {
-  if (!hasSyncPlots()) return;
-  const list = cloudRetryIndices(indices);
-  if (!list.length) return;
-  list.forEach(idx => {
-    cloudDirty.add(idx);
-    if (!state.plots[idx]._dirty_at) state.plots[idx]._dirty_at = new Date().toISOString();
-  });
-  const dirtySnapshot = new Map(list.map(idx => [idx, state.plots[idx]._dirty_at]));
-  let photosChanged = false;
-  for (const idx of list) photosChanged = (await uploadPendingPhotos(idx)) || photosChanged;
-  if (photosChanged) saveState();
-  const ok = await window.syncPlots(list, state, DEVICE_ID);
-  if (ok) {
-    list.forEach(idx => {
-      if (!state.plots[idx]) return;
-      if (state.plots[idx]._dirty_at !== dirtySnapshot.get(idx)) {
-        cloudDirty.add(idx);
-      } else if (hasPendingPhotoUpload(idx)) {
-        cloudDirty.add(idx);
-      } else {
-        cloudDirty.delete(idx);
-        delete state.plots[idx]._dirty_at;
-      }
-    });
+// Only one flush runs at a time; callers that need it finished await this.
+function flushCloudSync() {
+  if (!hasCloud()) return Promise.resolve();
+  if (!flushPromise) flushPromise = runCloudFlush().finally(() => { flushPromise = null; });
+  return flushPromise;
+}
+
+async function runCloudFlush() {
+  let retry = false;
+  try {
+    ({ retry } = await Outbox.flush(outbox, {
+      send: delta => window.applySeasonCells(delta),
+      onRow: (delta, row) => applyServerSeason(delta.plotIdx, delta.id, row),
+      onPermanent: async (delta, error) => {
+        console.warn('dropping a change the server rejected:', error);
+        // A crop name deleted here makes its in-flight deltas fail; that is expected.
+        const cropDeleted = delta.cropId && !CropCatalog.isResolved(delta.cropId);
+        if (!cropDeleted) toast(tr('syncDropped'));
+        await refreshPlotFromServer(delta.plotIdx);
+      },
+    }));
+    for (const idx of [...metaDirty]) {
+      await uploadPendingPhotos(idx);
+      const ok = await window.upsertPlotMeta(idx, ensurePlot(idx));
+      if (ok && !hasPendingPhotoUpload(idx)) metaDirty.delete(idx);
+      else retry = true;
+    }
+  } finally {
     saveState();
-    scheduleCloudRetry();
-  } else {
-    list.forEach(idx => {
-      if (state.plots[idx]) {
-        cloudDirty.add(idx);
-        if (!state.plots[idx]._dirty_at) state.plots[idx]._dirty_at = new Date().toISOString();
-      }
-    });
-    saveState();
-    scheduleCloudRetry();
+    if (retry) scheduleCloudFlush(CLOUD_RETRY_DELAY);
+    else if (outbox.size() || metaDirty.size) scheduleCloudFlush();
   }
-  return ok;
 }
 
-function markCloudDirty(idx) {
-  if (!Number.isInteger(idx) || !state.plots[idx]) return;
-  cloudDirty.add(idx);
-  state.plots[idx]._dirty_at = new Date().toISOString();
-  clearTimeout(cloudTimer);
-  cloudTimer = setTimeout(() => {
-    flushCloudSync().catch(e => console.warn('cloud sync failed:', e));
-  }, CLOUD_SYNC_DELAY);
+async function initialCloudLoad() {
+  if (typeof window.fetchAllSeasons !== 'function') return;
+  try {
+    const [seasonRows, metaRows] = await Promise.all([window.fetchAllSeasons(), window.fetchPlotMeta()]);
+    const byPlot = new Map();
+    for (const row of seasonRows) {
+      if (!byPlot.has(row.plot_idx)) byPlot.set(row.plot_idx, []);
+      byPlot.get(row.plot_idx).push(Outbox.seasonFromRow(row));
+    }
+    for (const plot of PLOTS) {
+      const remote = byPlot.get(plot.idx) || [];
+      if (!state.plots[plot.idx] && !remote.length) continue;
+      const p = ensurePlot(plot.idx);
+      p.seasons = Outbox.mergeRemoteSeasons(p.seasons, remote, isSeasonPending);
+    }
+    for (const row of metaRows) {
+      if (metaDirty.has(row.plot_idx)) continue;
+      const p = ensurePlot(row.plot_idx);
+      p.note = row.note || '';
+      p.photos = window.decodePhotos(row.photo_url);
+    }
+    undoStack.length = 0;
+    redoStack.length = 0;
+    updateUndoBtn();
+    CropCatalog.registerReferences(state.plots);
+    drawPlotsOnMap();
+    renderCanvas();
+    updatePlotHeader();
+    refreshMetaToggle();
+    updateProgress();
+    saveState();
+  } catch (e) {
+    console.warn('initial sync failed:', e);
+  }
+  scheduleCloudFlush(0);
 }
 
-function scheduleCloudRetry() {
-  if (!cloudDirty.size) return;
-  clearTimeout(cloudTimer);
-  cloudTimer = setTimeout(() => {
-    flushCloudSync().catch(e => console.warn('cloud sync failed:', e));
-  }, CLOUD_RETRY_DELAY);
-}
-
-function savePlotChange(idx) {
+function savePlotChange() {
   schedSave();
-  markCloudDirty(idx);
-}
-
-function restoreCloudDirtyQueue() {
-  Object.keys(state.plots).forEach(k => {
-    const idx = Number(k);
-    if (state.plots[idx] && state.plots[idx]._dirty_at) cloudDirty.add(idx);
-  });
-  scheduleCloudRetry();
 }
 
 // ── CELL DATA QUERIES ─────────────────────────────────────────────
-function cropIndexFromId(cropId) {
-  return CROPS.findIndex(c => c.id === cropId);
-}
 function escapeHtml(value) {
   return String(value == null ? '' : value).replace(/[&<>"']/g, char => ({
     '&': '&amp;',
@@ -415,95 +388,77 @@ function seasonMonthsMask(start, end) {
   }
   return mask || ALL_MONTHS;
 }
-function activePaintSeasonData() {
-  const crop = CropCatalog.byId(state.selectedCropId);
-  if (!referenceConfirmed || !crop || !CropCatalog.isResolved(state.selectedCropId)) return null;
-  return RFLabels.paintSeasonData(state, crop);
-}
 function activePaintMonthsMask() {
   const data = activePaintSeasonData();
   return data ? seasonMonthsMask(data.start, data.end) : ALL_MONTHS;
 }
-function isCropSelected(crop, selectedCropId) {
-  return Boolean(crop && crop.id === selectedCropId);
+function seasonHex(season) {
+  return Classes.seasonColor(season, CropCatalog);
 }
-function cropsForPalette(crops, selectedCropId, catalog) {
-  const visibleCrops = Array.from(crops || []);
-  const selectedCrop = catalog.byId(selectedCropId);
-  if (selectedCrop && !visibleCrops.some(crop => crop.id === selectedCrop.id)) visibleCrops.push(selectedCrop);
-  return visibleCrops;
+function currentSelectionStatus() {
+  const selection = Classes.selectionStatus(
+    { ...state.selection, start: state.paintStartDate, end: state.paintEndDate },
+    id => CropCatalog.isResolved(id));
+  if (!selection.ready) return selection;
+  if (!RFLabels.validYear(state.referenceYear)) return {ready:false,message:'Choose the crop-cycle start year.'};
+  if (!referenceConfirmed) return {ready:false,message:'Confirm the class and dates for this year.'};
+  const meta = {...Classes.paintMeta({...state.selection,start:state.paintStartDate,end:state.paintEndDate},id=>CropCatalog.isResolved(id)),referenceYear:Number(state.referenceYear),fieldId:state.fieldId};
+  if (!RFLabels.absoluteRange(meta)) return {ready:false,message:'These dates are invalid for the selected year.'};
+  try { Classes.seasonId(state.plotIdx,meta); } catch (_) { return {ready:false,message:'Shorten the field ID or remark before painting.'}; }
+  return selection;
 }
-function cellVisibleCropIds(p, cellIdx, viewMonths = state.viewMonths) {
+function activePaintSeasonData() {
+  if (!currentSelectionStatus().ready) return null;
+  const meta = Classes.paintMeta(
+    { ...state.selection, start: state.paintStartDate, end: state.paintEndDate },
+    id => CropCatalog.isResolved(id));
+  return meta && {...meta,referenceYear:Number(state.referenceYear),fieldId:state.fieldId || ''};
+}
+function cellVisibleColors(p, cellIdx, viewMonths = state.viewMonths) {
   const out = [];
   const seen = new Set();
   for (const season of p.seasons || []) {
     if (!Array.isArray(season.cells) || !season.cells.includes(cellIdx)) continue;
     if (!seasonIntersectsViewMonths(season, viewMonths)) continue;
-    if (!seen.has(season.cropId)) {
-      seen.add(season.cropId);
-      out.push(season.cropId);
-    }
+    const hex = seasonHex(season);
+    if (!seen.has(hex)) { seen.add(hex); out.push(hex); }
   }
   return out;
 }
-function cellVisibleCrops(p, cellIdx) {
-  return cellVisibleCropIds(p, cellIdx).map(cropIndexFromId).filter(i => i >= 0);
-}
 function plotCompositionForView(idx, viewMonths = state.viewMonths) {
+  const plot = PLOTS[idx];
   const p = state.plots[idx];
-  const gridCells = GRID * GRID;
-  const validCells = GridMath.validCellCount(PLOTS[idx]);
-  const counts = new Array(CROPS.length).fill(0);
-  const percentages = new Array(CROPS.length).fill(0);
-  if (!p || !Array.isArray(p.seasons)) {
-    return {
-      crop: null,
-      cropIdx: -1,
-      counts,
-      percentages,
-      totalVisibleCells: 0,
-      visiblePaintedCells: 0,
-      emptyCells: validCells,
-      nonZeroCropCount: 0,
-      isMixed: false,
-    };
-  }
-
-  const visibleCells = new Uint8Array(gridCells);
-  const cropCellSeen = new Set();
-  for (const season of p.seasons || []) {
+  const gridCells = GridMath.validCellCount(plot);
+  const counts = new Array(Classes.ALL.length).fill(0);
+  const percentages = new Array(Classes.ALL.length).fill(0);
+  const visibleCells = new Set();
+  const seen = new Set();
+  for (const season of (p && p.seasons) || []) {
     if (!seasonIntersectsViewMonths(season, viewMonths)) continue;
-    const cropIdx = cropIndexFromId(season.cropId);
-    if (cropIdx < 0) continue;
+    const legendIdx = Classes.legendIndex(season.classId);
     for (const cellIdx of season.cells || []) {
-      if (!GridMath.isValidCell(PLOTS[idx], cellIdx)) continue;
-      const key = `${cropIdx}:${cellIdx}`;
-      if (cropCellSeen.has(key)) continue;
-      cropCellSeen.add(key);
-      counts[cropIdx]++;
-      visibleCells[cellIdx] = 1;
+      if (!GridMath.isCellInBounds(plot, cellIdx)) continue;
+      const key = `${legendIdx}:${cellIdx}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      counts[legendIdx]++;
+      visibleCells.add(cellIdx);
     }
   }
-
   const totalVisibleCells = counts.reduce((sum, n) => sum + n, 0);
-  let visiblePaintedCells = 0;
-  for (let i=0; i<visibleCells.length; i++) if (visibleCells[i]) visiblePaintedCells++;
-  const emptyCells = Math.max(0, validCells - visiblePaintedCells);
-  for (let i=0; i<counts.length; i++) percentages[i] = totalVisibleCells ? counts[i] / totalVisibleCells : 0;
-
+  for (let i = 0; i < counts.length; i++) percentages[i] = totalVisibleCells ? counts[i] / totalVisibleCells : 0;
   const max = Math.max(...counts);
-  const cropIdx = max > 0 ? counts.indexOf(max) : -1;
-  const nonZeroCropCount = counts.filter(n => n > 0).length;
+  const topIdx = max > 0 ? counts.indexOf(max) : -1;
+  const nonZero = counts.filter(n => n > 0).length;
   return {
-    crop: cropIdx >= 0 ? CROPS[cropIdx] : null,
-    cropIdx,
+    top: topIdx >= 0 ? Classes.ALL[topIdx] : null,
     counts,
     percentages,
     totalVisibleCells,
-    visiblePaintedCells,
-    emptyCells,
-    nonZeroCropCount,
-    isMixed: nonZeroCropCount > 1,
+    visiblePaintedCells: visibleCells.size,
+    emptyCells: Math.max(0, gridCells - visibleCells.size),
+    nonZeroCropCount: nonZero,
+    isMixed: nonZero > 1,
   };
 }
 function plotHasPaint(idx) {
@@ -513,7 +468,7 @@ function plotHasPaint(idx) {
 function plotHasData(idx) {
   const p = state.plots[idx];
   if (!p) return false;
-  return plotHasPaint(idx) || p.farmer || p.farmerId || p.note || (p.photos && p.photos.length);
+  return plotHasPaint(idx) || p.note || (p.photos && p.photos.length);
 }
 function dominantCropForView(idx) {
   return plotCompositionForView(idx);
@@ -537,31 +492,41 @@ function snapshotForUndo(idx) {
   redoStack.length = 0;
   updateUndoBtn();
 }
-function undo() {
-  const e = undoStack.pop();
-  if (!e) { updateUndoBtn(); return; }
+function restoreSeasonsSnapshot(idx, seasons) {
+  const p = ensurePlot(idx);
+  for (const delta of Outbox.diffSeasons(idx, p.seasons, seasons)) {
+    outbox.record(delta.meta, delta.add, delta.remove);
+  }
+  p.seasons = cloneSeasons(seasons);
+  scheduleCloudFlush();
+}
+function clearUndoForPlot(idx) {
+  for (const stack of [undoStack, redoStack]) {
+    for (let i = stack.length - 1; i >= 0; i--) if (stack[i].plotIdx === idx) stack.splice(i, 1);
+  }
+  updateUndoBtn();
+}
+function applyUndoEntry(e, pushTo) {
   const p = ensurePlot(e.plotIdx);
-  redoStack.push({ plotIdx: e.plotIdx, seasons: cloneSeasons(p.seasons) });
-  p.seasons = cloneSeasons(e.seasons);
+  pushTo.push({ plotIdx: e.plotIdx, seasons: cloneSeasons(p.seasons) });
+  if (pushTo.length > UNDO_LIMIT) pushTo.shift();
+  restoreSeasonsSnapshot(e.plotIdx, e.seasons);
   CropCatalog.registerReferences(state.plots);
   if (state.plotIdx !== e.plotIdx) { state.plotIdx = e.plotIdx; updatePlotHeader(); drawPlotsOnMap(); }
   else updateMapPlot(e.plotIdx);
   renderCanvas(); updateProgress(); refreshMetaToggle(); updateUndoBtn();
-  savePlotChange(e.plotIdx);
+  schedSave();
+}
+function undo() {
+  const e = undoStack.pop();
+  if (!e) { updateUndoBtn(); return; }
+  applyUndoEntry(e, redoStack);
   toast(tr('undone'));
 }
 function redo() {
   const e = redoStack.pop();
   if (!e) { updateUndoBtn(); return; }
-  const p = ensurePlot(e.plotIdx);
-  undoStack.push({ plotIdx: e.plotIdx, seasons: cloneSeasons(p.seasons) });
-  if (undoStack.length > UNDO_LIMIT) undoStack.shift();
-  p.seasons = cloneSeasons(e.seasons);
-  CropCatalog.registerReferences(state.plots);
-  if (state.plotIdx !== e.plotIdx) { state.plotIdx = e.plotIdx; updatePlotHeader(); drawPlotsOnMap(); }
-  else updateMapPlot(e.plotIdx);
-  renderCanvas(); updateProgress(); refreshMetaToggle(); updateUndoBtn();
-  savePlotChange(e.plotIdx);
+  applyUndoEntry(e, undoStack);
 }
 function updateUndoBtn() {
   const u = document.getElementById('btn-undo');
@@ -571,28 +536,28 @@ function updateUndoBtn() {
 }
 
 // ── MIXED-CELL DRAWING ───────────────────────────────────────────
-function drawMixedCell(ctx, x0, y0, w, h, cropIdxs, style){
-  if (cropIdxs.length === 0) return;
-  if (cropIdxs.length > 4) style = 'stripes';
-  if (cropIdxs.length === 1){
-    ctx.fillStyle = CROPS[cropIdxs[0]].hex;
+function drawMixedCell(ctx, x0, y0, w, h, colors, style){
+  if (colors.length === 0) return;
+  if (colors.length > 4) style = 'stripes';
+  if (colors.length === 1){
+    ctx.fillStyle = colors[0];
     ctx.fillRect(x0, y0, w+0.5, h+0.5);
     return;
   }
   if (style === 'stripes'){
-    const bw = w / cropIdxs.length;
-    for (let i=0; i<cropIdxs.length; i++){
-      ctx.fillStyle = CROPS[cropIdxs[i]].hex;
+    const bw = w / colors.length;
+    for (let i=0; i<colors.length; i++){
+      ctx.fillStyle = colors[i];
       ctx.fillRect(x0 + i*bw, y0, bw + 0.6, h + 0.5);
     }
     return;
   }
-  if (style === 'diagonal' && cropIdxs.length === 2){
-    ctx.fillStyle = CROPS[cropIdxs[0]].hex;
+  if (style === 'diagonal' && colors.length === 2){
+    ctx.fillStyle = colors[0];
     ctx.beginPath();
     ctx.moveTo(x0, y0); ctx.lineTo(x0+w+0.5, y0); ctx.lineTo(x0+w+0.5, y0+h+0.5); ctx.closePath();
     ctx.fill();
-    ctx.fillStyle = CROPS[cropIdxs[1]].hex;
+    ctx.fillStyle = colors[1];
     ctx.beginPath();
     ctx.moveTo(x0, y0); ctx.lineTo(x0+w+0.5, y0+h+0.5); ctx.lineTo(x0, y0+h+0.5); ctx.closePath();
     ctx.fill();
@@ -602,11 +567,11 @@ function drawMixedCell(ctx, x0, y0, w, h, cropIdxs, style){
   const hw = w/2, hh = h/2;
   const slots = [[0,0],[hw,0],[0,hh],[hw,hh]];
   let order;
-  if (cropIdxs.length === 2) order = [0, 1, 1, 0];
-  else if (cropIdxs.length === 3) order = [0, 1, 2, 0];
+  if (colors.length === 2) order = [0, 1, 1, 0];
+  else if (colors.length === 3) order = [0, 1, 2, 0];
   else order = [0, 1, 2, 3];
   for (let i=0; i<4; i++){
-    ctx.fillStyle = CROPS[cropIdxs[order[i]]].hex;
+    ctx.fillStyle = colors[order[i]];
     ctx.fillRect(x0 + slots[i][0], y0 + slots[i][1], hw + 0.6, hh + 0.6);
   }
 }
@@ -632,9 +597,11 @@ const MAP_CONTEXT_BOUNDS = L.latLngBounds(
   [16.93070509876553, 120.9375]
 );
 const MAP_DETAIL_BOUNDS = L.latLngBounds(
-  [ATOK_DETAIL_BOUNDS.s, ATOK_DETAIL_BOUNDS.w],
-  [ATOK_DETAIL_BOUNDS.n, ATOK_DETAIL_BOUNDS.e]
+  [GRID_BOUNDS.latS, GRID_BOUNDS.lngW],
+  [GRID_BOUNDS.latN, GRID_BOUNDS.lngE]
 );
+// About 1 km of margin around the composite extent.
+const GRID_MAX_BOUNDS = MAP_DETAIL_BOUNDS.pad(0.2);
 
 function useOnlineImagery() {
   return !window.__TAURI__;
@@ -710,27 +677,19 @@ function initMap(){
     zoom:14,
     minZoom: MAP_APP_MIN_ZOOM,
     maxZoom: getMapMaxZoom(),
-    maxBounds: L.latLngBounds([[GRID_BOUNDS.latS - 0.01, GRID_BOUNDS.lngW - 0.01], [GRID_BOUNDS.latN + 0.01, GRID_BOUNDS.lngE + 0.01]]),
+    maxBounds: GRID_MAX_BOUNDS,
     maxBoundsViscosity: 0.85,
     zoomControl:false,
     attributionControl:false,
     zoomAnimation:false,
   });
   addBaseImageryLayers();
-  L.polygon(ATOK_POLY, {
-    color: '#FFFFFF', weight: 1.5,
-    fill: false, interactive: false
-  }).addTo(map);
-
   L.polygon(PAOAY_POLY, {
     color:'#F2C84B', weight:2.5, dashArray:'7,5',
     fillColor:'#F2C84B', fillOpacity:0.04, interactive:false
   }).addTo(map);
   drawPlotsOnMap();
-  map.fitBounds([
-    [GRID_BOUNDS.latS, GRID_BOUNDS.lngW],
-    [GRID_BOUNDS.latN, GRID_BOUNDS.lngE]
-  ]);
+  map.fitBounds(MAP_DETAIL_BOUNDS);
   document.getElementById('zoom-in').onclick = ()=>map.zoomIn();
   document.getElementById('zoom-out').onclick = ()=>map.zoomOut();
   function updateLabelVisibility() {
@@ -745,9 +704,9 @@ function initMap(){
 function plotStyle(idx){
   const plot = PLOTS[idx];
   const composition = plotCompositionForView(idx);
-  const { crop } = composition;
+  const { top } = composition;
   const isCurrent = idx === state.plotIdx;
-  if (crop){
+  if (top){
     return {
       color: isCurrent ? '#F2C84B' : getCss('--mixed-stroke'),
       weight: isCurrent ? 3 : 2,
@@ -772,7 +731,7 @@ function compositionBarHtml(composition) {
     const requestedPct = Number(composition.percentages[i]) * 100 || 0;
     const pct = Math.min(Math.max(0, requestedPct), Math.max(0, 100 - usedPct));
     usedPct += pct;
-    return `<span class="mix-seg" style="width:${pct}%;background:${CROPS[i].hex}"></span>`;
+    return `<span class="mix-seg" style="width:${pct}%;background:${Classes.ALL[i].hex}"></span>`;
   }).join('');
   return `<div class="mix-bar" aria-hidden="true">${segments}</div>`;
 }
@@ -813,7 +772,7 @@ function drawPlotsOnMap(){
 
   PLOTS.forEach(plot=>{
     const style = plotStyle(plot.idx);
-    const rect = L.polygon(GridMath.plotCorners(plot, true), style).addTo(map);
+    const rect = L.polygon(plot.corners, style).addTo(map);
     const marker = L.marker([plot.centerLat, plot.centerLng], {
       icon: L.divIcon({
         className:'',
@@ -858,8 +817,7 @@ referenceFieldInput.addEventListener('input', () => {
   resetReferenceConfirmation(); renderCanvas(); schedSave();
 });
 document.getElementById('reference-confirmed').addEventListener('change', event => {
-  referenceConfirmed = event.target.checked;
-  renderCanvas();
+  referenceConfirmed = event.target.checked; renderCanvas();
 });
 const canvas = document.getElementById('plot-canvas');
 const ctx = canvas.getContext('2d');
@@ -895,91 +853,6 @@ function getPlotTile(idx) {
   return imgCache[idx];
 }
 
-function latLngToGlobalPixel(lat, lng, zoom) {
-  const tileSize = 256;
-  const scale = tileSize * Math.pow(2, zoom);
-  const sinLat = Math.sin(lat * Math.PI / 180);
-  const clamped = Math.min(0.9999, Math.max(-0.9999, sinLat));
-  return {
-    x: (lng + 180) / 360 * scale,
-    y: (0.5 - Math.log((1 + clamped) / (1 - clamped)) / (4 * Math.PI)) * scale,
-  };
-}
-
-function getMapTileImage(z, x, y, idx, urlTemplate = 'tiles/map/{z}/{x}/{y}.jpg') {
-  const key = `${urlTemplate}:${z}/${x}/${y}`;
-  if (!mapTileCache[key]) {
-    const img = new Image();
-    img.onload = () => {
-      if (idx === state.plotIdx) renderCanvas();
-    };
-    img.onerror = () => {
-      img.failed = true;
-      if (idx === state.plotIdx) renderCanvas();
-    };
-    const url = urlTemplate.replace('{z}', z).replace('{x}', x).replace('{y}', y);
-    const isExternal = urlTemplate.startsWith('http');
-    if (isExternal) img.crossOrigin = 'anonymous';
-    img.src = isExternal ? url : `${url}?v=${MAP_TILE_VERSION}`;
-    mapTileCache[key] = img;
-  }
-  return mapTileCache[key];
-}
-
-function drawMapTileBackground(plot, w, h, urlTemplate = 'tiles/map/{z}/{x}/{y}.jpg', zoom = MAP_DETAIL_MAX_ZOOM) {
-  if (!plot) return false;
-  const tileSize = 256;
-  const nw = latLngToGlobalPixel(plot.latN, plot.lngW, zoom);
-  const se = latLngToGlobalPixel(plot.latS, plot.lngE, zoom);
-  const sourceW = se.x - nw.x;
-  const sourceH = se.y - nw.y;
-  if (sourceW <= 0 || sourceH <= 0) return false;
-
-  const minTileX = Math.floor(nw.x / tileSize);
-  const maxTileX = Math.floor((se.x - GEOMETRY_EPSILON) / tileSize);
-  const minTileY = Math.floor(nw.y / tileSize);
-  const maxTileY = Math.floor((se.y - GEOMETRY_EPSILON) / tileSize);
-  let hasBackground = false;
-
-  for (let tx = minTileX; tx <= maxTileX; tx++) {
-    for (let ty = minTileY; ty <= maxTileY; ty++) {
-      const img = getMapTileImage(zoom, tx, ty, plot.idx, urlTemplate);
-      if (img.failed) continue;
-      if (!img.complete || img.naturalWidth <= 0) {
-        hasBackground = true;
-        continue;
-      }
-
-      const tileLeft = tx * tileSize;
-      const tileTop = ty * tileSize;
-      const sx0 = Math.max(nw.x, tileLeft);
-      const sy0 = Math.max(nw.y, tileTop);
-      const sx1 = Math.min(se.x, tileLeft + tileSize);
-      const sy1 = Math.min(se.y, tileTop + tileSize);
-      if (sx1 <= sx0 || sy1 <= sy0) continue;
-
-      const dx = (sx0 - nw.x) / sourceW * w;
-      const dy = (sy0 - nw.y) / sourceH * h;
-      const dw = (sx1 - sx0) / sourceW * w;
-      const dh = (sy1 - sy0) / sourceH * h;
-      ctx.drawImage(
-        img,
-        sx0 - tileLeft,
-        sy0 - tileTop,
-        sx1 - sx0,
-        sy1 - sy0,
-        dx,
-        dy,
-        dw,
-        dh,
-      );
-      hasBackground = true;
-    }
-  }
-
-  return hasBackground;
-}
-
 function renderCanvas(){
   const dpr = Math.max(1, canvas.width / Math.max(1, canvas.clientWidth || canvas.width));
   const w = Math.round(canvas.width / dpr);
@@ -993,12 +866,8 @@ function renderCanvas(){
   ctx.fillRect(0, 0, w, h);
 
   const plot = PLOTS[state.plotIdx];
-  if (plot) {
-    // These images are reprojected onto the exact UTM plot, not stretched
-    // geographic bounding boxes. Never fall back to an unaligned image.
-    const tile = getPlotTile(state.plotIdx);
-    if (tile && tile.complete && tile.naturalWidth > 0) ctx.drawImage(tile, 0, 0, w, h);
-  }
+  const tile = getPlotTile(state.plotIdx);
+  if (tile && tile.complete && tile.naturalWidth > 0) ctx.drawImage(tile, 0, 0, w, h);
 
   if (state.theme === 'dark'){
     ctx.fillStyle = 'rgba(0,0,0,.18)'; ctx.fillRect(0,0,w,h);
@@ -1014,8 +883,8 @@ function renderCanvas(){
   for (let r=0;r<GRID;r++){
     for (let c=0;c<GRID;c++){
       const idx = r*GRID + c;
-      if (!GridMath.isValidCell(plot, idx)) continue;
-      const cropList = cellVisibleCrops(p, idx);
+      if (!GridMath.isCellInBounds(plot, idx)) continue;
+      const cropList = cellVisibleColors(p, idx);
       if (!cropList.length) continue;
       painted++;
       const x0 = c*cellW, y0 = r*cellH;
@@ -1025,17 +894,21 @@ function renderCanvas(){
   }
   ctx.globalAlpha = 1;
 
-  ctx.fillStyle = 'rgba(90,90,90,.85)';
-  if (plot.validCols < GRID) ctx.fillRect(plot.validCols*w/GRID, 0, (GRID-plot.validCols)*w/GRID, h);
-  if (plot.validRows < GRID) ctx.fillRect(0, plot.validRows*h/GRID, w, (GRID-plot.validRows)*h/GRID);
+  if (plot && (plot.validCols < GRID || plot.validRows < GRID)) {
+    ctx.fillStyle = 'rgba(64,64,64,0.88)';
+    if (plot.validCols < GRID) ctx.fillRect(plot.validCols * cellW, 0, w - plot.validCols * cellW, h);
+    if (plot.validRows < GRID) ctx.fillRect(0, plot.validRows * cellH, plot.validCols * cellW, h - plot.validRows * cellH);
+  }
 
   // grid
   ctx.strokeStyle = getCss('--grid-line');
-  ctx.lineWidth = 0.8;
+  ctx.lineWidth = 0.5;
+  ctx.globalAlpha = 0.45;
   for (let i=1;i<GRID;i++){
     ctx.beginPath(); ctx.moveTo(i*cellW, 0); ctx.lineTo(i*cellW, h); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(0, i*cellH); ctx.lineTo(w, i*cellH); ctx.stroke();
   }
+  ctx.globalAlpha = 1;
   ctx.strokeStyle = getCss('--grid-major');
   ctx.lineWidth = 1.4;
   for (let i=10;i<GRID;i+=10){
@@ -1048,9 +921,6 @@ function renderCanvas(){
 
   // corner counter
   document.getElementById('canvas-corner').textContent = `10 × 10 m per cell · ${painted} / ${GridMath.validCellCount(plot)}`;
-  const tile = getPlotTile(state.plotIdx);
-  const ready = tile && tile.complete && tile.naturalWidth > 0;
-  document.getElementById('labeling-status').textContent = !ready ? 'Loading aligned reference imagery…' : activePaintSeasonData() ? 'Ready to label · grey cells are outside the raster' : 'Choose the crop-cycle year and confirm the class and dates before painting.';
   // top-right "showing" tag
   const tag = document.getElementById('canvas-view-tag');
   const paintMonths = activePaintMonthsMask();
@@ -1061,6 +931,13 @@ function renderCanvas(){
     ? `Hidden · ${maskToDisplayLabel(paintMonths)} brush`
     : 'Showing · ' + maskToDisplayLabel(state.viewMonths, { singleLong: true }).toLowerCase();
   tag.textContent += RFLabels.validYear(state.referenceYear) ? ` · cycle ${state.referenceYear}` : ' · all recorded years';
+  const prompt = document.getElementById('canvas-prompt');
+  if (prompt) {
+    const status = currentSelectionStatus();
+    const show = state.brush !== 'erase' && !status.ready;
+    prompt.hidden = !show;
+    if (show) prompt.textContent = status.message || tr(Classes.PROMPT_KEYS[status.missing]);
+  }
 }
 
 // ── PAINTING ──────────────────────────────────────────────────────
@@ -1070,7 +947,6 @@ function cellAt(clientX, clientY){
   const c = Math.floor(x / (rect.width / GRID));
   const r = Math.floor(y / (rect.height / GRID));
   if (c<0||c>=GRID||r<0||r>=GRID) return null;
-  if (!GridMath.isValidCell(PLOTS[state.plotIdx], r*GRID+c)) return null;
   return {r,c};
 }
 function ensurePaintVisibleOnMap() {
@@ -1084,35 +960,45 @@ function ensurePaintVisibleOnMap() {
     state.viewMonth = viewMonthFromMask(state.viewMonths);
   }
 }
-function addCellsToPaintSeason(p, cellIds) {
-  const data = activePaintSeasonData();
-  if (!data || !cellIds.length) { toast('Choose the crop-cycle year and verify the class and dates.'); return false; }
-  if (RFLabels.hasConflict(p.seasons, data, cellIds)) { toast('This pixel already has another class for these dates. Erase it first.'); return false; }
-  let season = p.seasons.find(s =>
-    s.cropId === data.cropId && s.start === data.start && s.end === data.end && s.referenceYear === data.referenceYear && (s.fieldId || '') === data.fieldId);
-  const now = new Date().toISOString();
+function addCellsToPaintSeason(idx, p, cellIds) {
+  const meta = activePaintSeasonData();
+  if (!meta || !cellIds.length) return false;
+  if (RFLabels.hasConflict(p.seasons,meta,cellIds)) { toast('This pixel has another class for these dates. Erase it first.'); return false; }
+  const id = Classes.seasonId(idx, meta);
+  let season = p.seasons.find(s => s.id === id);
   if (!season) {
-    season = { id: newSeasonId(), ...data, cells: [], createdAt: now, updatedAt: now };
+    season = { id, ...meta, cells: [] };
     p.seasons.push(season);
   }
-  const seen = new Set(season.cells || []);
-  cellIds.forEach(id => seen.add(id));
-  season.cells = [...seen].sort((a, b) => a - b);
-  season.updatedAt = now;
+  const cells = new Set(season.cells);
+  const added = cellIds.filter(c => !cells.has(c));
+  if (!added.length) return false;
+  for (const c of added) cells.add(c);
+  season.cells = [...cells].sort((a, b) => a - b);
+  queueSeasonChange(idx, season, added, []);
   return true;
 }
-function eraseCellsFromSeasons(p, cellIds) {
+function eraseCellsFromSeasons(idx, p, cellIds) {
   if (!RFLabels.validYear(state.referenceYear)) { toast('Choose the crop-cycle year to erase.'); return false; }
   const remove = new Set(cellIds);
-  const now = new Date().toISOString();
-  for (const season of p.seasons || []) {
+  let changed = false;
+  for (const season of p.seasons) {
     if (Number(season.referenceYear) !== Number(state.referenceYear)) continue;
-    if (!Array.isArray(season.cells)) season.cells = [];
-    season.cells = season.cells.filter(cellIdx => !remove.has(cellIdx));
-    season.updatedAt = now;
+    const removed = (season.cells || []).filter(c => remove.has(c));
+    if (!removed.length) continue;
+    season.cells = season.cells.filter(c => !remove.has(c));
+    queueSeasonChange(idx, season, [], removed);
+    changed = true;
   }
-  p.seasons = (p.seasons || []).filter(season => season.cells && season.cells.length);
-  return true;
+  p.seasons = p.seasons.filter(season => season.cells && season.cells.length);
+  return changed;
+}
+function flashPaintPrompt() {
+  const el = document.getElementById('canvas-prompt');
+  if (!el) return;
+  el.classList.remove('flash');
+  void el.offsetWidth;  // restart the animation
+  el.classList.add('flash');
 }
 function paintAt(clientX, clientY){
   const image = getPlotTile(state.plotIdx);
@@ -1123,25 +1009,21 @@ function paintAt(clientX, clientY){
   if (linear === lastIdx) return;
   lastIdx = linear;
 
-  const p = ensurePlot(state.plotIdx);
+  const idx = state.plotIdx;
+  const plot = PLOTS[idx];
+  if (state.brush !== 'erase' && !activePaintSeasonData()) { flashPaintPrompt(); return; }
+  const p = ensurePlot(idx);
   const size = state.brush==='erase' ? 1 : state.brush;
-  const half = Math.floor(size/2);
-  const cellIds = [];
-  for (let dr=-half; dr<=half; dr++){
-    for (let dc=-half; dc<=half; dc++){
-      const rr = cell.r+dr, cc = cell.c+dc;
-      if (rr<0||rr>=GRID||cc<0||cc>=GRID) continue;
-      if (!GridMath.isValidCell(PLOTS[state.plotIdx], rr*GRID+cc)) continue;
-      cellIds.push(rr*GRID+cc);
-    }
-  }
-  if (state.brush === 'erase') { if (!eraseCellsFromSeasons(p, cellIds)) return; }
-  else if (!addCellsToPaintSeason(p, cellIds)) return;
+  const cellIds = GridMath.brushCells(plot, cell.r, cell.c, size);
+  const changed = state.brush === 'erase'
+    ? eraseCellsFromSeasons(idx, p, cellIds)
+    : addCellsToPaintSeason(idx, p, cellIds);
+  if (!changed) return;
   if (state.brush !== 'erase') ensurePaintVisibleOnMap();
   renderCanvas();
   updateProgress();
-  updateMapPlot(state.plotIdx);
-  savePlotChange(state.plotIdx);
+  updateMapPlot(idx);
+  savePlotChange(idx);
 }
 
 let saveTimer = null;
@@ -1153,7 +1035,7 @@ function schedSave(){
 function onDown(e){
   if (e.target !== canvas) return;
   painting = true; lastIdx = -1;
-  snapshotForUndo(state.plotIdx);
+  if (state.brush === 'erase' || activePaintSeasonData()) snapshotForUndo(state.plotIdx);
   e.preventDefault();
   const pt = e.touches ? e.touches[0] : e;
   paintAt(pt.clientX, pt.clientY);
@@ -1173,8 +1055,9 @@ function onMove(e){
       const half = Math.floor(size/2);
       cursor.style.left = ((cell.c-half)*cellPx) + 'px';
       cursor.style.top  = ((cell.r-half)*cellPx) + 'px';
-      const selectedCrop = CropCatalog.byId(state.selectedCropId);
-      cursor.style.borderColor = state.brush==='erase' ? 'var(--danger)' : (selectedCrop?.hex || '#9CA3AF');
+      cursor.style.borderColor = state.brush==='erase'
+        ? 'var(--danger)'
+        : Classes.selectionColor(state.selection, CropCatalog);
     }
   } else {
     cursor.style.display = 'none';
@@ -1194,34 +1077,63 @@ canvas.addEventListener('touchmove', onMove, {passive:false});
 canvas.addEventListener('touchend', onUp);
 canvas.addEventListener('mouseleave', ()=>{ document.getElementById('brush-cursor').style.display='none'; });
 
-// ── CROP PALETTE ──────────────────────────────────────────────────
+// ── CLASS + CROP NAME SELECTION ───────────────────────────────────
 let cropPickerInstance = null;
+let classPickerInstance = null;
 
-function selectCrop(cropId){
-  const crop = CropCatalog.byId(cropId);
-  if (!crop || !CropCatalog.isResolved(crop.id)) return;
-  state.selectedCropId = crop.id;
+function applyClassDates(key) {
+  const defaults = Classes.defaultDates(key);
+  if (defaults && (state.paintStartDate == null || state.datesAuto)) {
+    state.paintStartDate = defaults.start;
+    state.paintEndDate = defaults.end;
+    state.datesAuto = true;
+  } else if (!defaults && state.datesAuto) {
+    state.paintStartDate = null;
+    state.paintEndDate = null;
+    state.datesAuto = false;
+  }
+}
+function refreshSelectionUi() {
   resetReferenceConfirmation();
-  if (state.brush==='erase') state.brush = 1;
   buildPalette();
   updateBrush();
-  updateScheduleReadout();
+  if (typeof window.syncSeasonSelectors === 'function') window.syncSeasonSelectors();
+  if (typeof window.updateScheduleReadout === 'function') window.updateScheduleReadout();
   renderCanvas();
-  schedSave();
+}
+function selectClass(key) {
+  if (!Classes.byKey(key)) return;
+  state.selection.classKey = key;
+  if (key !== 'other_cultivated') state.selection.cropId = null;
+  if (key !== 'other') state.selection.remark = '';
+  applyClassDates(key);
+  if (state.brush === 'erase') state.brush = 1;
+  refreshSelectionUi();
+}
+function selectCrop(cropId) {
+  const crop = CropCatalog.byId(cropId);
+  if (!crop || !CropCatalog.isResolved(crop.id)) return;
+  state.selection.classKey = 'other_cultivated';
+  state.selection.cropId = crop.id;
+  state.selection.remark = '';
+  applyClassDates('other_cultivated');
+  if (state.brush === 'erase') state.brush = 1;
+  refreshSelectionUi();
+}
+function setRemark(text) {
+  resetReferenceConfirmation();
+  state.selection.remark = text;
+  if (typeof window.updateScheduleReadout === 'function') window.updateScheduleReadout();
+  renderCanvas();
 }
 
 async function removeCustomCrop(cropId) {
   const removedSeasons = await CropCatalog.remove(cropId);
-  for (const [key, plot] of Object.entries(state.plots)) {
-    if (!plot || !Array.isArray(plot.seasons)) continue;
-    const idx = Number(key);
-    const hadCrop = plot.seasons.some(season => season && season.cropId === cropId);
-    if (!hadCrop) continue;
-    plot.seasons = plot.seasons.filter(season => season && season.cropId !== cropId);
-    // Queue the sanitized plot so its remaining local metadata and pending
-    // photos are kept while the deleted crop cannot be restored remotely.
-    markCloudDirty(idx);
+  outbox.dropCrop(cropId);
+  for (const plot of Object.values(state.plots)) {
+    if (plot && Array.isArray(plot.seasons)) plot.seasons = plot.seasons.filter(s => s && s.cropId !== cropId);
   }
+  if (state.selection.cropId === cropId) state.selection.cropId = null;
   undoStack.length = 0;
   redoStack.length = 0;
   updateUndoBtn();
@@ -1234,15 +1146,31 @@ async function removeCustomCrop(cropId) {
   updatePlotHeader();
   refreshMetaToggle();
   if (drawer && drawer.classList.contains('on')) loadMetadataIntoDrawer();
+  refreshSelectionUi();
   return removedSeasons;
 }
 
 function buildPalette(){
+  if (!classPickerInstance) {
+    classPickerInstance = window.TANIMAN_CLASS_PICKER.create({
+      root: document.getElementById('class-picker'),
+      remarkField: document.getElementById('other-remark-field'),
+      remarkInput: document.getElementById('other-remark'),
+      remarkLabel: document.getElementById('other-remark-label'),
+      classes: Classes.ALL,
+      onSelect: selectClass,
+      onRemark: setRemark,
+    });
+  }
+  classPickerInstance.render({
+    classKey: state.selection.classKey, remark: state.selection.remark, lang: state.lang, tr,
+  });
+  document.getElementById('crop-name-section').hidden = state.selection.classKey !== 'other_cultivated';
   if (!cropPickerInstance) {
     cropPickerInstance = window.TANIMAN_CROP_PICKER.create({
       root: document.getElementById('crop-picker'),
       catalog: CropCatalog,
-      selectedCropId: state.selectedCropId,
+      selectedCropId: state.selection.cropId || '',
       lang: state.lang,
       onSelect: selectCrop,
       onCreate: async (name, hex) => {
@@ -1253,7 +1181,7 @@ function buildPalette(){
       onRemove: removeCustomCrop,
     });
   }
-  cropPickerInstance.render({ selectedCropId: state.selectedCropId, lang: state.lang });
+  cropPickerInstance.render({ selectedCropId: state.selection.cropId || '', lang: state.lang });
 }
 function updateBrush(){
   document.querySelectorAll('.brush-btn').forEach(b=>{
@@ -1272,39 +1200,28 @@ function openPlot(idx){
   updateMapPlot(prev);
   updateMapPlot(idx);
   const plot = PLOTS[idx];
-  const bounds = L.latLngBounds(GridMath.plotCorners(plot, true));
+  const bounds = L.latLngBounds(plot.corners);
   if (!map.getBounds().contains(bounds)) map.panTo([plot.centerLat,plot.centerLng], {animate:true});
   updateNavButtons();
   if (drawer.classList.contains('on')) loadMetadataIntoDrawer();
   else detailDraft = null;
   refreshMetaToggle();
   schedSave();
-  if (hasSyncOnNavigate()) {
-    window.syncOnNavigate(idx, state, afterRemoteMerge, mayMergeRemote).catch(e => console.warn('navigation sync failed:', e));
-  }
+  refreshPlotFromServer(idx);
 }
 function updatePlotHeader(){
   const plot = PLOTS[state.plotIdx];
   if (!plot) return;
   const p = state.plots[state.plotIdx];
   document.getElementById('plot-name').textContent = tr('plotN').replace('{n}', plotDisplayLabel(plot));
-  document.getElementById('plot-loc').textContent = `R${plot.r} · C${plot.c} · ${plot.centerLat.toFixed(4)}°N, ${plot.centerLng.toFixed(4)}°E`;
-  // farmer chip
-  const chip = document.getElementById('ed-farmer-chip');
-  if (p && p.farmerId) {
-    chip.classList.remove('empty');
-    chip.innerHTML = `<span class="ddot"></span>${p.farmerId}`;
-  } else {
-    chip.classList.add('empty');
-    chip.innerHTML = `<span class="ddot"></span>${tr('noFarmer')}`;
-  }
+  document.getElementById('plot-loc').textContent = `R${plot.pr} · C${plot.pc} · ${plot.centerLat.toFixed(4)}°N, ${plot.centerLng.toFixed(4)}°E`;
   document.getElementById('dr-title').textContent =
     document.getElementById('plot-name').textContent + ' — ' + tr('plotSection').toLowerCase();
   updateNavButtons();
 }
 function refreshMetaToggle() {
   const p = state.plots[state.plotIdx];
-  const has = p && (p.farmer || p.farmerId || p.note || (p.photos && p.photos.length));
+  const has = p && (p.note || (p.photos && p.photos.length));
   document.getElementById('meta-toggle').classList.toggle('has-data', !!has);
 }
 
@@ -1322,10 +1239,6 @@ function updateProgress(){
   document.getElementById('save-count').textContent = done;
   // update legend counts too
   updateLegend();
-  // update roster button count
-  const roster = buildRosterData();
-  const farmerCnt = document.getElementById('hdr-farmer-count');
-  if (farmerCnt) farmerCnt.textContent = roster.filter(r=>r.id).length;
 }
 
 // ── AUTOSAVE INDICATOR ────────────────────────────────────────────
@@ -1343,39 +1256,29 @@ setInterval(updateAutosave, 1000);
 function updateLegend(){
   const root = document.getElementById('map-legend-rows');
   if (!root) return;
-  const visibleCellsByCrop = new Array(CROPS.length).fill(0);
-  const plotsContainingCrop = new Array(CROPS.length).fill(0);
+  const visibleCells = new Array(Classes.ALL.length).fill(0);
+  const plotsWith = new Array(Classes.ALL.length).fill(0);
   let emptyVisibleCells = 0;
-  let totalVisibleCells = 0;
-  PLOTS.forEach(plot=>{
+  let totalCells = 0;
+  PLOTS.forEach(plot => {
     const composition = plotCompositionForView(plot.idx);
-    totalVisibleCells += GridMath.validCellCount(plot);
+    totalCells += GridMath.validCellCount(plot);
     emptyVisibleCells += composition.emptyCells;
     composition.counts.forEach((count, i) => {
-      visibleCellsByCrop[i] += count;
-      if (count > 0) plotsContainingCrop[i]++;
+      visibleCells[i] += count;
+      if (count > 0) plotsWith[i]++;
     });
   });
-  const coveragePct = (count) => totalVisibleCells ? Math.round((count / totalVisibleCells) * 100) : 0;
-  root.innerHTML = '';
-
-  {
-    const row = document.createElement('div');
-    row.className = 'lgd-row';
-    row.innerHTML = `<span class="lgd-sw empty"></span>
+  const pct = count => totalCells ? Math.round((count / totalCells) * 100) : 0;
+  const rows = [`<div class="lgd-row"><span class="lgd-sw empty"></span>
       <span class="lgd-nm">${tr('unpainted')}</span>
-      <span class="lgd-val"><span class="lgd-ct">${coveragePct(emptyVisibleCells)}%</span><span class="lgd-sub">${emptyVisibleCells} cells</span></span>`;
-    root.appendChild(row);
-  }
-  CROPS.forEach((crop,i)=>{
-    const count = visibleCellsByCrop[i];
-    const row = document.createElement('div');
-    row.className = 'lgd-row';
-    row.innerHTML = `<span class="lgd-sw" style="background:${crop.hex};border-color:${crop.hex}"></span>
-      <span class="lgd-nm">${escapeHtml(crop.name[state.lang]||crop.name.en)}</span>
-      <span class="lgd-val"><span class="lgd-ct">${coveragePct(count)}%</span><span class="lgd-sub">${count} cells · ${plotsContainingCrop[i]} plots</span></span>`;
-    root.appendChild(row);
+      <span class="lgd-val"><span class="lgd-ct">${pct(emptyVisibleCells)}%</span><span class="lgd-sub">${emptyVisibleCells} cells</span></span></div>`];
+  Classes.ALL.forEach((cls, i) => {
+    rows.push(`<div class="lgd-row"><span class="lgd-sw" style="background:${cls.hex};border-color:${cls.hex}"></span>
+      <span class="lgd-nm">${escapeHtml(cls.name[state.lang] || cls.name.en)}</span>
+      <span class="lgd-val"><span class="lgd-ct">${pct(visibleCells[i])}%</span><span class="lgd-sub">${visibleCells[i]} cells · ${plotsWith[i]} plots</span></span></div>`);
   });
+  root.innerHTML = rows.join('');
 }
 
 function setLegendCollapsed(collapsed){
@@ -1396,7 +1299,8 @@ function applyLang(){
   document.getElementById('brand-sub').textContent = tr('appSub');
   document.getElementById('map-title').textContent = tr('mapTitle');
   document.getElementById('lab-brush').textContent = tr('brush');
-  document.getElementById('lab-crop').textContent = 'Crop / land cover';
+  document.getElementById('lab-class').textContent = tr('classLabel');
+  document.getElementById('lab-crop').textContent = tr('cropNameLabel2');
   if (typeof updateSeasonStaticLabels === 'function') updateSeasonStaticLabels();
   else document.getElementById('sched-label').textContent = tr('schedulePlantingHarvest');
   document.getElementById('scrub-label').textContent = tr('showing');
@@ -1406,13 +1310,8 @@ function applyLang(){
   document.getElementById('btn-clear').textContent = tr('clear');
   document.getElementById('btn-save-txt').textContent = tr('saveAll');
   document.getElementById('meta-toggle-txt').textContent = tr('plotDetails');
-  document.getElementById('roster-btn-txt').textContent = tr('roster');
-  document.getElementById('lab-farmer-id').textContent = tr('farmerId');
-  document.getElementById('lab-farmer').textContent = tr('farmer');
   document.getElementById('lab-note').textContent = tr('note');
   document.getElementById('lab-photo').textContent = tr('photo');
-  document.getElementById('ph-farmer').textContent = tr('farmerPh');
-  document.getElementById('ph-farmer-id').textContent = tr('farmerIdPh');
   document.getElementById('ph-note').textContent = tr('notePh');
   document.getElementById('lab-summary').textContent = tr('schedSummary');
   document.getElementById('prog-marked-label').textContent = tr('plotsMarked');
@@ -1449,27 +1348,13 @@ function closeDrawer() {
   scrim.classList.remove('on');
   drawer.classList.remove('on');
 }
-function nextFarmerId(){
-  const used = new Set();
-  Object.values(state.plots).forEach(p => { if (p.farmerId) used.add(p.farmerId); });
-  for (let i=1; i<1000; i++){
-    const id = 'F-' + String(i).padStart(3,'0');
-    if (!used.has(id)) return id;
-  }
-  return 'F-001';
-}
 function loadMetadataIntoDrawer() {
   const p = ensurePlot(state.plotIdx);
   detailDraft = {
-    farmerId: p.farmerId || '',
-    farmer: p.farmer || '',
     note: p.note || '',
     photos: (p.photos || []).map(ph => ({ ...ph })),
   };
-  document.getElementById('in-farmer-id').value = detailDraft.farmerId;
-  document.getElementById('in-farmer').value = detailDraft.farmer;
   document.getElementById('in-note').value = detailDraft.note;
-  document.getElementById('sug-farmer-id').textContent = nextFarmerId();
   renderPhotos(detailDraft.photos);
   renderScheduleSummary();
 }
@@ -1502,21 +1387,21 @@ function renderScheduleSummary(){
   const root = document.getElementById('sched-summary-grid');
   const p = ensurePlot(state.plotIdx);
   const seasons = (p.seasons || []).filter(season =>
-    CropCatalog.byId(season.cropId) &&
-    isValidMmdd(season.start) &&
-    isValidMmdd(season.end) &&
-    season.cells &&
-    season.cells.length);
+    isValidMmdd(season.start) && isValidMmdd(season.end) && season.cells && season.cells.length);
   if (!seasons.length){
     root.innerHTML = `<div class="ss-empty">${tr('noSchedule')}</div>`;
     return;
   }
   root.innerHTML = `<div class="ss-season-list">` + seasons.map(season => {
-    const crop = CropCatalog.byId(season.cropId);
     const wraps = rangeWrapsYear(season.start, season.end) ? ' · wraps year' : '';
+    const label = season.classId === 4
+      ? (Classes.cropName(CropCatalog, season.cropId, state.lang) || Classes.className(4, state.lang))
+      : season.classId == null
+        ? `${Classes.className(null, state.lang)}: ${season.remark}`
+        : Classes.className(season.classId, state.lang);
     return `<div class="ss-season">
-      <span class="ss-dot" style="background:${crop.hex}"></span>
-      <span>${escapeHtml(crop.name[state.lang]||crop.name.en)} · ${season.start}-${season.end}${wraps}</span>
+      <span class="ss-dot" style="background:${seasonHex(season)}"></span>
+      <span>${escapeHtml(label)} · ${RFLabels.validYear(season.referenceYear) ? season.referenceYear : 'Undated'} · ${season.start}-${season.end}${wraps}</span>
       <span class="ss-count">${season.cells.length}</span>
     </div>`;
   }).join('') + `</div>`;
@@ -1530,11 +1415,9 @@ document.getElementById('dr-save').onclick = () => {
   if (!detailDraft) return;
   const idx = state.plotIdx;
   const p = ensurePlot(idx);
-  p.farmerId = detailDraft.farmerId.trim();
-  p.farmer = detailDraft.farmer.trim();
   p.note = detailDraft.note;
   p.photos = detailDraft.photos.map(ph => ({ ...ph }));
-  markCloudDirty(idx);
+  queueMetaChange(idx);
   saveState();
   refreshMetaToggle();
   updatePlotHeader();
@@ -1543,14 +1426,7 @@ document.getElementById('dr-save').onclick = () => {
   closeDrawer();
 };
 
-document.getElementById('in-farmer-id').oninput = (e) => { if (detailDraft) detailDraft.farmerId = e.target.value; };
-document.getElementById('in-farmer').oninput   = (e) => { if (detailDraft) detailDraft.farmer = e.target.value; };
 document.getElementById('in-note').oninput     = (e) => { if (detailDraft) detailDraft.note = e.target.value; };
-document.getElementById('sug-farmer-id').onclick = () => {
-  if (!detailDraft) return;
-  detailDraft.farmerId = nextFarmerId();
-  document.getElementById('in-farmer-id').value = detailDraft.farmerId;
-};
 document.getElementById('in-photo').onchange = async (e) => {
   const file = e.target.files[0]; if (!file) return;
   e.target.value = '';
@@ -1576,34 +1452,39 @@ document.getElementById('in-photo').onchange = async (e) => {
 };
 
 // ── CLEAR ─────────────────────────────────────────────────────────
-document.getElementById('btn-clear').onclick = ()=>{
-  if (!plotHasData(state.plotIdx)) return;
+document.getElementById('btn-clear').onclick = async ()=>{
+  const idx = state.plotIdx;
+  if (!plotHasData(idx)) return;
   if (!confirm(tr('confirmClear'))) return;
-  snapshotForUndo(state.plotIdx);
-  const p = state.plots[state.plotIdx];
+  const p = ensurePlot(idx);
+  outbox.dropPlot(idx);   // also drops in-flight deltas, so their results are ignored
+  metaDirty.delete(idx);
   p.seasons = emptySeasons();
-  p.farmer=''; p.farmerId=''; p.note=''; p.photos=[];
-  renderCanvas(); updateProgress(); updateMapPlot(state.plotIdx);
+  p.note = '';
+  p.photos = [];
+  clearUndoForPlot(idx);
+  renderCanvas(); updateProgress(); updateMapPlot(idx);
   if (drawer.classList.contains('on')) loadMetadataIntoDrawer();
   refreshMetaToggle(); updatePlotHeader();
-  savePlotChange(state.plotIdx);
+  saveState();
   toast(tr('cleared'));
+  if (typeof window.clearPlotRemote === 'function') {
+    // Let any request already on the wire land first, so clear_plot runs last.
+    if (flushPromise) await flushPromise.catch(() => {});
+    try { await window.clearPlotRemote(idx); }
+    catch (e) { console.warn('clear plot failed:', e); toast(tr('syncDropped')); }
+  }
 };
 document.getElementById('btn-undo').onclick = undo;
 document.getElementById('btn-redo').onclick = redo;
 
 // ── ZIP EXPORT ────────────────────────────────────────────────────
-// Output layout:
-//   paoay_cropmap_YYYY-MM-DD/
-//     labels.csv          one row per (cell, crop) with 12 month columns
-//     plots.csv           one row per plot with farmer + per-crop month masks
-//     farmers.csv         one row per Farmer ID with their plot list
-//     metadata.json       full structured dump
-//     labels/plotXXX.png  rendered crop label PNG (500x500, 10px/cell)
-//     photos/plotXXX_N.jpg
+// paoay_cropmap_YYYY-MM-DD/
+//   seasons.csv  fields.csv  classes.csv  plots.csv  metadata.json
+//   labels/plotNNN.png   photos/plotNNN_N.jpg
 document.getElementById('btn-save').onclick = async () => {
   CropCatalog.registerReferences(state.plots);
-  const indices = Object.keys(state.plots).map(k=>+k).filter(plotHasData);
+  const indices = PLOTS.map(plot => plot.idx).filter(plotHasData);
   if (!indices.length){ toast(tr('empty')); return; }
   const btn = document.getElementById('btn-save');
   btn.disabled = true;
@@ -1611,189 +1492,46 @@ document.getElementById('btn-save').onclick = async () => {
   btn.innerHTML = '<span>⏳</span>';
   try {
   await flushCloudSync();
+  if (outbox.size()) await flushCloudSync();   // edits made while the first flush ran
 
   const zip = new JSZip();
   const dateStamp = new Date().toISOString().slice(0,10);
   const folder = zip.folder('paoay_cropmap_' + dateStamp);
 
-  let seasonsCsv =
-    'plot_idx,season_id,cell_idx,cell_row,cell_col,crop_id,start_mmdd,end_mmdd,wraps_year,center_lat,center_lng,lat_s,lat_n,lng_w,lng_e,farmer_id\n';
-  let labelsCsv =
-    'plot_idx,plot_area,plot_source,plot_row,plot_col,farmer_id,season_id,cell_idx,cell_row,cell_col,crop_id,crop_en,start_mmdd,end_mmdd,wraps_year,center_lat,center_lng,lat_s,lat_n,lng_w,lng_e\n';
-  const pixelColumns = ['grid_id','pixel_id','s2_row','s2_col','utm_x','utm_y','utm_x_min','utm_x_max','utm_y_min','utm_y_max','inside_paoay','class_id','reference_year','field_id','footprint_wgs84'];
-  seasonsCsv = seasonsCsv.trimEnd() + ',' + pixelColumns.join(',') + '\n';
-  labelsCsv = labelsCsv.trimEnd() + ',' + pixelColumns.join(',') + '\n';
-  const pixelValues = row => [
-    GridMath.DEFAULT_GRID.id, row.pixel_id, row.s2_row, row.s2_col,
-    row.utm_x, row.utm_y, row.utm_x_min, row.utm_x_max, row.utm_y_min, row.utm_y_max,
-    GridMath.isInsidePaoay(row.center_lat, row.center_lng, PAOAY_POLY),
-    RFLabels.classIdForCrop(CropCatalog.byId(row.crop_id)) ?? '',
-    row.reference_year, row.field_id, JSON.stringify(row.corners.map(([lat,lng])=>[lng,lat])),
-  ].map(csvEscape);
-  const targetCrops = CROPS.filter(crop => CropCatalog.isTarget(crop.id));
-  let plotsCsv =
-    'plot_idx,plot_area,plot_source,plot_row,plot_col,centerLat,centerLng,farmer_id,farmer_name,note,photo_count,season_count,total_season_cells,' +
-    targetCrops.map(c=>`${c.id}_cells`).join(',') + ',other_crop_cells\n';
-  const allSeasonExportRows = [];
-  const farmerMap = new Map(); // farmer_id -> { name, plots:[], patches, crops:Set }
-  const metaPlots = [];
+  const plotData = {};
+  for (const idx of indices) plotData[idx] = ensurePlot(idx);
+  const exported = LabelExport.buildExport({ plots: PLOTS, plotData, catalog: CropCatalog, grid: window.GRID, paoayPoly:PAOAY_POLY });
+  folder.file('seasons.csv', exported.seasonsCsv);
+  folder.file('fields.csv', exported.fieldsCsv);
+  folder.file('classes.csv', exported.classesCsv);
+  folder.file('plots.csv', exported.plotsCsv);
+  folder.file('metadata.json', exported.metadataJson);
 
-  // canvas for PNG label render
   const oc = document.createElement('canvas');
   oc.width = 500; oc.height = 500;
   const oct = oc.getContext('2d');
-
   for (const idx of indices) {
-    const p = ensurePlot(idx);
+    const p = plotData[idx];
     const plot = PLOTS[idx];
-    if (!plot) continue;
-    const plotArea = plot.area || 'paoay';
-    const plotSource = plot.source || 'field_grid';
-    const farmerId = (p.farmerId || '').trim();
-    const farmerName = (p.farmer || '').trim();
-    const note = p.note || '';
-
-    const seasonRows = seasonExportRows({ plotIdx: idx, plot, plotData: p, grid: GRID, farmerId });
-    for (const row of seasonRows) allSeasonExportRows.push(row);
-    const cropCounts = CropExport.buildPlotCropCounts(seasonRows);
-    const cropCountById = new Map(cropCounts.map(count => [count.crop_id, count.season_cell_rows]));
-    const otherCropCells = cropCounts.reduce((sum, count) =>
-      sum + (CropCatalog.isTarget(count.crop_id) ? 0 : count.season_cell_rows), 0);
-    for (const row of seasonRows) {
-      seasonsCsv += [
-        row.plot_idx, csvEscape(row.season_id), row.cell_idx, row.cell_row, row.cell_col,
-        csvEscape(row.crop_id), csvEscape(row.start_mmdd), csvEscape(row.end_mmdd), row.wraps_year,
-        row.center_lat, row.center_lng, row.lat_s, row.lat_n, row.lng_w, row.lng_e,
-        csvEscape(row.farmer_id),
-        ...pixelValues(row),
-      ].join(',') + '\n';
-      const crop = CropCatalog.byId(row.crop_id) || { name: { en: `Unknown crop (${row.crop_id})` } };
-      labelsCsv += [
-        row.plot_idx, csvEscape(plotArea), csvEscape(plotSource), plot.r, plot.c, csvEscape(farmerId),
-        csvEscape(row.season_id), row.cell_idx, row.cell_row, row.cell_col,
-        csvEscape(row.crop_id), csvEscape(crop.name.en || crop.name[state.lang] || row.crop_id),
-        csvEscape(row.start_mmdd), csvEscape(row.end_mmdd), row.wraps_year,
-        row.center_lat, row.center_lng, row.lat_s, row.lat_n, row.lng_w, row.lng_e,
-        ...pixelValues(row),
-      ].join(',') + '\n';
-    }
-
-    // PNG label image (snapshot in "all months" view for visual QA only)
-    if (seasonRows.length) {
-      oct.fillStyle = '#0A1A0A';
-      oct.fillRect(0, 0, 500, 500);
+    if (plotHasPaint(idx)) {
+      oct.clearRect(0, 0, 500, 500);
       for (let r=0; r<GRID; r++) for (let c=0; c<GRID; c++) {
         const cellIdx = r*GRID + c;
-        const present = cellVisibleCropIds(p, cellIdx, ALL_MONTHS).map(cropIndexFromId).filter(i => i >= 0);
-        if (!present.length) continue;
-        drawMixedCell(oct, c*10, r*10, 10, 10, present, state.mixedStyle);
+        if (!GridMath.isCellInBounds(plot, cellIdx)) {
+          oct.fillStyle = '#404040';
+          oct.fillRect(c*10, r*10, 10, 10);
+          continue;
+        }
+        const colors = cellVisibleColors(p, cellIdx, ALL_MONTHS);
+        if (colors.length) drawMixedCell(oct, c*10, r*10, 10, 10, colors, state.mixedStyle);
       }
       folder.file(`labels/plot${String(idx).padStart(3,'0')}.png`,
         oc.toDataURL('image/png').split(',')[1], { base64: true });
     }
-
-    // plots.csv — one row per plot
-    const photos = (p.photos || []).filter(ph => ph && (ph.url || ph.dataUrl));
-    plotsCsv += [
-      idx, csvEscape(plotArea), csvEscape(plotSource), plot.r, plot.c, plot.centerLat, plot.centerLng,
-      csvEscape(farmerId), csvEscape(farmerName), csvEscape(note), photos.length,
-      (p.seasons || []).length, seasonRows.length,
-      ...targetCrops.map(crop => cropCountById.get(crop.id) || 0), otherCropCells,
-    ].join(',') + '\n';
-
-    // Photos export
-    photos.forEach((ph, pi) => {
-      if (ph.dataUrl) {
-        folder.file(`photos/plot${String(idx).padStart(3,'0')}_${pi}.jpg`,
-          ph.dataUrl.split(',')[1], { base64: true });
-      }
-    });
-
-    // farmer aggregation
-    if (farmerId) {
-      if (!farmerMap.has(farmerId)) farmerMap.set(farmerId, { name:'', plots:[], patches:0, crops:new Set() });
-      const f = farmerMap.get(farmerId);
-      if (farmerName && !f.name) f.name = farmerName;
-      f.plots.push(idx);
-      f.patches += seasonRows.length;
-      for (const row of seasonRows) {
-        if (row.crop_id != null && String(row.crop_id) !== '') f.crops.add(String(row.crop_id));
-      }
-    }
-
-    // metadata
-    metaPlots.push({
-      plot_idx: idx,
-      area: plotArea,
-      source: plot.source || 'field_grid',
-      row: plot.r, col: plot.c,
-      centerLat: plot.centerLat, centerLng: plot.centerLng,
-      farmer_id: farmerId,
-      farmer_name: farmerName,
-      note: p.note || '',
-      photo_count: photos.length,
-      season_count: (p.seasons || []).length,
-      season_cell_rows: seasonRows.length,
-      crops: cropCounts.map(count => {
-        const crop = CropCatalog.byId(count.crop_id);
-        return {
-          id: count.crop_id,
-          en: crop?.name?.en || `Unknown crop (${count.crop_id})`,
-          is_target: CropCatalog.isTarget(count.crop_id),
-          is_resolved: CropCatalog.isResolved(count.crop_id),
-          season_cell_rows: count.season_cell_rows,
-        };
-      }),
-      seasons: cloneSeasons(p.seasons),
+    (p.photos || []).filter(ph => ph && ph.dataUrl).forEach((ph, pi) => {
+      folder.file(`photos/plot${String(idx).padStart(3,'0')}_${pi}.jpg`, ph.dataUrl.split(',')[1], { base64: true });
     });
   }
-
-  const cropLookupRows = CropExport.buildCropLookupRows(allSeasonExportRows, CropCatalog.all()).map(crop => ({
-    ...crop, is_target: [1,2,3].includes(RFLabels.classIdForCrop(CropCatalog.byId(crop.crop_id))),
-  }));
-  const plotCropCountRows = CropExport.buildPlotCropCounts(allSeasonExportRows);
-  allSeasonExportRows.length = 0; // Release per-cell row objects before ZIP serialization.
-  const cropsCsv = CropExport.buildCropsCsv(cropLookupRows);
-  const plotCropCountsCsv = CropExport.buildPlotCropCountsCsv(plotCropCountRows);
-
-  // farmers.csv
-  let farmersCsv = 'farmer_id,farmer_name,plot_count,plot_indices,total_patches,crops\n';
-  for (const [id, f] of farmerMap.entries()) {
-    farmersCsv += `${csvEscape(id)},${csvEscape(f.name)},${f.plots.length},${csvEscape(f.plots.join(';'))},${f.patches},${csvEscape(JSON.stringify([...f.crops]))}\n`;
-  }
-
-  folder.file('seasons.csv', seasonsCsv);
-  folder.file('labels.csv', labelsCsv);
-  folder.file('plots.csv', plotsCsv);
-  folder.file('farmers.csv', farmersCsv);
-  folder.file('crops.csv', cropsCsv);
-  folder.file('plot_crop_counts.csv', plotCropCountsCsv);
-  folder.file('metadata.json', JSON.stringify({
-    survey_area: 'Paoay, Atok, Benguet',
-    surveyed_at: new Date().toISOString(),
-    schema_version: 6,
-    reference_grid: GridMath.DEFAULT_GRID,
-    class_mapping: Object.fromEntries(cropLookupRows.map(crop=>[crop.crop_id,RFLabels.classIdForCrop(CropCatalog.byId(crop.crop_id))])),
-    grid_resolution: `${GRID}x${GRID}`,
-    authoritative_ground_truth_file: 'seasons.csv',
-    date_encoding: {
-      type: 'MM-DD inclusive range with explicit crop-cycle start year',
-      fields: ['start_mmdd', 'end_mmdd', 'wraps_year', 'reference_year'],
-      note: 'reference_year is the year of the season start; wrapped ranges end in the following year. Image capture date is not inferred from the basemap.',
-    },
-    coordinate_reference_system: GridMath.DEFAULT_GRID.crs,
-    geographic_coordinate_reference_system: 'EPSG:4326',
-    sentinel2_alignment_note: 'Each label cell is exactly one reference raster pixel. Extract predictors by s2_row/s2_col only after verifying CRS, transform, dimensions, crop-cycle dates and year. WGS84 bounds are bounding boxes; footprint_wgs84 records the projected pixel corners.',
-    training_boundary_rule: 'Include only inside_paoay=true; this flag tests the pixel center against the stored Paoay boundary.',
-    validation_note: 'Grid plot_idx is a 500 m editing tile, not an observed field or 50 m validation plot. field_id must identify actual observed fields for independent train/test splitting.',
-    crops: cropLookupRows,
-    farmers: [...farmerMap.entries()].map(([id, f]) => ({
-      id, name: f.name, plot_count: f.plots.length,
-      plot_indices: f.plots, total_patches: f.patches,
-      crops: [...f.crops],
-    })),
-    plots: metaPlots,
-  }, null, 2));
 
   if (window.__TAURI__) {
     const uint8 = await zip.generateAsync({type:'uint8array'});
@@ -1822,90 +1560,6 @@ document.getElementById('btn-save').onclick = async () => {
   }
 };
 
-// ── ROSTER ────────────────────────────────────────────────────────
-function buildRosterData(){
-  // group plots by farmerId. Include an "unassigned with paint" bucket too.
-  CropCatalog.registerReferences(state.plots);
-  const map = new Map();
-  PLOTS.forEach(plot=>{
-    const p = state.plots[plot.idx];
-    if (!p || !plotHasPaint(plot.idx) && !p.farmerId && !p.farmer) return;
-    const key = p.farmerId || '__unassigned__';
-    if (!map.has(key)) map.set(key, { id: p.farmerId, name: p.farmer || '', plots: [], cropTotals: new Array(CROPS.length).fill(0), patchTotal: 0 });
-    const r = map.get(key);
-    if (!r.name && p.farmer) r.name = p.farmer;
-    r.plots.push(plot.idx);
-    if (p.seasons) {
-      for (const season of p.seasons) {
-        const cropIdx = cropIndexFromId(season.cropId);
-        if (cropIdx < 0) continue;
-        const n = (season.cells || []).length;
-        r.cropTotals[cropIdx] += n;
-        r.patchTotal += n;
-      }
-    }
-  });
-  const out = [...map.values()].sort((a,b)=>{
-    if (!a.id && b.id) return 1;
-    if (!b.id && a.id) return -1;
-    return (a.id||'').localeCompare(b.id||'');
-  });
-  return out;
-}
-function openRoster(){
-  document.getElementById('roster-modal').classList.add('on');
-  scrim.classList.add('on');
-  scrim.onclick = closeRoster;
-  renderRoster('');
-  document.getElementById('roster-search').focus();
-}
-function closeRoster(){
-  document.getElementById('roster-modal').classList.remove('on');
-  scrim.classList.remove('on');
-  scrim.onclick = closeDrawer; // restore
-}
-function renderRoster(q){
-  q = (q||'').trim().toLowerCase();
-  const data = buildRosterData();
-  const filtered = !q ? data : data.filter(r =>
-    (r.id||'').toLowerCase().includes(q) || (r.name||'').toLowerCase().includes(q)
-  );
-  document.getElementById('roster-stats').textContent =
-    `${data.filter(r=>r.id).length} ${tr('rosterFarmers')} · ${data.filter(r=>!r.id).length} ${tr('rosterUnassigned')}`;
-  const root = document.getElementById('roster-list');
-  if (!filtered.length){
-    root.innerHTML = `<div class="roster-empty">${tr('rosterEmpty')}</div>`;
-    return;
-  }
-  root.innerHTML = filtered.map(r=>{
-    const isU = !r.id;
-    const cropTags = r.cropTotals.map((n,i)=> n>0 ? `<span class="crop-tag"><span class="cdot" style="background:${CROPS[i].hex}"></span>${escapeHtml(CROPS[i].name[state.lang]||CROPS[i].name.en)}</span>` : '').join('');
-    const plotList = r.plots.slice(0,12).map(i=>plotDisplayLabel(PLOTS[i])).join(', ') + (r.plots.length>12?' …':'');
-    return `<div class="roster-card${isU?' unassigned':''}" data-plot="${r.plots[0]}">
-      <div class="roster-id">${escapeHtml(r.id || tr('rosterNoId'))}</div>
-      <div class="roster-mid">
-        <div class="roster-name ${r.name?'':'empty'}">${escapeHtml(r.name || tr('rosterNoName'))}</div>
-        <div class="roster-meta">
-          <span>${r.plots.length} ${r.plots.length===1?tr('plotS'):tr('plotP')}</span>
-          <span>${r.patchTotal.toLocaleString()} ${tr('patches')}</span>
-          <div class="crop-tags">${cropTags}</div>
-        </div>
-        <div class="roster-plots">Plots: ${escapeHtml(plotList)}</div>
-      </div>
-      <div class="roster-go">→</div>
-    </div>`;
-  }).join('');
-  root.querySelectorAll('.roster-card').forEach(card=>{
-    card.onclick = ()=>{
-      openPlot(+card.dataset.plot);
-      closeRoster();
-    };
-  });
-}
-document.getElementById('roster-btn').onclick = openRoster;
-document.getElementById('roster-close').onclick = closeRoster;
-document.getElementById('roster-search').oninput = (e)=>renderRoster(e.target.value);
-
 // ── TOAST ─────────────────────────────────────────────────────────
 let toastTimer = null;
 function toast(msg){
@@ -1914,10 +1568,6 @@ function toast(msg){
   t.classList.add('show');
   clearTimeout(toastTimer);
   toastTimer = setTimeout(()=>t.classList.remove('show'), 2200);
-}
-
-function csvEscape(value) {
-  return CropExport.csvEscape(value);
 }
 
 // ── EVENT WIRING ──────────────────────────────────────────────────
@@ -1932,6 +1582,7 @@ document.querySelectorAll('.brush-btn').forEach(b=>{
     const v = b.dataset.brush;
     state.brush = v==='erase' ? 'erase' : +v;
     updateBrush();
+    renderCanvas();
     saveState();
   };
 });
@@ -1944,21 +1595,9 @@ document.addEventListener('keydown', (e)=>{
   if ((e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'Z')){ e.preventDefault(); undo(); return; }
   if (e.key === 'ArrowLeft') openPlot(adjacentVisiblePlotIdx(state.plotIdx, -1));
   if (e.key === 'ArrowRight') openPlot(adjacentVisiblePlotIdx(state.plotIdx, 1));
-  if (/^[1-3]$/.test(e.key)){
-    const targetCrops = CROPS.filter(crop => CropCatalog.isTarget(crop.id));
-    if (!targetCrops[+e.key - 1]) return;
-    state.selectedCropId = targetCrops[+e.key - 1].id;
-    resetReferenceConfirmation();
-    buildPalette();
-    updateScheduleReadout();
-    renderCanvas();
-    schedSave();
-  }
-  if (e.key === 'e' || e.key === 'E'){ state.brush = 'erase'; updateBrush(); }
-  if (e.key === 'Escape'){
-    if (document.getElementById('roster-modal').classList.contains('on')) closeRoster();
-    else if (drawer.classList.contains('on')) closeDrawer();
-  }
+  if (/^[1-3]$/.test(e.key)) selectClass(Classes.byId(+e.key).key);
+  if (e.key === 'e' || e.key === 'E'){ state.brush = 'erase'; updateBrush(); renderCanvas(); }
+  if (e.key === 'Escape' && drawer.classList.contains('on')) closeDrawer();
 });
 
 window.addEventListener('resize', ()=>{ fitCanvas(); renderCanvas(); });
@@ -2011,10 +1650,7 @@ if (window.__TAURI__) {
   };
 }
 
-restoreCloudDirtyQueue();
-if (hasSyncInit()) {
-  window.syncInit(state, afterRemoteMerge, mayMergeRemote).catch(e => console.warn('initial sync failed:', e));
-}
+initialCloudLoad();
 
 CropCatalog.subscribe(() => {
   buildPalette();
@@ -2046,11 +1682,11 @@ wireCropCatalogRefresh(CropCatalog);
 // ── EXPOSE UTILITIES for calendar.js to consume ───────────────────
 window.TANIMAN = {
   state, GRID, PLOTS, CROPS, MONTH_SHORT, MONTH_FULL, MONTH_FULL_LONG, ALL_MONTHS,
-  SeasonUtils, CropCatalog,
+  SeasonUtils, CropCatalog, Classes,
   monthsBetween, maskList, maskToLabel, maskIntersects, maskContains,
   normalizeViewMonths, viewMonthFromMask, maskToDisplayLabel,
   shouldAutoSwitchViewMonths, isBrushHiddenOnMap,
   renderCanvas, drawPlotsOnMap, updateMapPlot, updateLegend, updatePlotHeader,
   saveState, tr, schedSave, visiblePlots,
-  invalidActivePaintRangeAtStartup,
+  selectionStatus: currentSelectionStatus,
 };

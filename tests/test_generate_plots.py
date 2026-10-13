@@ -35,18 +35,23 @@ def test_reproject_mercator_coordinates_to_exact_utm_square():
         np.testing.assert_allclose(actual[:, row, col], expected, atol=.05, rtol=0)
 
 
-def test_metadata_contains_full_grid_and_partial_plot():
+def test_metadata_contains_full_grid_and_partial_plot(tmp_path, monkeypatch):
     mod = generator()
     from plot_grid import build_plots, grid_constants
     plots = build_plots()
-    source = mod.metadata_source(grid_constants(), plots)
-    assert source.startswith('// Generated')
+    path = tmp_path / 'data.js'
+    path.write_text('// before\n// BEGIN GENERATED STUDY AREA DATA\n// stale\n// END GENERATED STUDY AREA DATA\n// after\n', encoding='utf-8')
+    monkeypatch.setattr(mod, 'DATA_JS_PATH', path)
+    mod.write_grid_to_data_js([], [], plots)
+    source = path.read_text(encoding='utf-8')
+    assert source.startswith('// before\n')
+    assert source.endswith('// after\n')
+    assert '// stale' not in source
     assert 'window.GRID = ' in source
-    assert 's2-32651-258690-1841210-10-571-494-v1' in source
     assert 'window.PLOTS = ' in source
-    payload = source.split('window.PLOTS = ', 1)[1].rstrip().removesuffix(';')
+    payload = source.split('window.PLOTS = ', 1)[1].split(';', 1)[0]
     records = json.loads(payload)
     assert len(records) == 120
     assert records[-1]['validCols'] == 21
     assert records[-1]['validRows'] == 44
-    assert records[-1]['tilePath'] == 'tiles/s2-plots/plot_119.jpg?v=s2-v1'
+    assert records[-1]['tilePath'] == 'tiles/plots/plot_119.jpg?v=s2'

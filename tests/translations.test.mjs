@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
+import { createRequire } from 'node:module';
 import vm from 'node:vm';
+
+const require = createRequire(import.meta.url);
+const Classes = require('../classes.js');
 
 const dataSource = await readFile(new URL('../data.js', import.meta.url), 'utf8');
 const appSource = await readFile(new URL('../app.js', import.meta.url), 'utf8');
@@ -19,14 +23,16 @@ function sortedKeys(obj) {
 }
 
 test('supported language data is limited to English, Tagalog, and Ilocano', () => {
-  const { CROPS, STRINGS, STRINGS_LEGACY } = loadData();
+  const data = loadData();
+  const { STRINGS, STRINGS_LEGACY } = data;
   const supported = ['en', 'il', 'tl'];
 
   assert.deepEqual(sortedKeys(STRINGS), supported);
   assert.deepEqual(sortedKeys(STRINGS_LEGACY), supported);
+  assert.equal('CROPS' in data, false, 'crops are classes now; data.js no longer defines CROPS');
 
-  for (const crop of CROPS) {
-    assert.deepEqual(sortedKeys(crop.name), supported, `${crop.id} should only define EN, IL, and TL names`);
+  for (const cls of Classes.ALL) {
+    assert.deepEqual(sortedKeys(cls.name), supported, `${cls.key} should only define EN, IL, and TL names`);
   }
 });
 
