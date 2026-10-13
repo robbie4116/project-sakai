@@ -15,6 +15,18 @@ partial; cells past the composite are greyed out and cannot be painted. The
 constants live in `plot_grid.py` (Python) and `grid.js` (browser). The Paoay
 boundary is drawn on the map for reference only.
 
+The Paoay boundary (`boundaries/Benguet_Atok_Paoay_boundary.geojson`) is the
+PSA/NAMRIA barangay outline, PSGC PH1401101005, taken from the panel-supplied
+"Atok, Benguet" KMZ. It lies fully inside the Sentinel-2 grid, and the export
+uses it to set `inside_paoay`. To replace it:
+
+```bash
+python scripts/import_paoay_boundary.py path/to/paoay_namria.geojson
+python generate_plots.py --skip-images
+```
+
+The import refuses a polygon that isn't Paoay or that leaves the grid.
+
 No `.tif` file is needed. If you have the composite, you can check it matches:
 
 ```bash

@@ -95,6 +95,19 @@ The composite is offset about 770 m east of the app's Paoay boundary. The team
 chose to tile the composite's extent so that every paintable cell has a training
 pixel. The Paoay outline is still drawn on the map for reference only.
 
+**Boundary update (2026-10-13):** that offset came from the boundary, not from
+the composite. The 2019 faeldon/philippines-json-maps polygon sits about 780 m
+west and 70 m south of the PSA/NAMRIA Paoay outline (PSGC PH1401101005, from the
+panel-supplied "Atok, Benguet" KMZ); after removing that shift the two match at
+99% overlap. The composite extent is the NAMRIA outline's bounding box rounded
+out to the 10 m grid, so NAMRIA Paoay lies entirely inside the 571 × 494 grid.
+`boundaries/Benguet_Atok_Paoay_boundary.geojson` now holds the NAMRIA polygon,
+imported with `scripts/import_paoay_boundary.py`. The grid, plots and tiles are
+unchanged, so no re-export is needed. `boundaries/Benguet_Atok_boundary.geojson`
+is still the older outline with the same offset. It isn't drawn or used by the
+web app, but replace it with a NAMRIA Atok outline before using it for any
+analysis.
+
 ### Geometry in the browser
 
 The generator writes each plot's four corners (NW, NE, SE, SW) in WGS84 to the
