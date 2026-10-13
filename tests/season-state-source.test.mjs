@@ -3,7 +3,6 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 const appSource = await readFile(new URL('../app.js', import.meta.url), 'utf8');
-const cropExportSource = await readFile(new URL('../crop-export.js', import.meta.url), 'utf8');
 const htmlSource = await readFile(new URL('../taniman.html', import.meta.url), 'utf8');
 const tauriStageSource = await readFile(new URL('../src-tauri/scripts/prepare-dist.mjs', import.meta.url), 'utf8');
 
@@ -13,75 +12,57 @@ test('plot state stores seasons instead of crop-index month mask cells', () => {
   assert.doesNotMatch(appSource, /function emptyCells\(\)/);
 });
 
-test('painting adds cropId date seasons and does not OR month masks', () => {
-  assert.match(appSource, /function addCellsToPaintSeason/);
-  assert.match(appSource, /cropId:\s*crop\.id/);
-  assert.doesNotMatch(appSource, /p\.cells\[state\.crop\]\[k\]\s*\|=/);
+test('painting adds cells to the deterministic season for the selection and queues a delta', () => {
+  assert.match(appSource, /function addCellsToPaintSeason\(idx, p, cellIds\)/);
+  assert.match(appSource, /const id = Classes\.seasonId\(idx, meta\);/);
+  assert.match(appSource, /queueSeasonChange\(idx, season, added, \[\]\)/);
 });
 
-test('erase removes cells from all seasons and prunes empty seasons', () => {
-  assert.match(appSource, /function eraseCellsFromSeasons/);
-  assert.match(appSource, /season\.cells\.filter/);
-  assert.match(appSource, /p\.seasons\s*=\s*\(p\.seasons\s*\|\|\s*\[\]\)\.filter/);
+test('painting only touches in-bounds cells under the brush', () => {
+  assert.match(appSource, /GridMath\.brushCells\(plot, cell\.r, cell\.c, size\)/);
 });
 
-test('visible crop calculations read seasons and active view months', () => {
-  assert.match(appSource, /function cellVisibleCropIds/);
+test('erase removes cells from all seasons, queues removals and prunes empty seasons', () => {
+  assert.match(appSource, /function eraseCellsFromSeasons\(idx, p, cellIds\)/);
+  assert.match(appSource, /queueSeasonChange\(idx, season, \[\], removed\)/);
+  assert.match(appSource, /p\.seasons\s*=\s*p\.seasons\.filter\(season => season\.cells && season\.cells\.length\)/);
+});
+
+test('visible colors read seasons and active view months', () => {
+  assert.match(appSource, /function cellVisibleColors/);
   assert.match(appSource, /seasonIntersectsViewMonths/);
   assert.doesNotMatch(appSource, /p\.cells\[c\]\[cellIdx\]/);
 });
 
-test('plot details schedule summary renders season ranges', () => {
+test('plot details schedule summary renders season ranges by class', () => {
   assert.match(appSource, /function renderScheduleSummary/);
+  assert.match(appSource, /Classes\.className\(season\.classId, state\.lang\)/);
   assert.match(appSource, /season\.start/);
   assert.match(appSource, /season\.end/);
 });
 
-test('export writes ML-ready seasons csv with georeferenced rows', () => {
-  assert.match(appSource, /let seasonsCsv\s*=/);
-  assert.match(appSource, /season_id,cell_idx,cell_row,cell_col,crop_id,start_mmdd,end_mmdd,wraps_year/);
-  assert.match(appSource, /seasonExportRows,\s*\n\}\s*=\s*SeasonUtils/);
-  assert.match(appSource, /seasonExportRows/);
-  assert.match(appSource, /folder\.file\('seasons\.csv',\s*seasonsCsv\)/);
+test('export writes the label-export files', () => {
+  for (const name of ['seasons.csv', 'fields.csv', 'classes.csv', 'plots.csv', 'metadata.json']) {
+    assert.match(appSource, new RegExp(`folder\\.file\\('${name.replace('.', '\\.')}'`));
+  }
+  assert.match(appSource, /LabelExport\.buildExport\(/);
+  assert.doesNotMatch(appSource, /farmers\.csv|plot_crop_counts\.csv|crops\.csv|labels\.csv/);
 });
 
-test('metadata documents recurring inclusive date windows', () => {
-  assert.match(appSource, /schema_version:\s*5/);
-  assert.match(appSource, /recurring annual/);
-  assert.match(appSource, /inclusive/);
+test('export flushes pending edits before building', () => {
+  const handler = appSource.slice(appSource.indexOf("document.getElementById('btn-save').onclick"));
+  assert.ok(handler.indexOf('await flushCloudSync()') < handler.indexOf('LabelExport.buildExport('));
 });
 
-test('export includes a crop lookup, sparse crop counts, and all non-target season rows', () => {
-  assert.match(appSource, /CropExport\.buildCropLookupRows\(/);
-  assert.match(appSource, /CropExport\.buildPlotCropCounts\(/);
-  assert.match(appSource, /folder\.file\('crops\.csv'/);
-  assert.match(appSource, /folder\.file\('plot_crop_counts\.csv'/);
-  assert.match(appSource, /other_crop_cells/);
-  assert.match(appSource, /is_resolved/);
+test('label PNGs grey out-of-bounds cells', () => {
+  assert.match(appSource, /oct\.fillStyle = '#404040';/);
 });
 
-test('all season and label text fields are CSV escaped, including raw crop IDs', () => {
-  assert.match(appSource, /csvEscape\(row\.season_id\)/);
-  assert.match(appSource, /csvEscape\(row\.crop_id\)/);
-  assert.match(appSource, /csvEscape\(row\.farmer_id\)/);
-  assert.match(cropExportSource, /csvEscape\(crop\.crop_name\)/);
-  assert.match(cropExportSource, /csvEscape\(count\.crop_id\)/);
-});
-
-test('crop export helpers load before app.js in web and Tauri builds', () => {
-  assert.match(htmlSource, /<script src="crop-export\.js"><\/script>[\s\S]*s1\.src = 'app\.js'/);
-  assert.match(tauriStageSource, /'crop-picker\.js',\s*'crop-export\.js'/);
-});
-
-test('export releases temporary season rows after building compact crop aggregates', () => {
-  const lookupBuiltAt = appSource.indexOf('const cropLookupRows = CropExport.buildCropLookupRows');
-  const countsBuiltAt = appSource.indexOf('const plotCropCountRows = CropExport.buildPlotCropCounts');
-  const releasedAt = appSource.indexOf('allSeasonExportRows.length = 0');
-  const zipGenerationAt = appSource.indexOf("zip.generateAsync({type:'blob'})");
-
-  assert.notEqual(lookupBuiltAt, -1);
-  assert.notEqual(countsBuiltAt, -1);
-  assert.notEqual(releasedAt, -1);
-  assert.ok(releasedAt > lookupBuiltAt && releasedAt > countsBuiltAt);
-  assert.ok(releasedAt < zipGenerationAt, 'release retained season-row objects before ZIP serialization');
+test('new modules load before app.js in web and Tauri builds', () => {
+  const modules = ['grid.js', 'classes.js', 'season-outbox.js', 'field-ids.js', 'label-export.js', 'class-picker.js'];
+  for (const name of modules) {
+    assert.match(htmlSource, new RegExp(`<script src="${name.replace('.', '\\.')}"><\\/script>[\\s\\S]*s1\\.src = 'app\\.js'`));
+    assert.match(tauriStageSource, new RegExp(`'${name.replace('.', '\\.')}'`));
+  }
+  assert.doesNotMatch(htmlSource + tauriStageSource, /crop-export\.js/);
 });

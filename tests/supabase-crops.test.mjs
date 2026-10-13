@@ -1,18 +1,13 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
+import { createRequire } from 'node:module';
 import vm from 'node:vm';
 
+const require = createRequire(import.meta.url);
+const Classes = require('../classes.js');
 const syncSource = await readFile(new URL('../supabase-sync.js', import.meta.url), 'utf8');
-const cropSqlSource = await readFile(new URL('../docs/supabase-add-crops.sql', import.meta.url), 'utf8');
-
-function sqlFunction(source, name) {
-  const start = source.indexOf(`create or replace function public.${name}()`);
-  assert.notEqual(start, -1, `Expected SQL to define ${name}`);
-  const end = source.indexOf('$$;', start);
-  assert.notEqual(end, -1, `Expected SQL function ${name} to end`);
-  return source.slice(start, end + 3);
-}
+const schemaSource = await readFile(new URL('../docs/supabase-foundation.sql', import.meta.url), 'utf8');
 
 function loadAdapter({ online = true, result = { data: null, error: null }, rpcResult = result } = {}) {
   const calls = [];
@@ -85,7 +80,7 @@ test('fetchCustomCrops propagates Supabase read errors with their error code', a
   const { api } = loadAdapter({ result: { data: null, error: readError } });
 
   await assert.rejects(api.fetchCustomCrops(), error => {
-    assert.strictEqual(error, readError);
+    assert.equal(error.message, 'catalog read denied');
     assert.equal(error.code, '42501');
     return true;
   });
@@ -111,7 +106,7 @@ test('insertCustomCrop propagates Supabase errors with their error code', async 
   const { api } = loadAdapter({ result: { data: null, error: duplicateError } });
 
   await assert.rejects(api.insertCustomCrop('Ube', '#714B9E'), error => {
-    assert.strictEqual(error, duplicateError);
+    assert.equal(error.message, 'duplicate crop name');
     assert.equal(error.code, '23505');
     return true;
   });
@@ -133,12 +128,12 @@ test('deleteCustomCrop rejects offline without creating a Supabase client', asyn
   assert.deepEqual(calls, []);
 });
 
-test('deleteCustomCrop validates UUIDs, calls the crop cleanup RPC, and normalizes its count', async () => {
+test('deleteCustomCrop validates UUIDs, calls the delete_crop RPC, and normalizes its count', async () => {
   const id = '123e4567-e89b-12d3-a456-426614174000';
   const { api, calls } = loadAdapter({ rpcResult: { data: '7', error: null } });
 
   assert.strictEqual(await api.deleteCustomCrop(id), 7);
-  assert.deepEqual(JSON.parse(JSON.stringify(calls.slice(-1))), [['rpc', 'delete_crop_and_seasons', { p_crop_id: id }]]);
+  assert.deepEqual(JSON.parse(JSON.stringify(calls.slice(-1))), [['rpc', 'delete_crop', { p_crop_id: id }]]);
   await assert.rejects(api.deleteCustomCrop('not-a-uuid'), /UUID/i);
 });
 
@@ -146,16 +141,15 @@ test('deleteCustomCrop rejects RPC errors and clamps invalid RPC counts to zero'
   const id = '123e4567-e89b-12d3-a456-426614174000';
   const rpcError = Object.assign(new Error('delete denied'), { code: '42501' });
   const failure = loadAdapter({ rpcResult: { data: null, error: rpcError } });
-  await assert.rejects(failure.api.deleteCustomCrop(id), error => error === rpcError);
+  await assert.rejects(failure.api.deleteCustomCrop(id), error => error.code === '42501');
 
   const invalidCount = loadAdapter({ rpcResult: { data: '-2', error: null } });
   assert.strictEqual(await invalidCount.api.deleteCustomCrop(id), 0);
 });
 
-test('plot custom-crop validation locks every new canonical crop and preserves dangling legacy IDs only on unchanged seasons', () => {
-  const validation = sqlFunction(cropSqlSource, 'validate_plot_custom_crops');
-
-  assert.match(validation, /tg_op\s*=\s*'UPDATE'\s+and\s+new\.seasons\s+is\s+not\s+distinct\s+from\s+old\.seasons\s+then\s+return\s+new;/i);
-  assert.match(validation, /perform\s+1\s+from\s+public\.crops\s+where\s+id\s*=\s*custom_id\s+for\s+key\s+share;/i);
-  assert.doesNotMatch(validation, /old_entry|continue;/i);
+test('the schema blocks the same reserved crop names as the client', () => {
+  const constraint = schemaSource.match(/add constraint crops_not_target_name check \([\s\S]*?not in \(([^)]*)\)/i);
+  assert.ok(constraint, 'Expected supabase-foundation.sql to define crops_not_target_name');
+  const sqlNames = constraint[1].split(',').map(name => name.trim().replace(/^'|'$/g, ''));
+  assert.deepEqual(sqlNames, Classes.RESERVED_CROP_NAMES);
 });

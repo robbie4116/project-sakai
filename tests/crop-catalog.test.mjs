@@ -4,7 +4,9 @@ import test from 'node:test';
 import vm from 'node:vm';
 
 const catalogSource = await readFile(new URL('../crop-catalog.js', import.meta.url), 'utf8').catch(() => '');
-const CACHE_KEY = 'taniman_custom_crops_v1';
+const seasonSource = await readFile(new URL('../season-utils.js', import.meta.url), 'utf8');
+const classesSource = await readFile(new URL('../classes.js', import.meta.url), 'utf8');
+const CACHE_KEY = 'taniman_custom_crops_v2';
 const UUID_A = '123e4567-e89b-12d3-a456-426614174000';
 const UUID_B = '123e4567-e89b-12d3-a456-426614174001';
 
@@ -20,12 +22,7 @@ function makeContext({ cache, tauri = false, fetch, insert, remove } = {}) {
   if (cache !== undefined) store.set(CACHE_KEY, cache);
   const storageCalls = [];
   const apiCalls = { fetch: 0, insert: [], remove: [] };
-  const crops = [
-    { id: 'lettuce', hex: '#22C55E', name: { en: 'Lettuce', tl: 'Letsugas', il: 'Letsugas' } },
-    { id: 'potato', hex: '#FFC629', name: { en: 'Potato', tl: 'Patatas', il: 'Patatas' } },
-    { id: 'carrot', hex: '#FF6A1F', name: { en: 'Carrot', tl: 'Karot', il: 'Karot' } },
-  ];
-  const window = { CROPS: crops };
+  const window = {};
   if (tauri) window.__TAURI__ = {};
   const localStorage = {
     getItem(key) { storageCalls.push(['get', key]); return store.get(key) ?? null; },
@@ -43,27 +40,31 @@ function makeContext({ cache, tauri = false, fetch, insert, remove } = {}) {
     if (remove) return remove(id);
     return 0;
   };
-  const context = { window, localStorage };
-  vm.runInNewContext(catalogSource, context, { filename: 'crop-catalog.js' });
-  return { catalog: window.TANIMAN_CROP_CATALOG, crops, store, storageCalls, apiCalls };
+  const context = vm.createContext({ window, localStorage });
+  // classes.js supplies the reserved names (carrot, cabbage, potato in en/tl/il).
+  vm.runInContext(seasonSource, context, { filename: 'season-utils.js' });
+  vm.runInContext(classesSource, context, { filename: 'classes.js' });
+  vm.runInContext(catalogSource, context, { filename: 'crop-catalog.js' });
+  const catalog = window.TANIMAN_CROP_CATALOG;
+  return { catalog, crops: window.CROPS, store, storageCalls, apiCalls };
 }
 
 function cache(rows) {
   return JSON.stringify({ version: 1, rows });
 }
 
-test('synchronously hydrates the original CROPS array from targets and versioned cache', () => {
+test('synchronously hydrates the shared CROPS array from the versioned cache', () => {
   const rawRows = [{ id: UUID_A, name: 'Amaranth', hex: '#258C55' }];
   const { catalog, crops } = makeContext({ cache: cache(rawRows) });
 
-  assert.strictEqual(catalog.all().length, 4);
-  assert.deepEqual(Array.from(catalog.all(), crop => crop.id), ['lettuce', 'potato', 'carrot', `crop_${UUID_A}`]);
+  assert.strictEqual(catalog.all().length, 1);
+  assert.deepEqual(Array.from(catalog.all(), crop => crop.id), [UUID_A]);
   assert.strictEqual(catalog.all(), crops);
-  assert.strictEqual(catalog.byId(`crop_${UUID_A}`).name.en, 'Amaranth');
-  assert.deepEqual(JSON.parse(JSON.stringify(catalog.byId(`crop_${UUID_A}`).name)), { en: 'Amaranth' });
-  assert.strictEqual(catalog.byId(`crop_${UUID_A}`).isResolved, true);
-  assert.strictEqual(catalog.isTarget('lettuce'), true);
-  assert.strictEqual(catalog.isResolved('lettuce'), true);
+  assert.strictEqual(catalog.byId(UUID_A).name.en, 'Amaranth');
+  assert.deepEqual(JSON.parse(JSON.stringify(catalog.byId(UUID_A).name)), { en: 'Amaranth' });
+  assert.strictEqual(catalog.byId(UUID_A).isResolved, true);
+  assert.strictEqual(catalog.isTarget(UUID_A), false);
+  assert.strictEqual(catalog.isResolved('lettuce'), false);
 });
 
 test('ignores malformed cache JSON, unsupported cache versions, and invalid rows', () => {
@@ -78,7 +79,7 @@ test('ignores malformed cache JSON, unsupported cache versions, and invalid rows
     ]),
   ]) {
     const { catalog } = makeContext({ cache: badCache });
-    assert.deepEqual(Array.from(catalog.all(), crop => crop.id), ['lettuce', 'potato', 'carrot']);
+    assert.deepEqual(Array.from(catalog.all(), crop => crop.id), []);
   }
 });
 
@@ -97,20 +98,20 @@ test('normalizes names across tabs and newlines, validates hex, and saves a cust
   assert.strictEqual(result.status, 'created');
   assert.deepEqual(apiCalls.insert[0], ['Sweet potato', '#a1B2c3']);
   assert.strictEqual(catalog.all(), crops);
-  assert.strictEqual(result.crop.id, `crop_${UUID_A}`);
+  assert.strictEqual(result.crop.id, UUID_A);
   assert.deepEqual(JSON.parse(JSON.stringify(result.crop.name)), { en: 'Sweet potato' });
   assert.strictEqual(result.crop.hex, '#a1B2c3');
 });
 
-test('rejects target names in English, Tagalog, and Ilocano before insertion', async () => {
+test('rejects class names (carrot, cabbage, potato) in English and Tagalog/Ilocano before insertion', async () => {
   const { catalog, apiCalls } = makeContext();
-  for (const name of ['Lettuce', 'Letsugas', 'Potato', 'Patatas', 'Carrot', 'Karot']) {
-    await assert.rejects(catalog.create(`\t${name}\n`, '#AABBCC'), /target/i);
+  for (const name of ['Carrot', 'Karot', 'Cabbage', 'Repolyo', 'Potato', 'Patatas']) {
+    await assert.rejects(catalog.create(`\t${name}\n`, '#AABBCC'), /class/i);
   }
   assert.deepEqual(apiCalls.insert, []);
 });
 
-test('ordinary refresh calls share one in-flight request and replace custom rows in target-first order', async () => {
+test('ordinary refresh calls share one in-flight request and replace custom rows in name order', async () => {
   const request = deferred();
   const { catalog, apiCalls } = makeContext({ fetch: () => request.promise });
   let notifications = 0;
@@ -127,9 +128,7 @@ test('ordinary refresh calls share one in-flight request and replace custom rows
   ]);
   await Promise.all([first, second]);
 
-  assert.deepEqual(Array.from(catalog.all(), crop => crop.id), [
-    'lettuce', 'potato', 'carrot', `crop_${UUID_A}`, `crop_${UUID_B}`,
-  ]);
+  assert.deepEqual(Array.from(catalog.all(), crop => crop.id), [UUID_A, UUID_B]);
   assert.strictEqual(notifications, 1);
 });
 
@@ -149,8 +148,8 @@ test('a newer forced refresh remains authoritative over superseded unconfirmed r
   olderFetch.resolve([{ id: UUID_A, name: 'Rice', hex: '#E0C060' }]);
   await olderRefresh;
 
-  assert.strictEqual(catalog.isResolved(`crop_${UUID_B}`), true);
-  assert.strictEqual(catalog.isResolved(`crop_${UUID_A}`), false);
+  assert.strictEqual(catalog.isResolved(UUID_B), true);
+  assert.strictEqual(catalog.isResolved(UUID_A), false);
 });
 
 test('a refresh started before a successful insert cannot remove the inserted row', async () => {
@@ -162,7 +161,7 @@ test('a refresh started before a successful insert cannot remove the inserted ro
   await staleRefresh;
 
   assert.strictEqual(created.status, 'created');
-  assert.strictEqual(catalog.byId(`crop_${UUID_A}`).name.en, 'Amaranth');
+  assert.strictEqual(catalog.byId(UUID_A).name.en, 'Amaranth');
 });
 
 test('23505 waits for older refresh then fetches the authoritative duplicate', async () => {
@@ -183,8 +182,8 @@ test('23505 waits for older refresh then fetches the authoritative duplicate', a
 
   assert.strictEqual(apiCalls.fetch, 2);
   assert.strictEqual(result.status, 'duplicate');
-  assert.strictEqual(result.crop.id, `crop_${UUID_A}`);
-  assert.strictEqual(catalog.byId(`crop_${UUID_A}`).name.en, 'Rice');
+  assert.strictEqual(result.crop.id, UUID_A);
+  assert.strictEqual(catalog.byId(UUID_A).name.en, 'Rice');
 });
 
 test('concurrent 23505 creates share one authoritative recovery refresh', async () => {
@@ -243,13 +242,13 @@ test('duplicate recovery uses its authoritative row when a later forced refresh 
   const result = await duplicatePromise;
   assert.strictEqual(apiCalls.fetch, 2);
   assert.strictEqual(result.status, 'duplicate');
-  assert.strictEqual(result.crop.id, `crop_${UUID_A}`);
-  assert.strictEqual(catalog.isResolved(`crop_${UUID_A}`), true);
-  assert.strictEqual(catalog.byId(`crop_${UUID_A}`), result.crop);
+  assert.strictEqual(result.crop.id, UUID_A);
+  assert.strictEqual(catalog.isResolved(UUID_A), true);
+  assert.strictEqual(catalog.byId(UUID_A), result.crop);
 
   laterFetch.resolve([]);
   await latestRefresh;
-  assert.strictEqual(catalog.isResolved(`crop_${UUID_A}`), true);
+  assert.strictEqual(catalog.isResolved(UUID_A), true);
 });
 
 test('a duplicate with no locally matchable normalized name keeps refreshed crops and provides search guidance', async () => {
@@ -259,14 +258,14 @@ test('a duplicate with no locally matchable normalized name keeps refreshed crop
   });
 
   await assert.rejects(catalog.create('Caf\u00e9', '#BBBBBB'), /search/i);
-  assert.strictEqual(catalog.byId(`crop_${UUID_A}`).name.en, 'Cafe\u0301');
+  assert.strictEqual(catalog.byId(UUID_A).name.en, 'Cafe\u0301');
 });
 
 test('subscribe returns an unsubscribe function and reference changes create unknown placeholders', () => {
   const { catalog } = makeContext();
   let notifications = 0;
   const unsubscribe = catalog.subscribe(() => notifications++);
-  catalog.registerReferences([{ seasons: [{ cropId: 'missing-crop' }, { cropId: 'lettuce' }] }]);
+  catalog.registerReferences([{ seasons: [{ cropId: 'missing-crop' }, { cropId: null }] }]);
 
   const placeholder = catalog.byId('missing-crop');
   assert.strictEqual(placeholder.isResolved, false);
@@ -315,7 +314,7 @@ test('catalog rebuild handles a large set of referenced unknown crops', () => {
 
   catalog.registerReferences(plots);
 
-  assert.strictEqual(catalog.all().length, 150_003);
+  assert.strictEqual(catalog.all().length, 150_000);
   assert.strictEqual(catalog.byId('unknown-149999').isResolved, false);
 });
 
@@ -326,17 +325,17 @@ test('failed Supabase refresh preserves cached rows', async () => {
   });
 
   await assert.rejects(catalog.refresh(), /catalog unavailable/);
-  assert.strictEqual(catalog.byId(`crop_${UUID_A}`).name.en, 'Amaranth');
+  assert.strictEqual(catalog.byId(UUID_A).name.en, 'Amaranth');
 });
 
-test('Tauri mode ignores cache and remote catalog calls and stays target-only', async () => {
+test('Tauri mode ignores cache and remote catalog calls and stays empty', async () => {
   const { catalog, apiCalls, storageCalls } = makeContext({
     tauri: true,
     cache: cache([{ id: UUID_A, name: 'Amaranth', hex: '#258C55' }]),
     fetch: async () => [{ id: UUID_A, name: 'Amaranth', hex: '#258C55' }],
   });
 
-  assert.deepEqual(Array.from(catalog.all(), crop => crop.id), ['lettuce', 'potato', 'carrot']);
+  assert.deepEqual(Array.from(catalog.all(), crop => crop.id), []);
   await catalog.refresh();
   await assert.rejects(catalog.create('Amaranth', '#258C55'), /unavailable|offline|Tauri/i);
   assert.deepEqual(apiCalls, { fetch: 0, insert: [], remove: [] });
@@ -354,26 +353,26 @@ test('remove deletes a confirmed custom crop only after the server confirms dele
   let notifications = 0;
   catalog.subscribe(() => notifications++);
 
-  const removedSeasons = await catalog.remove(`crop_${UUID_A}`);
+  const removedSeasons = await catalog.remove(UUID_A);
 
   assert.strictEqual(removedSeasons, 4);
   assert.deepEqual(apiCalls.remove, [UUID_A]);
-  assert.strictEqual(catalog.isResolved(`crop_${UUID_A}`), false);
+  assert.strictEqual(catalog.isResolved(UUID_A), false);
   assert.deepEqual(JSON.parse(store.get(CACHE_KEY)).rows, []);
   assert.strictEqual(notifications, 1);
 });
 
-test('remove rejects target, unknown, malformed, and Tauri crop IDs without server calls', async () => {
+test('remove rejects unknown, malformed, legacy-prefixed and Tauri crop IDs without server calls', async () => {
   const { catalog, apiCalls } = makeContext({
     cache: cache([{ id: UUID_A, name: 'Amaranth', hex: '#258C55' }]),
   });
-  for (const id of ['lettuce', 'crop_missing', 'crop_not-a-uuid', UUID_A, '']) {
+  for (const id of ['lettuce', 'not-a-uuid', `crop_${UUID_A}`, UUID_B, '']) {
     await assert.rejects(catalog.remove(id));
   }
   assert.deepEqual(apiCalls.remove, []);
 
   const offline = makeContext({ tauri: true });
-  await assert.rejects(offline.catalog.remove(`crop_${UUID_A}`), /unavailable|offline|Tauri/i);
+  await assert.rejects(offline.catalog.remove(UUID_A), /unavailable|offline|Tauri/i);
   assert.deepEqual(offline.apiCalls.remove, []);
 });
 
@@ -383,9 +382,9 @@ test('remove retains the custom crop and cache when server deletion fails', asyn
     remove: async () => { throw new Error('delete rejected'); },
   });
 
-  await assert.rejects(catalog.remove(`crop_${UUID_A}`), /delete rejected/);
+  await assert.rejects(catalog.remove(UUID_A), /delete rejected/);
 
   assert.deepEqual(apiCalls.remove, [UUID_A]);
-  assert.strictEqual(catalog.byId(`crop_${UUID_A}`).name.en, 'Amaranth');
+  assert.strictEqual(catalog.byId(UUID_A).name.en, 'Amaranth');
   assert.deepEqual(JSON.parse(store.get(CACHE_KEY)).rows, [{ id: UUID_A, name: 'Amaranth', hex: '#258C55' }]);
 });

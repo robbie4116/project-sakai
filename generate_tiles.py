@@ -428,6 +428,7 @@ def require_source_rasters():
 
 
 def main():
+    raise SystemExit("Legacy Tauri tile builder: it would overwrite the Sentinel-2 grid in data.js. Use generate_plots.py.")
     atok_feature = load_feature(ATOK_BOUNDARY_PATH)
     paoay_feature = load_feature(PAOAY_BOUNDARY_PATH)
     atok_poly = geometry_to_latlng_poly(atok_feature)
