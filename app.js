@@ -176,45 +176,81 @@ function saveState(){
 }
 
 // ── CLOUD SYNC ───────────────────────────────────────────────────
-const cloudDirty = new Set();
+// Season cells sync as per-season deltas through apply_season_cells (spec
+// section 8). Plot note/photos sync as a slim plots row. The outbox is saved
+// with state so unsent edits survive reloads.
+const outbox = Outbox.create(state.outbox);
+const metaDirty = new Set(Array.isArray(state.metaDirty) ? state.metaDirty : []);
+delete state.outbox;
+delete state.metaDirty;
 let cloudTimer = null;
-const CLOUD_SYNC_DELAY = 4000;
+let flushPromise = null;
+const CLOUD_SYNC_DELAY = 1500;
 const CLOUD_RETRY_DELAY = 30000;
 
-function hasSyncPlots() { return typeof window.syncPlots === 'function'; }
-function hasSyncInit() { return typeof window.syncInit === 'function'; }
-function hasSyncOnNavigate() { return typeof window.syncOnNavigate === 'function'; }
-function isCloudDirty(idx) {
-  const p = state.plots[idx];
-  return cloudDirty.has(idx) || !!(p && p._dirty_at);
-}
-function mayMergeRemote(idx) { return !isCloudDirty(idx); }
+function hasCloud() { return typeof window.applySeasonCells === 'function'; }
+// Queued or in flight: the local copy of this season is newer than the server's.
+function isSeasonPending(id) { return outbox.has(id); }
 function hasPendingPhotoUpload(idx) {
   const p = state.plots[idx];
   return !!(p && p.photos && p.photos.some(ph => ph && ph.dataUrl && !ph.url));
 }
-function cloudRetryIndices(indices) {
-  const candidates = indices
-    ? indices.map(Number)
-    : Object.keys(state.plots).map(Number);
-  return [...new Set(candidates)]
-    .filter(idx => Number.isInteger(idx) && state.plots[idx])
-    .filter(idx => isCloudDirty(idx) || hasPendingPhotoUpload(idx));
+
+function scheduleCloudFlush(delay = CLOUD_SYNC_DELAY) {
+  if (!hasCloud()) return;
+  clearTimeout(cloudTimer);
+  cloudTimer = setTimeout(() => {
+    flushCloudSync().catch(e => console.warn('cloud sync failed:', e));
+  }, delay);
 }
 
-function afterRemoteMerge(idx) {
-  if (isCloudDirty(idx)) return;
-  ensurePlot(idx);
+function queueSeasonChange(plotIdx, season, add, remove) {
+  outbox.record(Outbox.metaFromSeason(plotIdx, season), add, remove);
+  scheduleCloudFlush();
+}
+
+function queueMetaChange(plotIdx) {
+  metaDirty.add(plotIdx);
+  scheduleCloudFlush();
+}
+
+function afterRemoteChange(idx) {
   CropCatalog.registerReferences(state.plots);
   updateMapPlot(idx);
   if (idx === state.plotIdx) {
     renderCanvas();
     updatePlotHeader();
     refreshMetaToggle();
-    if (drawer && drawer.classList.contains('on')) loadMetadataIntoDrawer();
+    if (drawer && drawer.classList.contains('on')) renderScheduleSummary();
   }
   updateProgress();
-  saveState();
+  schedSave();
+}
+
+function applyServerSeason(plotIdx, seasonId, row) {
+  const p = ensurePlot(plotIdx);
+  const i = p.seasons.findIndex(s => s.id === seasonId);
+  if (!row) {
+    if (i >= 0) p.seasons.splice(i, 1);
+  } else if (i >= 0) {
+    p.seasons[i] = Outbox.seasonFromRow(row);
+  } else {
+    p.seasons.push(Outbox.seasonFromRow(row));
+  }
+  afterRemoteChange(plotIdx);
+}
+
+async function refreshPlotFromServer(idx) {
+  if (typeof window.fetchPlotSeasons !== 'function') return;
+  try {
+    const rows = await window.fetchPlotSeasons(idx);
+    const p = ensurePlot(idx);
+    p.seasons = Outbox.mergeRemoteSeasons(p.seasons, rows.map(Outbox.seasonFromRow), isSeasonPending);
+    clearUndoForPlot(idx);
+    afterRemoteChange(idx);
+  } catch (e) {
+    console.warn('plot refresh failed:', e);
+  }
 }
 
 async function uploadPendingPhotos(idx) {
@@ -233,75 +269,79 @@ async function uploadPendingPhotos(idx) {
   return changed;
 }
 
-async function flushCloudSync(indices) {
-  if (!hasSyncPlots()) return;
-  const list = cloudRetryIndices(indices);
-  if (!list.length) return;
-  list.forEach(idx => {
-    cloudDirty.add(idx);
-    if (!state.plots[idx]._dirty_at) state.plots[idx]._dirty_at = new Date().toISOString();
-  });
-  const dirtySnapshot = new Map(list.map(idx => [idx, state.plots[idx]._dirty_at]));
-  let photosChanged = false;
-  for (const idx of list) photosChanged = (await uploadPendingPhotos(idx)) || photosChanged;
-  if (photosChanged) saveState();
-  const ok = await window.syncPlots(list, state, DEVICE_ID);
-  if (ok) {
-    list.forEach(idx => {
-      if (!state.plots[idx]) return;
-      if (state.plots[idx]._dirty_at !== dirtySnapshot.get(idx)) {
-        cloudDirty.add(idx);
-      } else if (hasPendingPhotoUpload(idx)) {
-        cloudDirty.add(idx);
-      } else {
-        cloudDirty.delete(idx);
-        delete state.plots[idx]._dirty_at;
-      }
-    });
+// Only one flush runs at a time; callers that need it finished await this.
+function flushCloudSync() {
+  if (!hasCloud()) return Promise.resolve();
+  if (!flushPromise) flushPromise = runCloudFlush().finally(() => { flushPromise = null; });
+  return flushPromise;
+}
+
+async function runCloudFlush() {
+  let retry = false;
+  try {
+    ({ retry } = await Outbox.flush(outbox, {
+      send: delta => window.applySeasonCells(delta),
+      onRow: (delta, row) => applyServerSeason(delta.plotIdx, delta.id, row),
+      onPermanent: async (delta, error) => {
+        console.warn('dropping a change the server rejected:', error);
+        // A crop name deleted here makes its in-flight deltas fail; that is expected.
+        const cropDeleted = delta.cropId && !CropCatalog.isResolved(delta.cropId);
+        if (!cropDeleted) toast(tr('syncDropped'));
+        await refreshPlotFromServer(delta.plotIdx);
+      },
+    }));
+    for (const idx of [...metaDirty]) {
+      await uploadPendingPhotos(idx);
+      const ok = await window.upsertPlotMeta(idx, ensurePlot(idx));
+      if (ok && !hasPendingPhotoUpload(idx)) metaDirty.delete(idx);
+      else retry = true;
+    }
+  } finally {
     saveState();
-    scheduleCloudRetry();
-  } else {
-    list.forEach(idx => {
-      if (state.plots[idx]) {
-        cloudDirty.add(idx);
-        if (!state.plots[idx]._dirty_at) state.plots[idx]._dirty_at = new Date().toISOString();
-      }
-    });
-    saveState();
-    scheduleCloudRetry();
+    if (retry) scheduleCloudFlush(CLOUD_RETRY_DELAY);
+    else if (outbox.size() || metaDirty.size) scheduleCloudFlush();
   }
-  return ok;
 }
 
-function markCloudDirty(idx) {
-  if (!Number.isInteger(idx) || !state.plots[idx]) return;
-  cloudDirty.add(idx);
-  state.plots[idx]._dirty_at = new Date().toISOString();
-  clearTimeout(cloudTimer);
-  cloudTimer = setTimeout(() => {
-    flushCloudSync().catch(e => console.warn('cloud sync failed:', e));
-  }, CLOUD_SYNC_DELAY);
+async function initialCloudLoad() {
+  if (typeof window.fetchAllSeasons !== 'function') return;
+  try {
+    const [seasonRows, metaRows] = await Promise.all([window.fetchAllSeasons(), window.fetchPlotMeta()]);
+    const byPlot = new Map();
+    for (const row of seasonRows) {
+      if (!byPlot.has(row.plot_idx)) byPlot.set(row.plot_idx, []);
+      byPlot.get(row.plot_idx).push(Outbox.seasonFromRow(row));
+    }
+    for (const plot of PLOTS) {
+      const remote = byPlot.get(plot.idx) || [];
+      if (!state.plots[plot.idx] && !remote.length) continue;
+      const p = ensurePlot(plot.idx);
+      p.seasons = Outbox.mergeRemoteSeasons(p.seasons, remote, isSeasonPending);
+    }
+    for (const row of metaRows) {
+      if (metaDirty.has(row.plot_idx)) continue;
+      const p = ensurePlot(row.plot_idx);
+      p.note = row.note || '';
+      p.photos = window.decodePhotos(row.photo_url);
+    }
+    undoStack.length = 0;
+    redoStack.length = 0;
+    updateUndoBtn();
+    CropCatalog.registerReferences(state.plots);
+    drawPlotsOnMap();
+    renderCanvas();
+    updatePlotHeader();
+    refreshMetaToggle();
+    updateProgress();
+    saveState();
+  } catch (e) {
+    console.warn('initial sync failed:', e);
+  }
+  scheduleCloudFlush(0);
 }
 
-function scheduleCloudRetry() {
-  if (!cloudDirty.size) return;
-  clearTimeout(cloudTimer);
-  cloudTimer = setTimeout(() => {
-    flushCloudSync().catch(e => console.warn('cloud sync failed:', e));
-  }, CLOUD_RETRY_DELAY);
-}
-
-function savePlotChange(idx) {
+function savePlotChange() {
   schedSave();
-  markCloudDirty(idx);
-}
-
-function restoreCloudDirtyQueue() {
-  Object.keys(state.plots).forEach(k => {
-    const idx = Number(k);
-    if (state.plots[idx] && state.plots[idx]._dirty_at) cloudDirty.add(idx);
-  });
-  scheduleCloudRetry();
 }
 
 // ── CELL DATA QUERIES ─────────────────────────────────────────────
@@ -433,31 +473,41 @@ function snapshotForUndo(idx) {
   redoStack.length = 0;
   updateUndoBtn();
 }
-function undo() {
-  const e = undoStack.pop();
-  if (!e) { updateUndoBtn(); return; }
+function restoreSeasonsSnapshot(idx, seasons) {
+  const p = ensurePlot(idx);
+  for (const delta of Outbox.diffSeasons(idx, p.seasons, seasons)) {
+    outbox.record(delta.meta, delta.add, delta.remove);
+  }
+  p.seasons = cloneSeasons(seasons);
+  scheduleCloudFlush();
+}
+function clearUndoForPlot(idx) {
+  for (const stack of [undoStack, redoStack]) {
+    for (let i = stack.length - 1; i >= 0; i--) if (stack[i].plotIdx === idx) stack.splice(i, 1);
+  }
+  updateUndoBtn();
+}
+function applyUndoEntry(e, pushTo) {
   const p = ensurePlot(e.plotIdx);
-  redoStack.push({ plotIdx: e.plotIdx, seasons: cloneSeasons(p.seasons) });
-  p.seasons = cloneSeasons(e.seasons);
+  pushTo.push({ plotIdx: e.plotIdx, seasons: cloneSeasons(p.seasons) });
+  if (pushTo.length > UNDO_LIMIT) pushTo.shift();
+  restoreSeasonsSnapshot(e.plotIdx, e.seasons);
   CropCatalog.registerReferences(state.plots);
   if (state.plotIdx !== e.plotIdx) { state.plotIdx = e.plotIdx; updatePlotHeader(); drawPlotsOnMap(); }
   else updateMapPlot(e.plotIdx);
   renderCanvas(); updateProgress(); refreshMetaToggle(); updateUndoBtn();
-  savePlotChange(e.plotIdx);
+  schedSave();
+}
+function undo() {
+  const e = undoStack.pop();
+  if (!e) { updateUndoBtn(); return; }
+  applyUndoEntry(e, redoStack);
   toast(tr('undone'));
 }
 function redo() {
   const e = redoStack.pop();
   if (!e) { updateUndoBtn(); return; }
-  const p = ensurePlot(e.plotIdx);
-  undoStack.push({ plotIdx: e.plotIdx, seasons: cloneSeasons(p.seasons) });
-  if (undoStack.length > UNDO_LIMIT) undoStack.shift();
-  p.seasons = cloneSeasons(e.seasons);
-  CropCatalog.registerReferences(state.plots);
-  if (state.plotIdx !== e.plotIdx) { state.plotIdx = e.plotIdx; updatePlotHeader(); drawPlotsOnMap(); }
-  else updateMapPlot(e.plotIdx);
-  renderCanvas(); updateProgress(); refreshMetaToggle(); updateUndoBtn();
-  savePlotChange(e.plotIdx);
+  applyUndoEntry(e, undoStack);
 }
 function updateUndoBtn() {
   const u = document.getElementById('btn-undo');
@@ -959,32 +1009,42 @@ function ensurePaintVisibleOnMap() {
     state.viewMonth = viewMonthFromMask(state.viewMonths);
   }
 }
-function addCellsToPaintSeason(p, cellIds) {
-  const data = activePaintSeasonData();
-  if (!data || !cellIds.length) return false;
-  let season = p.seasons.find(s =>
-    s.cropId === data.cropId && s.start === data.start && s.end === data.end);
-  const now = new Date().toISOString();
+function addCellsToPaintSeason(idx, p, cellIds) {
+  const meta = activePaintSeasonData();
+  if (!meta || !cellIds.length) return false;
+  const id = Classes.seasonId(idx, meta);
+  let season = p.seasons.find(s => s.id === id);
   if (!season) {
-    season = { id: newSeasonId(), cropId: data.cropId, start: data.start, end: data.end, cells: [], createdAt: now, updatedAt: now };
+    season = { id, ...meta, cells: [] };
     p.seasons.push(season);
   }
-  const seen = new Set(season.cells || []);
-  cellIds.forEach(id => seen.add(id));
-  season.cells = [...seen].sort((a, b) => a - b);
-  season.updatedAt = now;
+  const cells = new Set(season.cells);
+  const added = cellIds.filter(c => !cells.has(c));
+  if (!added.length) return false;
+  for (const c of added) cells.add(c);
+  season.cells = [...cells].sort((a, b) => a - b);
+  queueSeasonChange(idx, season, added, []);
   return true;
 }
-function eraseCellsFromSeasons(p, cellIds) {
+function eraseCellsFromSeasons(idx, p, cellIds) {
   const remove = new Set(cellIds);
-  const now = new Date().toISOString();
-  for (const season of p.seasons || []) {
-    if (!Array.isArray(season.cells)) season.cells = [];
-    season.cells = season.cells.filter(cellIdx => !remove.has(cellIdx));
-    season.updatedAt = now;
+  let changed = false;
+  for (const season of p.seasons) {
+    const removed = (season.cells || []).filter(c => remove.has(c));
+    if (!removed.length) continue;
+    season.cells = season.cells.filter(c => !remove.has(c));
+    queueSeasonChange(idx, season, [], removed);
+    changed = true;
   }
-  p.seasons = (p.seasons || []).filter(season => season.cells && season.cells.length);
-  return true;
+  p.seasons = p.seasons.filter(season => season.cells && season.cells.length);
+  return changed;
+}
+function flashPaintPrompt() {
+  const el = document.getElementById('canvas-prompt');
+  if (!el) return;
+  el.classList.remove('flash');
+  void el.offsetWidth;  // restart the animation
+  el.classList.add('flash');
 }
 function paintAt(clientX, clientY){
   const cell = cellAt(clientX, clientY);
@@ -993,24 +1053,21 @@ function paintAt(clientX, clientY){
   if (linear === lastIdx) return;
   lastIdx = linear;
 
-  const p = ensurePlot(state.plotIdx);
+  const idx = state.plotIdx;
+  const plot = PLOTS[idx];
+  if (state.brush !== 'erase' && !activePaintSeasonData()) { flashPaintPrompt(); return; }
+  const p = ensurePlot(idx);
   const size = state.brush==='erase' ? 1 : state.brush;
-  const half = Math.floor(size/2);
-  const cellIds = [];
-  for (let dr=-half; dr<=half; dr++){
-    for (let dc=-half; dc<=half; dc++){
-      const rr = cell.r+dr, cc = cell.c+dc;
-      if (rr<0||rr>=GRID||cc<0||cc>=GRID) continue;
-      cellIds.push(rr*GRID+cc);
-    }
-  }
-  if (state.brush === 'erase') eraseCellsFromSeasons(p, cellIds);
-  else if (!addCellsToPaintSeason(p, cellIds)) return;
+  const cellIds = GridMath.brushCells(plot, cell.r, cell.c, size);
+  const changed = state.brush === 'erase'
+    ? eraseCellsFromSeasons(idx, p, cellIds)
+    : addCellsToPaintSeason(idx, p, cellIds);
+  if (!changed) return;
   if (state.brush !== 'erase') ensurePaintVisibleOnMap();
   renderCanvas();
   updateProgress();
-  updateMapPlot(state.plotIdx);
-  savePlotChange(state.plotIdx);
+  updateMapPlot(idx);
+  savePlotChange(idx);
 }
 
 let saveTimer = null;
@@ -1022,7 +1079,7 @@ function schedSave(){
 function onDown(e){
   if (e.target !== canvas) return;
   painting = true; lastIdx = -1;
-  snapshotForUndo(state.plotIdx);
+  if (state.brush === 'erase' || activePaintSeasonData()) snapshotForUndo(state.plotIdx);
   e.preventDefault();
   const pt = e.touches ? e.touches[0] : e;
   paintAt(pt.clientX, pt.clientY);
@@ -1042,8 +1099,9 @@ function onMove(e){
       const half = Math.floor(size/2);
       cursor.style.left = ((cell.c-half)*cellPx) + 'px';
       cursor.style.top  = ((cell.r-half)*cellPx) + 'px';
-      const selectedCrop = CropCatalog.byId(state.selectedCropId);
-      cursor.style.borderColor = state.brush==='erase' ? 'var(--danger)' : (selectedCrop?.hex || '#9CA3AF');
+      cursor.style.borderColor = state.brush==='erase'
+        ? 'var(--danger)'
+        : Classes.selectionColor(state.selection, CropCatalog);
     }
   } else {
     cursor.style.display = 'none';
