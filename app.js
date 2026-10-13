@@ -1303,27 +1303,13 @@ function closeDrawer() {
   scrim.classList.remove('on');
   drawer.classList.remove('on');
 }
-function nextFarmerId(){
-  const used = new Set();
-  Object.values(state.plots).forEach(p => { if (p.farmerId) used.add(p.farmerId); });
-  for (let i=1; i<1000; i++){
-    const id = 'F-' + String(i).padStart(3,'0');
-    if (!used.has(id)) return id;
-  }
-  return 'F-001';
-}
 function loadMetadataIntoDrawer() {
   const p = ensurePlot(state.plotIdx);
   detailDraft = {
-    farmerId: p.farmerId || '',
-    farmer: p.farmer || '',
     note: p.note || '',
     photos: (p.photos || []).map(ph => ({ ...ph })),
   };
-  document.getElementById('in-farmer-id').value = detailDraft.farmerId;
-  document.getElementById('in-farmer').value = detailDraft.farmer;
   document.getElementById('in-note').value = detailDraft.note;
-  document.getElementById('sug-farmer-id').textContent = nextFarmerId();
   renderPhotos(detailDraft.photos);
   renderScheduleSummary();
 }
@@ -1356,21 +1342,21 @@ function renderScheduleSummary(){
   const root = document.getElementById('sched-summary-grid');
   const p = ensurePlot(state.plotIdx);
   const seasons = (p.seasons || []).filter(season =>
-    CropCatalog.byId(season.cropId) &&
-    isValidMmdd(season.start) &&
-    isValidMmdd(season.end) &&
-    season.cells &&
-    season.cells.length);
+    isValidMmdd(season.start) && isValidMmdd(season.end) && season.cells && season.cells.length);
   if (!seasons.length){
     root.innerHTML = `<div class="ss-empty">${tr('noSchedule')}</div>`;
     return;
   }
   root.innerHTML = `<div class="ss-season-list">` + seasons.map(season => {
-    const crop = CropCatalog.byId(season.cropId);
     const wraps = rangeWrapsYear(season.start, season.end) ? ' · wraps year' : '';
+    const label = season.classId === 4
+      ? (Classes.cropName(CropCatalog, season.cropId, state.lang) || Classes.className(4, state.lang))
+      : season.classId == null
+        ? `${Classes.className(null, state.lang)}: ${season.remark}`
+        : Classes.className(season.classId, state.lang);
     return `<div class="ss-season">
-      <span class="ss-dot" style="background:${crop.hex}"></span>
-      <span>${escapeHtml(crop.name[state.lang]||crop.name.en)} · ${season.start}-${season.end}${wraps}</span>
+      <span class="ss-dot" style="background:${seasonHex(season)}"></span>
+      <span>${escapeHtml(label)} · ${season.start}-${season.end}${wraps}</span>
       <span class="ss-count">${season.cells.length}</span>
     </div>`;
   }).join('') + `</div>`;
@@ -1384,11 +1370,9 @@ document.getElementById('dr-save').onclick = () => {
   if (!detailDraft) return;
   const idx = state.plotIdx;
   const p = ensurePlot(idx);
-  p.farmerId = detailDraft.farmerId.trim();
-  p.farmer = detailDraft.farmer.trim();
   p.note = detailDraft.note;
   p.photos = detailDraft.photos.map(ph => ({ ...ph }));
-  markCloudDirty(idx);
+  queueMetaChange(idx);
   saveState();
   refreshMetaToggle();
   updatePlotHeader();
@@ -1397,14 +1381,7 @@ document.getElementById('dr-save').onclick = () => {
   closeDrawer();
 };
 
-document.getElementById('in-farmer-id').oninput = (e) => { if (detailDraft) detailDraft.farmerId = e.target.value; };
-document.getElementById('in-farmer').oninput   = (e) => { if (detailDraft) detailDraft.farmer = e.target.value; };
 document.getElementById('in-note').oninput     = (e) => { if (detailDraft) detailDraft.note = e.target.value; };
-document.getElementById('sug-farmer-id').onclick = () => {
-  if (!detailDraft) return;
-  detailDraft.farmerId = nextFarmerId();
-  document.getElementById('in-farmer-id').value = detailDraft.farmerId;
-};
 document.getElementById('in-photo').onchange = async (e) => {
   const file = e.target.files[0]; if (!file) return;
   e.target.value = '';
@@ -1430,18 +1407,28 @@ document.getElementById('in-photo').onchange = async (e) => {
 };
 
 // ── CLEAR ─────────────────────────────────────────────────────────
-document.getElementById('btn-clear').onclick = ()=>{
-  if (!plotHasData(state.plotIdx)) return;
+document.getElementById('btn-clear').onclick = async ()=>{
+  const idx = state.plotIdx;
+  if (!plotHasData(idx)) return;
   if (!confirm(tr('confirmClear'))) return;
-  snapshotForUndo(state.plotIdx);
-  const p = state.plots[state.plotIdx];
+  const p = ensurePlot(idx);
+  outbox.dropPlot(idx);   // also drops in-flight deltas, so their results are ignored
+  metaDirty.delete(idx);
   p.seasons = emptySeasons();
-  p.farmer=''; p.farmerId=''; p.note=''; p.photos=[];
-  renderCanvas(); updateProgress(); updateMapPlot(state.plotIdx);
+  p.note = '';
+  p.photos = [];
+  clearUndoForPlot(idx);
+  renderCanvas(); updateProgress(); updateMapPlot(idx);
   if (drawer.classList.contains('on')) loadMetadataIntoDrawer();
   refreshMetaToggle(); updatePlotHeader();
-  savePlotChange(state.plotIdx);
+  saveState();
   toast(tr('cleared'));
+  if (typeof window.clearPlotRemote === 'function') {
+    // Let any request already on the wire land first, so clear_plot runs last.
+    if (flushPromise) await flushPromise.catch(() => {});
+    try { await window.clearPlotRemote(idx); }
+    catch (e) { console.warn('clear plot failed:', e); toast(tr('syncDropped')); }
+  }
 };
 document.getElementById('btn-undo').onclick = undo;
 document.getElementById('btn-redo').onclick = redo;
@@ -1657,90 +1644,6 @@ document.getElementById('btn-save').onclick = async () => {
   }
 };
 
-// ── ROSTER ────────────────────────────────────────────────────────
-function buildRosterData(){
-  // group plots by farmerId. Include an "unassigned with paint" bucket too.
-  CropCatalog.registerReferences(state.plots);
-  const map = new Map();
-  PLOTS.forEach(plot=>{
-    const p = state.plots[plot.idx];
-    if (!p || !plotHasPaint(plot.idx) && !p.farmerId && !p.farmer) return;
-    const key = p.farmerId || '__unassigned__';
-    if (!map.has(key)) map.set(key, { id: p.farmerId, name: p.farmer || '', plots: [], cropTotals: new Array(CROPS.length).fill(0), patchTotal: 0 });
-    const r = map.get(key);
-    if (!r.name && p.farmer) r.name = p.farmer;
-    r.plots.push(plot.idx);
-    if (p.seasons) {
-      for (const season of p.seasons) {
-        const cropIdx = cropIndexFromId(season.cropId);
-        if (cropIdx < 0) continue;
-        const n = (season.cells || []).length;
-        r.cropTotals[cropIdx] += n;
-        r.patchTotal += n;
-      }
-    }
-  });
-  const out = [...map.values()].sort((a,b)=>{
-    if (!a.id && b.id) return 1;
-    if (!b.id && a.id) return -1;
-    return (a.id||'').localeCompare(b.id||'');
-  });
-  return out;
-}
-function openRoster(){
-  document.getElementById('roster-modal').classList.add('on');
-  scrim.classList.add('on');
-  scrim.onclick = closeRoster;
-  renderRoster('');
-  document.getElementById('roster-search').focus();
-}
-function closeRoster(){
-  document.getElementById('roster-modal').classList.remove('on');
-  scrim.classList.remove('on');
-  scrim.onclick = closeDrawer; // restore
-}
-function renderRoster(q){
-  q = (q||'').trim().toLowerCase();
-  const data = buildRosterData();
-  const filtered = !q ? data : data.filter(r =>
-    (r.id||'').toLowerCase().includes(q) || (r.name||'').toLowerCase().includes(q)
-  );
-  document.getElementById('roster-stats').textContent =
-    `${data.filter(r=>r.id).length} ${tr('rosterFarmers')} · ${data.filter(r=>!r.id).length} ${tr('rosterUnassigned')}`;
-  const root = document.getElementById('roster-list');
-  if (!filtered.length){
-    root.innerHTML = `<div class="roster-empty">${tr('rosterEmpty')}</div>`;
-    return;
-  }
-  root.innerHTML = filtered.map(r=>{
-    const isU = !r.id;
-    const cropTags = r.cropTotals.map((n,i)=> n>0 ? `<span class="crop-tag"><span class="cdot" style="background:${CROPS[i].hex}"></span>${escapeHtml(CROPS[i].name[state.lang]||CROPS[i].name.en)}</span>` : '').join('');
-    const plotList = r.plots.slice(0,12).map(i=>plotDisplayLabel(PLOTS[i])).join(', ') + (r.plots.length>12?' …':'');
-    return `<div class="roster-card${isU?' unassigned':''}" data-plot="${r.plots[0]}">
-      <div class="roster-id">${escapeHtml(r.id || tr('rosterNoId'))}</div>
-      <div class="roster-mid">
-        <div class="roster-name ${r.name?'':'empty'}">${escapeHtml(r.name || tr('rosterNoName'))}</div>
-        <div class="roster-meta">
-          <span>${r.plots.length} ${r.plots.length===1?tr('plotS'):tr('plotP')}</span>
-          <span>${r.patchTotal.toLocaleString()} ${tr('patches')}</span>
-          <div class="crop-tags">${cropTags}</div>
-        </div>
-        <div class="roster-plots">Plots: ${escapeHtml(plotList)}</div>
-      </div>
-      <div class="roster-go">→</div>
-    </div>`;
-  }).join('');
-  root.querySelectorAll('.roster-card').forEach(card=>{
-    card.onclick = ()=>{
-      openPlot(+card.dataset.plot);
-      closeRoster();
-    };
-  });
-}
-document.getElementById('roster-btn').onclick = openRoster;
-document.getElementById('roster-close').onclick = closeRoster;
-document.getElementById('roster-search').oninput = (e)=>renderRoster(e.target.value);
-
 // ── TOAST ─────────────────────────────────────────────────────────
 let toastTimer = null;
 function toast(msg){
@@ -1835,10 +1738,7 @@ if (window.__TAURI__) {
   };
 }
 
-restoreCloudDirtyQueue();
-if (hasSyncInit()) {
-  window.syncInit(state, afterRemoteMerge, mayMergeRemote).catch(e => console.warn('initial sync failed:', e));
-}
+initialCloudLoad();
 
 CropCatalog.subscribe(() => {
   buildPalette();
@@ -1870,11 +1770,11 @@ wireCropCatalogRefresh(CropCatalog);
 // ── EXPOSE UTILITIES for calendar.js to consume ───────────────────
 window.TANIMAN = {
   state, GRID, PLOTS, CROPS, MONTH_SHORT, MONTH_FULL, MONTH_FULL_LONG, ALL_MONTHS,
-  SeasonUtils, CropCatalog,
+  SeasonUtils, CropCatalog, Classes,
   monthsBetween, maskList, maskToLabel, maskIntersects, maskContains,
   normalizeViewMonths, viewMonthFromMask, maskToDisplayLabel,
   shouldAutoSwitchViewMonths, isBrushHiddenOnMap,
   renderCanvas, drawPlotsOnMap, updateMapPlot, updateLegend, updatePlotHeader,
   saveState, tr, schedSave, visiblePlots,
-  invalidActivePaintRangeAtStartup,
+  selectionStatus: currentSelectionStatus,
 };
