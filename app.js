@@ -1121,32 +1121,61 @@ canvas.addEventListener('touchmove', onMove, {passive:false});
 canvas.addEventListener('touchend', onUp);
 canvas.addEventListener('mouseleave', ()=>{ document.getElementById('brush-cursor').style.display='none'; });
 
-// ── CROP PALETTE ──────────────────────────────────────────────────
+// ── CLASS + CROP NAME SELECTION ───────────────────────────────────
 let cropPickerInstance = null;
+let classPickerInstance = null;
 
-function selectCrop(cropId){
-  const crop = CropCatalog.byId(cropId);
-  if (!crop || !CropCatalog.isResolved(crop.id)) return;
-  state.selectedCropId = crop.id;
-  if (state.brush==='erase') state.brush = 1;
+function applyClassDates(key) {
+  const defaults = Classes.defaultDates(key);
+  if (defaults && (state.paintStartDate == null || state.datesAuto)) {
+    state.paintStartDate = defaults.start;
+    state.paintEndDate = defaults.end;
+    state.datesAuto = true;
+  } else if (!defaults && state.datesAuto) {
+    state.paintStartDate = null;
+    state.paintEndDate = null;
+    state.datesAuto = false;
+  }
+}
+function refreshSelectionUi() {
   buildPalette();
   updateBrush();
-  updateScheduleReadout();
-  schedSave();
+  if (typeof window.syncSeasonSelectors === 'function') window.syncSeasonSelectors();
+  if (typeof window.updateScheduleReadout === 'function') window.updateScheduleReadout();
+  renderCanvas();
+}
+function selectClass(key) {
+  if (!Classes.byKey(key)) return;
+  state.selection.classKey = key;
+  if (key !== 'other_cultivated') state.selection.cropId = null;
+  if (key !== 'other') state.selection.remark = '';
+  applyClassDates(key);
+  if (state.brush === 'erase') state.brush = 1;
+  refreshSelectionUi();
+}
+function selectCrop(cropId) {
+  const crop = CropCatalog.byId(cropId);
+  if (!crop || !CropCatalog.isResolved(crop.id)) return;
+  state.selection.classKey = 'other_cultivated';
+  state.selection.cropId = crop.id;
+  state.selection.remark = '';
+  applyClassDates('other_cultivated');
+  if (state.brush === 'erase') state.brush = 1;
+  refreshSelectionUi();
+}
+function setRemark(text) {
+  state.selection.remark = text;
+  if (typeof window.updateScheduleReadout === 'function') window.updateScheduleReadout();
+  renderCanvas();
 }
 
 async function removeCustomCrop(cropId) {
   const removedSeasons = await CropCatalog.remove(cropId);
-  for (const [key, plot] of Object.entries(state.plots)) {
-    if (!plot || !Array.isArray(plot.seasons)) continue;
-    const idx = Number(key);
-    const hadCrop = plot.seasons.some(season => season && season.cropId === cropId);
-    if (!hadCrop) continue;
-    plot.seasons = plot.seasons.filter(season => season && season.cropId !== cropId);
-    // Queue the sanitized plot so its remaining local metadata and pending
-    // photos are kept while the deleted crop cannot be restored remotely.
-    markCloudDirty(idx);
+  outbox.dropCrop(cropId);
+  for (const plot of Object.values(state.plots)) {
+    if (plot && Array.isArray(plot.seasons)) plot.seasons = plot.seasons.filter(s => s && s.cropId !== cropId);
   }
+  if (state.selection.cropId === cropId) state.selection.cropId = null;
   undoStack.length = 0;
   redoStack.length = 0;
   updateUndoBtn();
@@ -1159,15 +1188,31 @@ async function removeCustomCrop(cropId) {
   updatePlotHeader();
   refreshMetaToggle();
   if (drawer && drawer.classList.contains('on')) loadMetadataIntoDrawer();
+  refreshSelectionUi();
   return removedSeasons;
 }
 
 function buildPalette(){
+  if (!classPickerInstance) {
+    classPickerInstance = window.TANIMAN_CLASS_PICKER.create({
+      root: document.getElementById('class-picker'),
+      remarkField: document.getElementById('other-remark-field'),
+      remarkInput: document.getElementById('other-remark'),
+      remarkLabel: document.getElementById('other-remark-label'),
+      classes: Classes.ALL,
+      onSelect: selectClass,
+      onRemark: setRemark,
+    });
+  }
+  classPickerInstance.render({
+    classKey: state.selection.classKey, remark: state.selection.remark, lang: state.lang, tr,
+  });
+  document.getElementById('crop-name-section').hidden = state.selection.classKey !== 'other_cultivated';
   if (!cropPickerInstance) {
     cropPickerInstance = window.TANIMAN_CROP_PICKER.create({
       root: document.getElementById('crop-picker'),
       catalog: CropCatalog,
-      selectedCropId: state.selectedCropId,
+      selectedCropId: state.selection.cropId || '',
       lang: state.lang,
       onSelect: selectCrop,
       onCreate: async (name, hex) => {
@@ -1178,7 +1223,7 @@ function buildPalette(){
       onRemove: removeCustomCrop,
     });
   }
-  cropPickerInstance.render({ selectedCropId: state.selectedCropId, lang: state.lang });
+  cropPickerInstance.render({ selectedCropId: state.selection.cropId || '', lang: state.lang });
 }
 function updateBrush(){
   document.querySelectorAll('.brush-btn').forEach(b=>{
@@ -1838,6 +1883,7 @@ document.querySelectorAll('.brush-btn').forEach(b=>{
     const v = b.dataset.brush;
     state.brush = v==='erase' ? 'erase' : +v;
     updateBrush();
+    renderCanvas();
     saveState();
   };
 });
@@ -1850,19 +1896,9 @@ document.addEventListener('keydown', (e)=>{
   if ((e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'Z')){ e.preventDefault(); undo(); return; }
   if (e.key === 'ArrowLeft') openPlot(adjacentVisiblePlotIdx(state.plotIdx, -1));
   if (e.key === 'ArrowRight') openPlot(adjacentVisiblePlotIdx(state.plotIdx, 1));
-  if (/^[1-3]$/.test(e.key)){
-    const targetCrops = CROPS.filter(crop => CropCatalog.isTarget(crop.id));
-    if (!targetCrops[+e.key - 1]) return;
-    state.selectedCropId = targetCrops[+e.key - 1].id;
-    buildPalette();
-    updateScheduleReadout();
-    schedSave();
-  }
-  if (e.key === 'e' || e.key === 'E'){ state.brush = 'erase'; updateBrush(); }
-  if (e.key === 'Escape'){
-    if (document.getElementById('roster-modal').classList.contains('on')) closeRoster();
-    else if (drawer.classList.contains('on')) closeDrawer();
-  }
+  if (/^[1-3]$/.test(e.key)) selectClass(Classes.byId(+e.key).key);
+  if (e.key === 'e' || e.key === 'E'){ state.brush = 'erase'; updateBrush(); renderCanvas(); }
+  if (e.key === 'Escape' && drawer.classList.contains('on')) closeDrawer();
 });
 
 window.addEventListener('resize', ()=>{ fitCanvas(); renderCanvas(); });
