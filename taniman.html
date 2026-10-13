@@ -129,6 +129,12 @@
           </div>
           <div class="canvas-status">
             <div class="canvas-corner" id="canvas-corner">50 × 50</div>
+            <div class="canvas-zoom" role="group" aria-label="Canvas zoom">
+              <button type="button" id="canvas-move" aria-pressed="false" disabled title="Move around the zoomed plot instead of painting (M). Also: hold space, right-drag, or two fingers">✋ Move</button>
+              <button type="button" id="zoom-canvas-out" aria-label="Zoom out" title="Zoom out (−)">−</button>
+              <button type="button" id="zoom-canvas-level" aria-label="Fit whole plot" title="Fit whole plot (0)">1×</button>
+              <button type="button" id="zoom-canvas-in" aria-label="Zoom in" title="Zoom in (+, scroll or pinch)">+</button>
+            </div>
             <div class="canvas-view-tag" id="canvas-view-tag">Showing · all year</div>
           </div>
         </div>
@@ -286,6 +292,7 @@
 <script src="season-utils.js"></script>
 <script src="grid.js"></script>
 <script src="rf-labels.js"></script>
+<script src="canvas-zoom.js"></script>
 <script src="cycle-metadata.js"></script>
 <script src="classes.js"></script>
 <script src="season-outbox.js"></script>

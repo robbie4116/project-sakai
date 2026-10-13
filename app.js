@@ -10,6 +10,7 @@ const PAOAY_POLY = window.PAOAY_POLY;
 const PLOTS = window.PLOTS;
 const GridMath = window.TANIMAN_GRID;
 const RFLabels = window.TANIMAN_RF_LABELS;
+const CanvasZoom = window.TANIMAN_CANVAS_ZOOM;
 const Classes = window.TANIMAN_CLASSES;
 const Outbox = window.TANIMAN_OUTBOX;
 const LabelExport = window.TANIMAN_LABEL_EXPORT;
@@ -112,6 +113,8 @@ function getCss(name){ return getComputedStyle(document.documentElement).getProp
 
 let map, plotRects = {}, plotMarkers = {}, plotCompositionBars = {};
 let painting = false, lastIdx = -1;
+let canvasView = CanvasZoom.create();  // plot canvas zoom/pan, reset per plot
+let panDrag = null, pinch = null, strokeHasUndo = false, spaceHeld = false, moveMode = false;
 let imgCache = {};
 let lastSaveAt = Date.now();
 let detailDraft = null;
@@ -846,6 +849,9 @@ function renderCanvas(){
   ctx.clearRect(0,0,w,h);
   ctx.fillStyle = getCss('--canvas-bg');
   ctx.fillRect(0, 0, w, h);
+  // Everything below is drawn in unzoomed plot coordinates.
+  const zoom = canvasView.z;
+  ctx.setTransform(dpr * zoom, 0, 0, dpr * zoom, -canvasView.x * w * dpr * zoom, -canvasView.y * h * dpr * zoom);
 
   const plot = PLOTS[state.plotIdx];
   const tile = getPlotTile(state.plotIdx);
@@ -884,22 +890,25 @@ function renderCanvas(){
 
   // grid
   ctx.strokeStyle = getCss('--grid-line');
-  ctx.lineWidth = 0.5;
-  ctx.globalAlpha = 0.45;
+  // Zoomed cells are large enough for a full-pixel line between them.
+  ctx.lineWidth = (zoom > 1 ? 1 : 0.5) / zoom;
+  ctx.globalAlpha = zoom > 1 ? 0.6 : 0.45;
   for (let i=1;i<GRID;i++){
     ctx.beginPath(); ctx.moveTo(i*cellW, 0); ctx.lineTo(i*cellW, h); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(0, i*cellH); ctx.lineTo(w, i*cellH); ctx.stroke();
   }
   ctx.globalAlpha = 1;
   ctx.strokeStyle = getCss('--grid-major');
-  ctx.lineWidth = 1.4;
+  ctx.lineWidth = 1.4 / zoom;
   for (let i=10;i<GRID;i+=10){
     ctx.beginPath(); ctx.moveTo(i*cellW, 0); ctx.lineTo(i*cellW, h); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(0, i*cellH); ctx.lineTo(w, i*cellH); ctx.stroke();
   }
   ctx.strokeStyle = getCss('--grid-major');
-  ctx.lineWidth = 1.2;
+  ctx.lineWidth = 1.2 / zoom;
   ctx.strokeRect(0.5,0.5,w-1,h-1);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  updateCanvasZoomControls();
 
   // corner counter
   document.getElementById('canvas-corner').textContent = `10 × 10 m per cell · ${painted} / ${GridMath.validCellCount(plot)}`;
@@ -924,9 +933,11 @@ function renderCanvas(){
 // ── PAINTING ──────────────────────────────────────────────────────
 function cellAt(clientX, clientY){
   const rect = canvas.getBoundingClientRect();
-  const x = clientX - rect.left, y = clientY - rect.top;
-  const c = Math.floor(x / (rect.width / GRID));
-  const r = Math.floor(y / (rect.height / GRID));
+  const sx = (clientX - rect.left) / rect.width, sy = (clientY - rect.top) / rect.height;
+  if (!(sx >= 0 && sx < 1 && sy >= 0 && sy < 1)) return null;
+  const base = CanvasZoom.toBase(canvasView, sx, sy);
+  const c = Math.floor(base.x * GRID);
+  const r = Math.floor(base.y * GRID);
   if (c<0||c>=GRID||r<0||r>=GRID) return null;
   return {r,c};
 }
@@ -1011,29 +1022,111 @@ function schedSave(){
   saveTimer = setTimeout(saveState, 400);
 }
 
+// ── CANVAS ZOOM ───────────────────────────────────────────────────
+// Wheel or trackpad pinch zooms at the pointer; two fingers pinch and pan on
+// touch. The Move toggle makes a plain drag pan instead of paint; space-drag,
+// right-drag and middle-drag pan without it.
+function setMoveMode(on) {
+  moveMode = !!on && canvasView.z > 1;
+  const btn = document.getElementById('canvas-move');
+  if (btn) btn.setAttribute('aria-pressed', String(moveMode));
+  canvas.classList.toggle('pan-ready', moveMode || spaceHeld);
+  document.getElementById('brush-cursor').style.display = 'none';
+}
+function setCanvasView(view) {
+  canvasView = CanvasZoom.clamp(view);
+  document.getElementById('brush-cursor').style.display = 'none';
+  renderCanvas();
+}
+function resetCanvasZoom() { canvasView = CanvasZoom.create(); }
+function zoomCanvasBy(factor, clientX, clientY) {
+  const rect = canvas.getBoundingClientRect();
+  const sx = clientX === undefined ? 0.5 : (clientX - rect.left) / rect.width;
+  const sy = clientY === undefined ? 0.5 : (clientY - rect.top) / rect.height;
+  setCanvasView(CanvasZoom.zoomAt(canvasView, factor, sx, sy));
+}
+function updateCanvasZoomControls() {
+  const level = document.getElementById('zoom-canvas-level');
+  if (!level) return;
+  const z = canvasView.z;
+  level.textContent = (Math.round(z * 10) / 10) + '×';
+  level.disabled = z === 1;
+  document.getElementById('zoom-canvas-out').disabled = z === 1;
+  document.getElementById('zoom-canvas-in').disabled = z >= CanvasZoom.MAX_ZOOM;
+  document.getElementById('canvas-move').disabled = z === 1;
+  if (z === 1 && moveMode) setMoveMode(false);  // nothing to move at 1×
+}
+function touchMidpoint(e) {
+  const rect = canvas.getBoundingClientRect();
+  const [a, b] = e.touches;
+  return {
+    x: ((a.clientX + b.clientX) / 2 - rect.left) / rect.width,
+    y: ((a.clientY + b.clientY) / 2 - rect.top) / rect.height,
+    d: Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY) || 1,
+  };
+}
+// A second finger turns a one-finger stroke into a pinch: undo what it painted.
+function cancelStroke() {
+  if (!painting) return;
+  painting = false;
+  if (!strokeHasUndo) return;
+  strokeHasUndo = false;
+  const entry = undoStack.pop();
+  restoreSeasonsSnapshot(entry.plotIdx, entry.seasons);
+  renderCanvas(); updateProgress(); updateMapPlot(entry.plotIdx); refreshMetaToggle(); updateUndoBtn(); schedSave();
+}
+
 function onDown(e){
   if (e.target !== canvas) return;
-  painting = true; lastIdx = -1;
-  if (state.brush === 'erase' || activePaintSeasonData()) snapshotForUndo(state.plotIdx);
   e.preventDefault();
+  if (e.touches && e.touches.length > 1) {
+    cancelStroke();
+    pinch = { start: touchMidpoint(e), view: canvasView };
+    return;
+  }
+  if (moveMode || (!e.touches && (spaceHeld || e.button === 1 || e.button === 2))) {
+    const pt = e.touches ? e.touches[0] : e;
+    panDrag = { x: pt.clientX, y: pt.clientY };
+    canvas.classList.add('panning');
+    return;
+  }
+  painting = true; lastIdx = -1;
+  strokeHasUndo = state.brush === 'erase' || !!activePaintSeasonData();
+  if (strokeHasUndo) snapshotForUndo(state.plotIdx);
   const pt = e.touches ? e.touches[0] : e;
   paintAt(pt.clientX, pt.clientY);
 }
 function onMove(e){
   const cursor = document.getElementById('brush-cursor');
   const rect = canvas.getBoundingClientRect();
+  if (pinch && e.touches && e.touches.length > 1) {
+    e.preventDefault();
+    const now = touchMidpoint(e), start = pinch.start;
+    const zoomed = CanvasZoom.zoomAt(pinch.view, now.d / start.d, start.x, start.y);
+    setCanvasView(CanvasZoom.pan(zoomed, now.x - start.x, now.y - start.y));
+    return;
+  }
+  if (pinch) return;  // one finger left after a pinch: no painting until lifted
+  if (panDrag) {
+    const pt = e.touches ? e.touches[0] : e;
+    if (e.touches) e.preventDefault();
+    setCanvasView(CanvasZoom.pan(canvasView, (pt.clientX - panDrag.x) / rect.width, (pt.clientY - panDrag.y) / rect.height));
+    panDrag = { x: pt.clientX, y: pt.clientY };
+    return;
+  }
+  if (moveMode) return;  // no brush outline while moving
   const pt = e.touches ? e.touches[0] : e;
   if (pt && pt.clientX>=rect.left && pt.clientX<=rect.right && pt.clientY>=rect.top && pt.clientY<=rect.bottom){
     const size = state.brush==='erase' ? 1 : state.brush;
-    const cellPx = rect.width / GRID;
+    const cellPx = rect.width / GRID * canvasView.z;
     cursor.style.display = 'block';
     cursor.style.width = (cellPx*size) + 'px';
     cursor.style.height = (cellPx*size) + 'px';
     const cell = cellAt(pt.clientX, pt.clientY);
     if (cell){
       const half = Math.floor(size/2);
-      cursor.style.left = ((cell.c-half)*cellPx) + 'px';
-      cursor.style.top  = ((cell.r-half)*cellPx) + 'px';
+      cursor.style.left = ((cell.c-half) * cellPx - canvasView.x * rect.width * canvasView.z) + 'px';
+      cursor.style.top  = ((cell.r-half) * cellPx - canvasView.y * rect.height * canvasView.z) + 'px';
       cursor.style.borderColor = state.brush==='erase'
         ? 'var(--danger)'
         : Classes.selectionColor(state.selection, CropCatalog);
@@ -1046,8 +1139,22 @@ function onMove(e){
     paintAt(pt.clientX, pt.clientY);
   }
 }
-function onUp(){ painting = false; }
+function onUp(e){
+  painting = false;
+  if (panDrag) { panDrag = null; canvas.classList.remove('panning'); }
+  if (pinch && !(e && e.touches && e.touches.length)) pinch = null;
+}
 
+canvas.addEventListener('wheel', e => {
+  e.preventDefault();
+  const delta = e.deltaY * (e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 400 : 1);
+  zoomCanvasBy(Math.exp(-delta * (e.ctrlKey ? 0.01 : 0.002)), e.clientX, e.clientY);
+}, {passive:false});
+canvas.addEventListener('contextmenu', e => e.preventDefault());
+document.getElementById('zoom-canvas-in').addEventListener('click', () => zoomCanvasBy(1.5));
+document.getElementById('zoom-canvas-out').addEventListener('click', () => zoomCanvasBy(1 / 1.5));
+document.getElementById('zoom-canvas-level').addEventListener('click', () => setCanvasView(CanvasZoom.create()));
+document.getElementById('canvas-move').addEventListener('click', () => setMoveMode(!moveMode));
 canvas.addEventListener('mousedown', onDown);
 document.addEventListener('mousemove', onMove);
 document.addEventListener('mouseup', onUp);
@@ -1086,6 +1193,7 @@ function selectClass(key) {
   if (key !== 'other') state.selection.remark = '';
   applyClassDates(key);
   if (state.brush === 'erase') state.brush = 1;
+  setMoveMode(false);
   refreshSelectionUi();
 }
 function selectCrop(cropId) {
@@ -1096,6 +1204,7 @@ function selectCrop(cropId) {
   state.selection.remark = '';
   applyClassDates('other_cultivated');
   if (state.brush === 'erase') state.brush = 1;
+  setMoveMode(false);
   refreshSelectionUi();
 }
 function setRemark(text) {
@@ -1172,6 +1281,7 @@ function openPlot(idx){
   if (!PLOTS[idx]) return;
   const prev = state.plotIdx;
   state.plotIdx = idx;
+  if (prev !== idx) resetCanvasZoom();
   updatePlotHeader();
   renderCanvas();
   updateMapPlot(prev);
@@ -1558,6 +1668,7 @@ document.querySelectorAll('.brush-btn').forEach(b=>{
   b.onclick = ()=>{
     const v = b.dataset.brush;
     state.brush = v==='erase' ? 'erase' : +v;
+    setMoveMode(false);
     updateBrush();
     renderCanvas();
     saveState();
@@ -1573,9 +1684,19 @@ document.addEventListener('keydown', (e)=>{
   if (e.key === 'ArrowLeft') openPlot(adjacentVisiblePlotIdx(state.plotIdx, -1));
   if (e.key === 'ArrowRight') openPlot(adjacentVisiblePlotIdx(state.plotIdx, 1));
   if (/^[1-3]$/.test(e.key)) selectClass(Classes.byId(+e.key).key);
-  if (e.key === 'e' || e.key === 'E'){ state.brush = 'erase'; updateBrush(); renderCanvas(); }
+  if (e.key === 'e' || e.key === 'E'){ state.brush = 'erase'; setMoveMode(false); updateBrush(); renderCanvas(); }
+  if (e.key === 'm' || e.key === 'M') setMoveMode(!moveMode);
+  if (e.key === '+' || e.key === '=') zoomCanvasBy(1.5);
+  if (e.key === '-' || e.key === '_') zoomCanvasBy(1 / 1.5);
+  if (e.key === '0') setCanvasView(CanvasZoom.create());
+  if (e.key === ' ' && !e.repeat && e.target.tagName !== 'BUTTON') { e.preventDefault(); spaceHeld = true; canvas.classList.add('pan-ready'); }
   if (e.key === 'Escape' && drawer.classList.contains('on')) closeDrawer();
 });
+
+document.addEventListener('keyup', e => {
+  if (e.key === ' ') { spaceHeld = false; canvas.classList.toggle('pan-ready', moveMode); }
+});
+window.addEventListener('blur', () => { spaceHeld = false; canvas.classList.toggle('pan-ready', moveMode); });
 
 window.addEventListener('resize', ()=>{ fitCanvas(); renderCanvas(); });
 

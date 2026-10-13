@@ -107,6 +107,15 @@ python -m pytest tests/test_plot_grid.py
 Painting is blocked until the selection is complete. Nothing is selected when
 the page loads.
 
+To paint small farms, zoom the plot canvas up to 6×: use the − / + buttons under
+it, the scroll wheel or trackpad pinch, two-finger pinch on a tablet, or the
+`+`, `-` and `0` (fit) keys. To move around while zoomed, turn on **✋ Move**
+(or press `M`): a drag then moves the view instead of painting. Picking a class
+or brush, or zooming back to 1×, switches back to painting. Shortcuts that never
+paint: drag with two fingers, hold space and drag, or right-drag. Starting a
+pinch cancels anything the first finger painted. Opening another plot resets the
+zoom.
+
 ## Data export
 
 Use the "Save all (.zip)" button in the app footer. Exports:
