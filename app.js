@@ -110,7 +110,6 @@ let painting = false, lastIdx = -1;
 let imgCache = {};
 let lastSaveAt = Date.now();
 let detailDraft = null;
-let mapTileCache = {};
 
 function visiblePlots() {
   return PLOTS;
@@ -578,9 +577,11 @@ const MAP_CONTEXT_BOUNDS = L.latLngBounds(
   [16.93070509876553, 120.9375]
 );
 const MAP_DETAIL_BOUNDS = L.latLngBounds(
-  [ATOK_DETAIL_BOUNDS.s, ATOK_DETAIL_BOUNDS.w],
-  [ATOK_DETAIL_BOUNDS.n, ATOK_DETAIL_BOUNDS.e]
+  [GRID_BOUNDS.latS, GRID_BOUNDS.lngW],
+  [GRID_BOUNDS.latN, GRID_BOUNDS.lngE]
 );
+// About 1 km of margin around the composite extent.
+const GRID_MAX_BOUNDS = MAP_DETAIL_BOUNDS.pad(0.2);
 
 function useOnlineImagery() {
   return !window.__TAURI__;
@@ -656,27 +657,19 @@ function initMap(){
     zoom:14,
     minZoom: MAP_APP_MIN_ZOOM,
     maxZoom: getMapMaxZoom(),
-    maxBounds: MAP_CONTEXT_BOUNDS,
+    maxBounds: GRID_MAX_BOUNDS,
     maxBoundsViscosity: 0.85,
     zoomControl:false,
     attributionControl:false,
     zoomAnimation:false,
   });
   addBaseImageryLayers();
-  L.polygon(ATOK_POLY, {
-    color: '#FFFFFF', weight: 1.5,
-    fill: false, interactive: false
-  }).addTo(map);
-
   L.polygon(PAOAY_POLY, {
     color:'#F2C84B', weight:2.5, dashArray:'7,5',
     fillColor:'#F2C84B', fillOpacity:0.04, interactive:false
   }).addTo(map);
   drawPlotsOnMap();
-  map.fitBounds([
-    [ATOK_DETAIL_BOUNDS.s, ATOK_DETAIL_BOUNDS.w],
-    [ATOK_DETAIL_BOUNDS.n, ATOK_DETAIL_BOUNDS.e]
-  ]);
+  map.fitBounds(MAP_DETAIL_BOUNDS);
   document.getElementById('zoom-in').onclick = ()=>map.zoomIn();
   document.getElementById('zoom-out').onclick = ()=>map.zoomOut();
   function updateLabelVisibility() {
@@ -691,9 +684,9 @@ function initMap(){
 function plotStyle(idx){
   const plot = PLOTS[idx];
   const composition = plotCompositionForView(idx);
-  const { crop } = composition;
+  const { top } = composition;
   const isCurrent = idx === state.plotIdx;
-  if (crop){
+  if (top){
     return {
       color: isCurrent ? '#F2C84B' : getCss('--mixed-stroke'),
       weight: isCurrent ? 3 : 2,
@@ -718,7 +711,7 @@ function compositionBarHtml(composition) {
     const requestedPct = Number(composition.percentages[i]) * 100 || 0;
     const pct = Math.min(Math.max(0, requestedPct), Math.max(0, 100 - usedPct));
     usedPct += pct;
-    return `<span class="mix-seg" style="width:${pct}%;background:${CROPS[i].hex}"></span>`;
+    return `<span class="mix-seg" style="width:${pct}%;background:${Classes.ALL[i].hex}"></span>`;
   }).join('');
   return `<div class="mix-bar" aria-hidden="true">${segments}</div>`;
 }
@@ -759,7 +752,7 @@ function drawPlotsOnMap(){
 
   PLOTS.forEach(plot=>{
     const style = plotStyle(plot.idx);
-    const rect = L.rectangle([[plot.latS, plot.lngW],[plot.latN, plot.lngE]], style).addTo(map);
+    const rect = L.polygon(plot.corners, style).addTo(map);
     const marker = L.marker([plot.centerLat, plot.centerLng], {
       icon: L.divIcon({
         className:'',
@@ -824,91 +817,6 @@ function getPlotTile(idx) {
   return imgCache[idx];
 }
 
-function latLngToGlobalPixel(lat, lng, zoom) {
-  const tileSize = 256;
-  const scale = tileSize * Math.pow(2, zoom);
-  const sinLat = Math.sin(lat * Math.PI / 180);
-  const clamped = Math.min(0.9999, Math.max(-0.9999, sinLat));
-  return {
-    x: (lng + 180) / 360 * scale,
-    y: (0.5 - Math.log((1 + clamped) / (1 - clamped)) / (4 * Math.PI)) * scale,
-  };
-}
-
-function getMapTileImage(z, x, y, idx, urlTemplate = 'tiles/map/{z}/{x}/{y}.jpg') {
-  const key = `${urlTemplate}:${z}/${x}/${y}`;
-  if (!mapTileCache[key]) {
-    const img = new Image();
-    img.onload = () => {
-      if (idx === state.plotIdx) renderCanvas();
-    };
-    img.onerror = () => {
-      img.failed = true;
-      if (idx === state.plotIdx) renderCanvas();
-    };
-    const url = urlTemplate.replace('{z}', z).replace('{x}', x).replace('{y}', y);
-    const isExternal = urlTemplate.startsWith('http');
-    if (isExternal) img.crossOrigin = 'anonymous';
-    img.src = isExternal ? url : `${url}?v=${MAP_TILE_VERSION}`;
-    mapTileCache[key] = img;
-  }
-  return mapTileCache[key];
-}
-
-function drawMapTileBackground(plot, w, h, urlTemplate = 'tiles/map/{z}/{x}/{y}.jpg', zoom = MAP_DETAIL_MAX_ZOOM) {
-  if (!plot) return false;
-  const tileSize = 256;
-  const nw = latLngToGlobalPixel(plot.latN, plot.lngW, zoom);
-  const se = latLngToGlobalPixel(plot.latS, plot.lngE, zoom);
-  const sourceW = se.x - nw.x;
-  const sourceH = se.y - nw.y;
-  if (sourceW <= 0 || sourceH <= 0) return false;
-
-  const minTileX = Math.floor(nw.x / tileSize);
-  const maxTileX = Math.floor((se.x - GEOMETRY_EPSILON) / tileSize);
-  const minTileY = Math.floor(nw.y / tileSize);
-  const maxTileY = Math.floor((se.y - GEOMETRY_EPSILON) / tileSize);
-  let hasBackground = false;
-
-  for (let tx = minTileX; tx <= maxTileX; tx++) {
-    for (let ty = minTileY; ty <= maxTileY; ty++) {
-      const img = getMapTileImage(zoom, tx, ty, plot.idx, urlTemplate);
-      if (img.failed) continue;
-      if (!img.complete || img.naturalWidth <= 0) {
-        hasBackground = true;
-        continue;
-      }
-
-      const tileLeft = tx * tileSize;
-      const tileTop = ty * tileSize;
-      const sx0 = Math.max(nw.x, tileLeft);
-      const sy0 = Math.max(nw.y, tileTop);
-      const sx1 = Math.min(se.x, tileLeft + tileSize);
-      const sy1 = Math.min(se.y, tileTop + tileSize);
-      if (sx1 <= sx0 || sy1 <= sy0) continue;
-
-      const dx = (sx0 - nw.x) / sourceW * w;
-      const dy = (sy0 - nw.y) / sourceH * h;
-      const dw = (sx1 - sx0) / sourceW * w;
-      const dh = (sy1 - sy0) / sourceH * h;
-      ctx.drawImage(
-        img,
-        sx0 - tileLeft,
-        sy0 - tileTop,
-        sx1 - sx0,
-        sy1 - sy0,
-        dx,
-        dy,
-        dw,
-        dh,
-      );
-      hasBackground = true;
-    }
-  }
-
-  return hasBackground;
-}
-
 function renderCanvas(){
   const dpr = Math.max(1, canvas.width / Math.max(1, canvas.clientWidth || canvas.width));
   const w = Math.round(canvas.width / dpr);
@@ -922,18 +830,8 @@ function renderCanvas(){
   ctx.fillRect(0, 0, w, h);
 
   const plot = PLOTS[state.plotIdx];
-  if (plot) {
-    if (useOnlineImagery()) {
-      drawMapTileBackground(plot, w, h, ESRI_TILE_TEMPLATE, ONLINE_IMAGERY_NATIVE_ZOOM);
-    } else {
-      const tile = getPlotTile(state.plotIdx);
-      if (tile && tile.complete && tile.naturalWidth > 0) {
-        ctx.drawImage(tile, 0, 0, w, h);
-      } else if (!drawMapTileBackground(plot, w, h, 'tiles/map/{z}/{x}/{y}.jpg', CANVAS_DETAIL_ZOOM)) {
-        drawMapTileBackground(plot, w, h);
-      }
-    }
-  }
+  const tile = getPlotTile(state.plotIdx);
+  if (tile && tile.complete && tile.naturalWidth > 0) ctx.drawImage(tile, 0, 0, w, h);
 
   if (state.theme === 'dark'){
     ctx.fillStyle = 'rgba(0,0,0,.18)'; ctx.fillRect(0,0,w,h);
@@ -949,7 +847,7 @@ function renderCanvas(){
   for (let r=0;r<GRID;r++){
     for (let c=0;c<GRID;c++){
       const idx = r*GRID + c;
-      const cropList = cellVisibleCrops(p, idx);
+      const cropList = cellVisibleColors(p, idx);
       if (!cropList.length) continue;
       painted++;
       const x0 = c*cellW, y0 = r*cellH;
@@ -959,13 +857,21 @@ function renderCanvas(){
   }
   ctx.globalAlpha = 1;
 
+  if (plot && (plot.validCols < GRID || plot.validRows < GRID)) {
+    ctx.fillStyle = 'rgba(64,64,64,0.88)';
+    if (plot.validCols < GRID) ctx.fillRect(plot.validCols * cellW, 0, w - plot.validCols * cellW, h);
+    if (plot.validRows < GRID) ctx.fillRect(0, plot.validRows * cellH, plot.validCols * cellW, h - plot.validRows * cellH);
+  }
+
   // grid
   ctx.strokeStyle = getCss('--grid-line');
-  ctx.lineWidth = 0.8;
-  for (let i=5;i<GRID;i+=5){
+  ctx.lineWidth = 0.5;
+  ctx.globalAlpha = 0.45;
+  for (let i=1;i<GRID;i++){
     ctx.beginPath(); ctx.moveTo(i*cellW, 0); ctx.lineTo(i*cellW, h); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(0, i*cellH); ctx.lineTo(w, i*cellH); ctx.stroke();
   }
+  ctx.globalAlpha = 1;
   ctx.strokeStyle = getCss('--grid-major');
   ctx.lineWidth = 1.4;
   for (let i=10;i<GRID;i+=10){
@@ -977,7 +883,7 @@ function renderCanvas(){
   ctx.strokeRect(0.5,0.5,w-1,h-1);
 
   // corner counter
-  document.getElementById('canvas-corner').textContent = `${GRID}×${GRID} · ${painted} / ${GRID*GRID}`;
+  document.getElementById('canvas-corner').textContent = `${GRID}×${GRID} · ${painted} / ${GridMath.validCellCount(plot)}`;
   // top-right "showing" tag
   const tag = document.getElementById('canvas-view-tag');
   const paintMonths = activePaintMonthsMask();
@@ -987,6 +893,13 @@ function renderCanvas(){
   tag.textContent = brushHidden
     ? `Hidden · ${maskToDisplayLabel(paintMonths)} brush`
     : 'Showing · ' + maskToDisplayLabel(state.viewMonths, { singleLong: true }).toLowerCase();
+  const prompt = document.getElementById('canvas-prompt');
+  if (prompt) {
+    const status = currentSelectionStatus();
+    const show = state.brush !== 'erase' && !status.ready;
+    prompt.hidden = !show;
+    if (show) prompt.textContent = tr(Classes.PROMPT_KEYS[status.missing]);
+  }
 }
 
 // ── PAINTING ──────────────────────────────────────────────────────
@@ -1242,39 +1155,28 @@ function openPlot(idx){
   updateMapPlot(prev);
   updateMapPlot(idx);
   const plot = PLOTS[idx];
-  const bounds = L.latLngBounds([[plot.latS,plot.lngW],[plot.latN,plot.lngE]]);
+  const bounds = L.latLngBounds(plot.corners);
   if (!map.getBounds().contains(bounds)) map.panTo([plot.centerLat,plot.centerLng], {animate:true});
   updateNavButtons();
   if (drawer.classList.contains('on')) loadMetadataIntoDrawer();
   else detailDraft = null;
   refreshMetaToggle();
   schedSave();
-  if (hasSyncOnNavigate()) {
-    window.syncOnNavigate(idx, state, afterRemoteMerge, mayMergeRemote).catch(e => console.warn('navigation sync failed:', e));
-  }
+  refreshPlotFromServer(idx);
 }
 function updatePlotHeader(){
   const plot = PLOTS[state.plotIdx];
   if (!plot) return;
   const p = state.plots[state.plotIdx];
   document.getElementById('plot-name').textContent = tr('plotN').replace('{n}', plotDisplayLabel(plot));
-  document.getElementById('plot-loc').textContent = `R${plot.r} · C${plot.c} · ${plot.centerLat.toFixed(4)}°N, ${plot.centerLng.toFixed(4)}°E`;
-  // farmer chip
-  const chip = document.getElementById('ed-farmer-chip');
-  if (p && p.farmerId) {
-    chip.classList.remove('empty');
-    chip.innerHTML = `<span class="ddot"></span>${p.farmerId}`;
-  } else {
-    chip.classList.add('empty');
-    chip.innerHTML = `<span class="ddot"></span>${tr('noFarmer')}`;
-  }
+  document.getElementById('plot-loc').textContent = `R${plot.pr} · C${plot.pc} · ${plot.centerLat.toFixed(4)}°N, ${plot.centerLng.toFixed(4)}°E`;
   document.getElementById('dr-title').textContent =
     document.getElementById('plot-name').textContent + ' — ' + tr('plotSection').toLowerCase();
   updateNavButtons();
 }
 function refreshMetaToggle() {
   const p = state.plots[state.plotIdx];
-  const has = p && (p.farmer || p.farmerId || p.note || (p.photos && p.photos.length));
+  const has = p && (p.note || (p.photos && p.photos.length));
   document.getElementById('meta-toggle').classList.toggle('has-data', !!has);
 }
 
@@ -1292,10 +1194,6 @@ function updateProgress(){
   document.getElementById('save-count').textContent = done;
   // update legend counts too
   updateLegend();
-  // update roster button count
-  const roster = buildRosterData();
-  const farmerCnt = document.getElementById('hdr-farmer-count');
-  if (farmerCnt) farmerCnt.textContent = roster.filter(r=>r.id).length;
 }
 
 // ── AUTOSAVE INDICATOR ────────────────────────────────────────────
@@ -1313,39 +1211,29 @@ setInterval(updateAutosave, 1000);
 function updateLegend(){
   const root = document.getElementById('map-legend-rows');
   if (!root) return;
-  const visibleCellsByCrop = new Array(CROPS.length).fill(0);
-  const plotsContainingCrop = new Array(CROPS.length).fill(0);
+  const visibleCells = new Array(Classes.ALL.length).fill(0);
+  const plotsWith = new Array(Classes.ALL.length).fill(0);
   let emptyVisibleCells = 0;
-  let totalVisibleCells = 0;
-  PLOTS.forEach(plot=>{
+  let totalCells = 0;
+  PLOTS.forEach(plot => {
     const composition = plotCompositionForView(plot.idx);
-    totalVisibleCells += GRID * GRID;
+    totalCells += GridMath.validCellCount(plot);
     emptyVisibleCells += composition.emptyCells;
     composition.counts.forEach((count, i) => {
-      visibleCellsByCrop[i] += count;
-      if (count > 0) plotsContainingCrop[i]++;
+      visibleCells[i] += count;
+      if (count > 0) plotsWith[i]++;
     });
   });
-  const coveragePct = (count) => totalVisibleCells ? Math.round((count / totalVisibleCells) * 100) : 0;
-  root.innerHTML = '';
-
-  {
-    const row = document.createElement('div');
-    row.className = 'lgd-row';
-    row.innerHTML = `<span class="lgd-sw empty"></span>
+  const pct = count => totalCells ? Math.round((count / totalCells) * 100) : 0;
+  const rows = [`<div class="lgd-row"><span class="lgd-sw empty"></span>
       <span class="lgd-nm">${tr('unpainted')}</span>
-      <span class="lgd-val"><span class="lgd-ct">${coveragePct(emptyVisibleCells)}%</span><span class="lgd-sub">${emptyVisibleCells} cells</span></span>`;
-    root.appendChild(row);
-  }
-  CROPS.forEach((crop,i)=>{
-    const count = visibleCellsByCrop[i];
-    const row = document.createElement('div');
-    row.className = 'lgd-row';
-    row.innerHTML = `<span class="lgd-sw" style="background:${crop.hex};border-color:${crop.hex}"></span>
-      <span class="lgd-nm">${escapeHtml(crop.name[state.lang]||crop.name.en)}</span>
-      <span class="lgd-val"><span class="lgd-ct">${coveragePct(count)}%</span><span class="lgd-sub">${count} cells · ${plotsContainingCrop[i]} plots</span></span>`;
-    root.appendChild(row);
+      <span class="lgd-val"><span class="lgd-ct">${pct(emptyVisibleCells)}%</span><span class="lgd-sub">${emptyVisibleCells} cells</span></span></div>`];
+  Classes.ALL.forEach((cls, i) => {
+    rows.push(`<div class="lgd-row"><span class="lgd-sw" style="background:${cls.hex};border-color:${cls.hex}"></span>
+      <span class="lgd-nm">${escapeHtml(cls.name[state.lang] || cls.name.en)}</span>
+      <span class="lgd-val"><span class="lgd-ct">${pct(visibleCells[i])}%</span><span class="lgd-sub">${visibleCells[i]} cells · ${plotsWith[i]} plots</span></span></div>`);
   });
+  root.innerHTML = rows.join('');
 }
 
 function setLegendCollapsed(collapsed){
@@ -1366,7 +1254,8 @@ function applyLang(){
   document.getElementById('brand-sub').textContent = tr('appSub');
   document.getElementById('map-title').textContent = tr('mapTitle');
   document.getElementById('lab-brush').textContent = tr('brush');
-  document.getElementById('lab-crop').textContent = tr('crop');
+  document.getElementById('lab-class').textContent = tr('classLabel');
+  document.getElementById('lab-crop').textContent = tr('cropNameLabel2');
   if (typeof updateSeasonStaticLabels === 'function') updateSeasonStaticLabels();
   else document.getElementById('sched-label').textContent = tr('schedulePlantingHarvest');
   document.getElementById('scrub-label').textContent = tr('showing');
@@ -1376,13 +1265,8 @@ function applyLang(){
   document.getElementById('btn-clear').textContent = tr('clear');
   document.getElementById('btn-save-txt').textContent = tr('saveAll');
   document.getElementById('meta-toggle-txt').textContent = tr('plotDetails');
-  document.getElementById('roster-btn-txt').textContent = tr('roster');
-  document.getElementById('lab-farmer-id').textContent = tr('farmerId');
-  document.getElementById('lab-farmer').textContent = tr('farmer');
   document.getElementById('lab-note').textContent = tr('note');
   document.getElementById('lab-photo').textContent = tr('photo');
-  document.getElementById('ph-farmer').textContent = tr('farmerPh');
-  document.getElementById('ph-farmer-id').textContent = tr('farmerIdPh');
   document.getElementById('ph-note').textContent = tr('notePh');
   document.getElementById('lab-summary').textContent = tr('schedSummary');
   document.getElementById('prog-marked-label').textContent = tr('plotsMarked');
