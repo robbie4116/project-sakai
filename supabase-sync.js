@@ -47,7 +47,7 @@
   window.deleteCustomCrop = async function (id) {
     if (!isUuid(id)) throw new Error('Custom crop ID must be a UUID.');
     if (!isOnline()) throw new Error('offline');
-    const { data, error } = await initClient().rpc('delete_crop_and_seasons', { p_crop_id: id });
+    const { data, error } = await initClient().rpc('delete_s2_crop_and_seasons', { p_crop_id: id });
     if (error) throw error;
     return normalizedRemovedSeasonCount(data);
   };
@@ -78,7 +78,8 @@
   // Convert app state plot object -> Supabase row
   function plotToRow(idx, plotData, deviceId) {
     return {
-      plot_idx: idx,
+      plot_idx: window.TANIMAN_RF_LABELS.cloudPlotIdx(idx),
+      grid_id: window.TANIMAN_GRID.DEFAULT_GRID.id,
       seasons: Array.isArray(plotData.seasons) ? plotData.seasons : [],
       farmer_id: plotData.farmerId || '',
       farmer: plotData.farmer || '',
@@ -106,16 +107,17 @@
     const client = initClient();
     if (!client) return false;
     try {
-      const { data, error } = await client.from('plots').select('*');
+      const { data, error } = await client.from('s2_label_plots').select('*');
       if (error) { console.warn('syncInit fetch error:', error.message); return false; }
       for (const row of data) {
-        if (shouldMerge && !shouldMerge(row.plot_idx)) continue;
-        const local = state.plots[row.plot_idx];
+        const idx = window.TANIMAN_RF_LABELS.localPlotIdx(row.plot_idx);
+        if (idx === null || (shouldMerge && !shouldMerge(idx))) continue;
+        const local = state.plots[idx];
         const localTs = local && local._synced_at ? new Date(local._synced_at) : new Date(0);
         const remoteTs = new Date(row.updated_at);
         if (remoteTs > localTs) {
-          state.plots[row.plot_idx] = rowToPlot(row);
-          onMerge(row.plot_idx);
+          state.plots[idx] = rowToPlot(row);
+          onMerge(idx);
         }
       }
       return true;
@@ -135,15 +137,16 @@
     if (!rows.length) return false;
     try {
       const { error } = await client
-        .from('plots')
+        .from('s2_label_plots')
         .upsert(rows, { onConflict: 'plot_idx' });
       if (error) {
         console.warn('syncPlots error:', error.message);
         return false;
       }
       for (const row of rows) {
-        if (state.plots[row.plot_idx]) {
-          state.plots[row.plot_idx]._synced_at = row.updated_at;
+        const idx = window.TANIMAN_RF_LABELS.localPlotIdx(row.plot_idx);
+        if (state.plots[idx]) {
+          state.plots[idx]._synced_at = row.updated_at;
         }
       }
       return true;
@@ -159,9 +162,9 @@
     if (!client) return false;
     try {
       const { data, error } = await client
-        .from('plots')
+        .from('s2_label_plots')
         .select('*')
-        .eq('plot_idx', idx)
+        .eq('plot_idx', window.TANIMAN_RF_LABELS.cloudPlotIdx(idx))
         .maybeSingle();
       if (error || !data) return false;
       if (shouldMerge && !shouldMerge(idx)) return false;
@@ -185,9 +188,9 @@
     if (!client) return false;
     try {
       const { error } = await client
-        .from('plots')
+        .from('s2_label_plots')
         .delete()
-        .eq('plot_idx', idx);
+        .eq('plot_idx', window.TANIMAN_RF_LABELS.cloudPlotIdx(idx));
       if (error) {
         console.warn('deletePlot error:', error.message);
         return false;
@@ -211,7 +214,7 @@
       for (let i = 0; i < byteStr.length; i++) ua[i] = byteStr.charCodeAt(i);
       const blob = new Blob([ab], { type: 'image/jpeg' });
       const safeSuffix = suffix || Date.now();
-      const path = `plot_${String(plotIdx).padStart(3, '0')}_${safeSuffix}.jpg`;
+      const path = `s2_plot_${String(plotIdx).padStart(3, '0')}_${safeSuffix}.jpg`;
       const { error } = await client.storage.from('photos').upload(path, blob, {
         contentType: 'image/jpeg',
       });

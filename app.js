@@ -3,28 +3,18 @@
 // optional Farmer ID + roster view, month scrubber on the map.
 
 // ── CONFIG ────────────────────────────────────────────────────────
-const GRID = 50;
-const STORAGE_KEY = 'taniman_v4_atok_paoay';
+const GridMath = window.TANIMAN_GRID;
+const RFLabels = window.TANIMAN_RF_LABELS;
+const GRID = GridMath.DEFAULT_GRID.cells;
+const STORAGE_KEY = 'taniman_v5_sentinel2';
 const ATOK_POLY = window.ATOK_POLY;
 const PAOAY_POLY = window.PAOAY_POLY;
-const PAOAY_PLOTS = window.PAOAY_PLOTS;
 const CROPS = window.CROPS;
 const CropCatalog = window.TANIMAN_CROP_CATALOG;
 const CropExport = window.TANIMAN_CROP_EXPORT;
 const T     = window.STRINGS;
-const PLOTS = PAOAY_PLOTS;
-const CORE_PLOT_COUNT = PAOAY_PLOTS.length;
-const PAOAY_GRID_BOUNDS = PAOAY_PLOTS.reduce((bounds, plot) => ({
-  latS: Math.min(bounds.latS, plot.latS),
-  latN: Math.max(bounds.latN, plot.latN),
-  lngW: Math.min(bounds.lngW, plot.lngW),
-  lngE: Math.max(bounds.lngE, plot.lngE),
-}), {
-  latS: Infinity,
-  latN: -Infinity,
-  lngW: Infinity,
-  lngE: -Infinity,
-});
+const PLOTS = window.PLOTS;
+const GRID_BOUNDS = GridMath.gridBounds();
 const ATOK_DETAIL_BOUNDS = ATOK_POLY.reduce((bounds, [lat, lng]) => ({
   n: Math.max(bounds.n, lat),
   s: Math.min(bounds.s, lat),
@@ -96,7 +86,7 @@ const state = loadState() || {
   lang: 'en',
   theme: 'dark',
   brush: 1,
-  selectedCropId: 'lettuce',
+  selectedCropId: 'carrot',
   plotIdx: 0,
   plots: {},
   paintStartDate: '01-01',
@@ -105,8 +95,19 @@ const state = loadState() || {
   viewMonths: ALL_MONTHS,     // mask of months displayed on map/canvas
   mixedStyle: 'diagonal',
   showTweaks: false,
-  version: 4,
+  version: 5,
+  gridId: GridMath.DEFAULT_GRID.id,
+  referenceYear: '',
+  fieldId: '',
 };
+// Evidence confirmation is session-only and resets when the selection changes.
+let referenceConfirmed = false;
+function resetReferenceConfirmation() {
+  referenceConfirmed = false;
+  const control = document.getElementById('reference-confirmed');
+  if (control) control.checked = false;
+}
+window.resetReferenceConfirmation = resetReferenceConfirmation;
 
 function migrateCropSelection(savedState, crops, catalog) {
   if (typeof savedState.selectedCropId === 'string' && savedState.selectedCropId.trim()) {
@@ -226,6 +227,7 @@ function loadState(){
       if (!raw) return null;
       s = JSON.parse(raw);
     }
+    if (s.gridId !== GridMath.DEFAULT_GRID.id) return null;
     return s;
   } catch(e){ console.warn('load failed', e); return null; }
 }
@@ -397,6 +399,7 @@ function monthRangeForViewMonth(m) {
 }
 function seasonIntersectsViewMonths(season, viewMonths = state.viewMonths) {
   if (!season || !isValidMmdd(season.start) || !isValidMmdd(season.end)) return false;
+  if (RFLabels.validYear(state.referenceYear) && Number(season.referenceYear) !== Number(state.referenceYear)) return false;
   for (let m=0; m<12; m++) {
     if (!(viewMonths & (1 << m))) continue;
     const monthRange = monthRangeForViewMonth(m);
@@ -414,8 +417,8 @@ function seasonMonthsMask(start, end) {
 }
 function activePaintSeasonData() {
   const crop = CropCatalog.byId(state.selectedCropId);
-  if (!crop || !CropCatalog.isResolved(state.selectedCropId) || !isValidMmdd(state.paintStartDate) || !isValidMmdd(state.paintEndDate)) return null;
-  return { cropId: crop.id, start: state.paintStartDate, end: state.paintEndDate };
+  if (!referenceConfirmed || !crop || !CropCatalog.isResolved(state.selectedCropId)) return null;
+  return RFLabels.paintSeasonData(state, crop);
 }
 function activePaintMonthsMask() {
   const data = activePaintSeasonData();
@@ -449,6 +452,7 @@ function cellVisibleCrops(p, cellIdx) {
 function plotCompositionForView(idx, viewMonths = state.viewMonths) {
   const p = state.plots[idx];
   const gridCells = GRID * GRID;
+  const validCells = GridMath.validCellCount(PLOTS[idx]);
   const counts = new Array(CROPS.length).fill(0);
   const percentages = new Array(CROPS.length).fill(0);
   if (!p || !Array.isArray(p.seasons)) {
@@ -459,7 +463,7 @@ function plotCompositionForView(idx, viewMonths = state.viewMonths) {
       percentages,
       totalVisibleCells: 0,
       visiblePaintedCells: 0,
-      emptyCells: gridCells,
+      emptyCells: validCells,
       nonZeroCropCount: 0,
       isMixed: false,
     };
@@ -472,7 +476,7 @@ function plotCompositionForView(idx, viewMonths = state.viewMonths) {
     const cropIdx = cropIndexFromId(season.cropId);
     if (cropIdx < 0) continue;
     for (const cellIdx of season.cells || []) {
-      if (!Number.isInteger(cellIdx) || cellIdx < 0 || cellIdx >= gridCells) continue;
+      if (!GridMath.isValidCell(PLOTS[idx], cellIdx)) continue;
       const key = `${cropIdx}:${cellIdx}`;
       if (cropCellSeen.has(key)) continue;
       cropCellSeen.add(key);
@@ -484,7 +488,7 @@ function plotCompositionForView(idx, viewMonths = state.viewMonths) {
   const totalVisibleCells = counts.reduce((sum, n) => sum + n, 0);
   let visiblePaintedCells = 0;
   for (let i=0; i<visibleCells.length; i++) if (visibleCells[i]) visiblePaintedCells++;
-  const emptyCells = Math.max(0, gridCells - visiblePaintedCells);
+  const emptyCells = Math.max(0, validCells - visiblePaintedCells);
   for (let i=0; i<counts.length; i++) percentages[i] = totalVisibleCells ? counts[i] / totalVisibleCells : 0;
 
   const max = Math.max(...counts);
@@ -706,7 +710,7 @@ function initMap(){
     zoom:14,
     minZoom: MAP_APP_MIN_ZOOM,
     maxZoom: getMapMaxZoom(),
-    maxBounds: MAP_CONTEXT_BOUNDS,
+    maxBounds: L.latLngBounds([[GRID_BOUNDS.latS - 0.01, GRID_BOUNDS.lngW - 0.01], [GRID_BOUNDS.latN + 0.01, GRID_BOUNDS.lngE + 0.01]]),
     maxBoundsViscosity: 0.85,
     zoomControl:false,
     attributionControl:false,
@@ -724,8 +728,8 @@ function initMap(){
   }).addTo(map);
   drawPlotsOnMap();
   map.fitBounds([
-    [ATOK_DETAIL_BOUNDS.s, ATOK_DETAIL_BOUNDS.w],
-    [ATOK_DETAIL_BOUNDS.n, ATOK_DETAIL_BOUNDS.e]
+    [GRID_BOUNDS.latS, GRID_BOUNDS.lngW],
+    [GRID_BOUNDS.latN, GRID_BOUNDS.lngE]
   ]);
   document.getElementById('zoom-in').onclick = ()=>map.zoomIn();
   document.getElementById('zoom-out').onclick = ()=>map.zoomOut();
@@ -809,7 +813,7 @@ function drawPlotsOnMap(){
 
   PLOTS.forEach(plot=>{
     const style = plotStyle(plot.idx);
-    const rect = L.rectangle([[plot.latS, plot.lngW],[plot.latN, plot.lngE]], style).addTo(map);
+    const rect = L.polygon(GridMath.plotCorners(plot, true), style).addTo(map);
     const marker = L.marker([plot.centerLat, plot.centerLng], {
       icon: L.divIcon({
         className:'',
@@ -841,6 +845,22 @@ function updateMapPlot(idx){
 }
 
 // ── PLOT CANVAS ───────────────────────────────────────────────────
+const referenceYearInput = document.getElementById('reference-year');
+const referenceFieldInput = document.getElementById('reference-field');
+referenceYearInput.value = state.referenceYear || '';
+referenceFieldInput.value = state.fieldId || '';
+referenceYearInput.addEventListener('input', () => {
+  state.referenceYear = referenceYearInput.value === '' ? '' : Number(referenceYearInput.value);
+  resetReferenceConfirmation(); renderCanvas(); drawPlotsOnMap(); updateLegend(); schedSave();
+});
+referenceFieldInput.addEventListener('input', () => {
+  state.fieldId = referenceFieldInput.value.trim();
+  resetReferenceConfirmation(); renderCanvas(); schedSave();
+});
+document.getElementById('reference-confirmed').addEventListener('change', event => {
+  referenceConfirmed = event.target.checked;
+  renderCanvas();
+});
 const canvas = document.getElementById('plot-canvas');
 const ctx = canvas.getContext('2d');
 
@@ -850,7 +870,8 @@ function fitCanvas(){
   const status = document.querySelector('.canvas-status');
   const pad = 36;
   const statusH = status ? status.offsetHeight + 10 : 0;
-  const size = Math.max(120, Math.min(zone.clientWidth - pad, zone.clientHeight - pad - statusH));
+  const availableHeight = window.innerWidth <= 700 ? zone.clientWidth - pad : zone.clientHeight - pad - statusH;
+  const size = Math.max(120, Math.min(zone.clientWidth - pad, availableHeight));
   const dpr = Math.max(1, window.devicePixelRatio || 1);
   frame.style.width = size + 'px';
   frame.style.height = size + 'px';
@@ -973,16 +994,10 @@ function renderCanvas(){
 
   const plot = PLOTS[state.plotIdx];
   if (plot) {
-    if (useOnlineImagery()) {
-      drawMapTileBackground(plot, w, h, ESRI_TILE_TEMPLATE, ONLINE_IMAGERY_NATIVE_ZOOM);
-    } else {
-      const tile = getPlotTile(state.plotIdx);
-      if (tile && tile.complete && tile.naturalWidth > 0) {
-        ctx.drawImage(tile, 0, 0, w, h);
-      } else if (!drawMapTileBackground(plot, w, h, 'tiles/map/{z}/{x}/{y}.jpg', CANVAS_DETAIL_ZOOM)) {
-        drawMapTileBackground(plot, w, h);
-      }
-    }
+    // These images are reprojected onto the exact UTM plot, not stretched
+    // geographic bounding boxes. Never fall back to an unaligned image.
+    const tile = getPlotTile(state.plotIdx);
+    if (tile && tile.complete && tile.naturalWidth > 0) ctx.drawImage(tile, 0, 0, w, h);
   }
 
   if (state.theme === 'dark'){
@@ -999,6 +1014,7 @@ function renderCanvas(){
   for (let r=0;r<GRID;r++){
     for (let c=0;c<GRID;c++){
       const idx = r*GRID + c;
+      if (!GridMath.isValidCell(plot, idx)) continue;
       const cropList = cellVisibleCrops(p, idx);
       if (!cropList.length) continue;
       painted++;
@@ -1009,10 +1025,14 @@ function renderCanvas(){
   }
   ctx.globalAlpha = 1;
 
+  ctx.fillStyle = 'rgba(90,90,90,.85)';
+  if (plot.validCols < GRID) ctx.fillRect(plot.validCols*w/GRID, 0, (GRID-plot.validCols)*w/GRID, h);
+  if (plot.validRows < GRID) ctx.fillRect(0, plot.validRows*h/GRID, w, (GRID-plot.validRows)*h/GRID);
+
   // grid
   ctx.strokeStyle = getCss('--grid-line');
   ctx.lineWidth = 0.8;
-  for (let i=5;i<GRID;i+=5){
+  for (let i=1;i<GRID;i++){
     ctx.beginPath(); ctx.moveTo(i*cellW, 0); ctx.lineTo(i*cellW, h); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(0, i*cellH); ctx.lineTo(w, i*cellH); ctx.stroke();
   }
@@ -1027,7 +1047,10 @@ function renderCanvas(){
   ctx.strokeRect(0.5,0.5,w-1,h-1);
 
   // corner counter
-  document.getElementById('canvas-corner').textContent = `${GRID}×${GRID} · ${painted} / ${GRID*GRID}`;
+  document.getElementById('canvas-corner').textContent = `10 × 10 m per cell · ${painted} / ${GridMath.validCellCount(plot)}`;
+  const tile = getPlotTile(state.plotIdx);
+  const ready = tile && tile.complete && tile.naturalWidth > 0;
+  document.getElementById('labeling-status').textContent = !ready ? 'Loading aligned reference imagery…' : activePaintSeasonData() ? 'Ready to label · grey cells are outside the raster' : 'Choose the crop-cycle year and confirm the class and dates before painting.';
   // top-right "showing" tag
   const tag = document.getElementById('canvas-view-tag');
   const paintMonths = activePaintMonthsMask();
@@ -1037,6 +1060,7 @@ function renderCanvas(){
   tag.textContent = brushHidden
     ? `Hidden · ${maskToDisplayLabel(paintMonths)} brush`
     : 'Showing · ' + maskToDisplayLabel(state.viewMonths, { singleLong: true }).toLowerCase();
+  tag.textContent += RFLabels.validYear(state.referenceYear) ? ` · cycle ${state.referenceYear}` : ' · all recorded years';
 }
 
 // ── PAINTING ──────────────────────────────────────────────────────
@@ -1046,6 +1070,7 @@ function cellAt(clientX, clientY){
   const c = Math.floor(x / (rect.width / GRID));
   const r = Math.floor(y / (rect.height / GRID));
   if (c<0||c>=GRID||r<0||r>=GRID) return null;
+  if (!GridMath.isValidCell(PLOTS[state.plotIdx], r*GRID+c)) return null;
   return {r,c};
 }
 function ensurePaintVisibleOnMap() {
@@ -1061,12 +1086,13 @@ function ensurePaintVisibleOnMap() {
 }
 function addCellsToPaintSeason(p, cellIds) {
   const data = activePaintSeasonData();
-  if (!data || !cellIds.length) return false;
+  if (!data || !cellIds.length) { toast('Choose the crop-cycle year and verify the class and dates.'); return false; }
+  if (RFLabels.hasConflict(p.seasons, data, cellIds)) { toast('This pixel already has another class for these dates. Erase it first.'); return false; }
   let season = p.seasons.find(s =>
-    s.cropId === data.cropId && s.start === data.start && s.end === data.end);
+    s.cropId === data.cropId && s.start === data.start && s.end === data.end && s.referenceYear === data.referenceYear && (s.fieldId || '') === data.fieldId);
   const now = new Date().toISOString();
   if (!season) {
-    season = { id: newSeasonId(), cropId: data.cropId, start: data.start, end: data.end, cells: [], createdAt: now, updatedAt: now };
+    season = { id: newSeasonId(), ...data, cells: [], createdAt: now, updatedAt: now };
     p.seasons.push(season);
   }
   const seen = new Set(season.cells || []);
@@ -1076,9 +1102,11 @@ function addCellsToPaintSeason(p, cellIds) {
   return true;
 }
 function eraseCellsFromSeasons(p, cellIds) {
+  if (!RFLabels.validYear(state.referenceYear)) { toast('Choose the crop-cycle year to erase.'); return false; }
   const remove = new Set(cellIds);
   const now = new Date().toISOString();
   for (const season of p.seasons || []) {
+    if (Number(season.referenceYear) !== Number(state.referenceYear)) continue;
     if (!Array.isArray(season.cells)) season.cells = [];
     season.cells = season.cells.filter(cellIdx => !remove.has(cellIdx));
     season.updatedAt = now;
@@ -1087,6 +1115,8 @@ function eraseCellsFromSeasons(p, cellIds) {
   return true;
 }
 function paintAt(clientX, clientY){
+  const image = getPlotTile(state.plotIdx);
+  if (!image || !image.complete || !image.naturalWidth) return;
   const cell = cellAt(clientX, clientY);
   if (!cell) return;
   const linear = cell.r*GRID + cell.c;
@@ -1101,10 +1131,11 @@ function paintAt(clientX, clientY){
     for (let dc=-half; dc<=half; dc++){
       const rr = cell.r+dr, cc = cell.c+dc;
       if (rr<0||rr>=GRID||cc<0||cc>=GRID) continue;
+      if (!GridMath.isValidCell(PLOTS[state.plotIdx], rr*GRID+cc)) continue;
       cellIds.push(rr*GRID+cc);
     }
   }
-  if (state.brush === 'erase') eraseCellsFromSeasons(p, cellIds);
+  if (state.brush === 'erase') { if (!eraseCellsFromSeasons(p, cellIds)) return; }
   else if (!addCellsToPaintSeason(p, cellIds)) return;
   if (state.brush !== 'erase') ensurePaintVisibleOnMap();
   renderCanvas();
@@ -1170,10 +1201,12 @@ function selectCrop(cropId){
   const crop = CropCatalog.byId(cropId);
   if (!crop || !CropCatalog.isResolved(crop.id)) return;
   state.selectedCropId = crop.id;
+  resetReferenceConfirmation();
   if (state.brush==='erase') state.brush = 1;
   buildPalette();
   updateBrush();
   updateScheduleReadout();
+  renderCanvas();
   schedSave();
 }
 
@@ -1239,7 +1272,7 @@ function openPlot(idx){
   updateMapPlot(prev);
   updateMapPlot(idx);
   const plot = PLOTS[idx];
-  const bounds = L.latLngBounds([[plot.latS,plot.lngW],[plot.latN,plot.lngE]]);
+  const bounds = L.latLngBounds(GridMath.plotCorners(plot, true));
   if (!map.getBounds().contains(bounds)) map.panTo([plot.centerLat,plot.centerLng], {animate:true});
   updateNavButtons();
   if (drawer.classList.contains('on')) loadMetadataIntoDrawer();
@@ -1316,7 +1349,7 @@ function updateLegend(){
   let totalVisibleCells = 0;
   PLOTS.forEach(plot=>{
     const composition = plotCompositionForView(plot.idx);
-    totalVisibleCells += GRID * GRID;
+    totalVisibleCells += GridMath.validCellCount(plot);
     emptyVisibleCells += composition.emptyCells;
     composition.counts.forEach((count, i) => {
       visibleCellsByCrop[i] += count;
@@ -1363,7 +1396,7 @@ function applyLang(){
   document.getElementById('brand-sub').textContent = tr('appSub');
   document.getElementById('map-title').textContent = tr('mapTitle');
   document.getElementById('lab-brush').textContent = tr('brush');
-  document.getElementById('lab-crop').textContent = tr('crop');
+  document.getElementById('lab-crop').textContent = 'Crop / land cover';
   if (typeof updateSeasonStaticLabels === 'function') updateSeasonStaticLabels();
   else document.getElementById('sched-label').textContent = tr('schedulePlantingHarvest');
   document.getElementById('scrub-label').textContent = tr('showing');
@@ -1587,6 +1620,16 @@ document.getElementById('btn-save').onclick = async () => {
     'plot_idx,season_id,cell_idx,cell_row,cell_col,crop_id,start_mmdd,end_mmdd,wraps_year,center_lat,center_lng,lat_s,lat_n,lng_w,lng_e,farmer_id\n';
   let labelsCsv =
     'plot_idx,plot_area,plot_source,plot_row,plot_col,farmer_id,season_id,cell_idx,cell_row,cell_col,crop_id,crop_en,start_mmdd,end_mmdd,wraps_year,center_lat,center_lng,lat_s,lat_n,lng_w,lng_e\n';
+  const pixelColumns = ['grid_id','pixel_id','s2_row','s2_col','utm_x','utm_y','utm_x_min','utm_x_max','utm_y_min','utm_y_max','inside_paoay','class_id','reference_year','field_id','footprint_wgs84'];
+  seasonsCsv = seasonsCsv.trimEnd() + ',' + pixelColumns.join(',') + '\n';
+  labelsCsv = labelsCsv.trimEnd() + ',' + pixelColumns.join(',') + '\n';
+  const pixelValues = row => [
+    GridMath.DEFAULT_GRID.id, row.pixel_id, row.s2_row, row.s2_col,
+    row.utm_x, row.utm_y, row.utm_x_min, row.utm_x_max, row.utm_y_min, row.utm_y_max,
+    GridMath.isInsidePaoay(row.center_lat, row.center_lng, PAOAY_POLY),
+    RFLabels.classIdForCrop(CropCatalog.byId(row.crop_id)) ?? '',
+    row.reference_year, row.field_id, JSON.stringify(row.corners.map(([lat,lng])=>[lng,lat])),
+  ].map(csvEscape);
   const targetCrops = CROPS.filter(crop => CropCatalog.isTarget(crop.id));
   let plotsCsv =
     'plot_idx,plot_area,plot_source,plot_row,plot_col,centerLat,centerLng,farmer_id,farmer_name,note,photo_count,season_count,total_season_cells,' +
@@ -1622,6 +1665,7 @@ document.getElementById('btn-save').onclick = async () => {
         csvEscape(row.crop_id), csvEscape(row.start_mmdd), csvEscape(row.end_mmdd), row.wraps_year,
         row.center_lat, row.center_lng, row.lat_s, row.lat_n, row.lng_w, row.lng_e,
         csvEscape(row.farmer_id),
+        ...pixelValues(row),
       ].join(',') + '\n';
       const crop = CropCatalog.byId(row.crop_id) || { name: { en: `Unknown crop (${row.crop_id})` } };
       labelsCsv += [
@@ -1630,6 +1674,7 @@ document.getElementById('btn-save').onclick = async () => {
         csvEscape(row.crop_id), csvEscape(crop.name.en || crop.name[state.lang] || row.crop_id),
         csvEscape(row.start_mmdd), csvEscape(row.end_mmdd), row.wraps_year,
         row.center_lat, row.center_lng, row.lat_s, row.lat_n, row.lng_w, row.lng_e,
+        ...pixelValues(row),
       ].join(',') + '\n';
     }
 
@@ -1703,7 +1748,9 @@ document.getElementById('btn-save').onclick = async () => {
     });
   }
 
-  const cropLookupRows = CropExport.buildCropLookupRows(allSeasonExportRows, CropCatalog.all());
+  const cropLookupRows = CropExport.buildCropLookupRows(allSeasonExportRows, CropCatalog.all()).map(crop => ({
+    ...crop, is_target: [1,2,3].includes(RFLabels.classIdForCrop(CropCatalog.byId(crop.crop_id))),
+  }));
   const plotCropCountRows = CropExport.buildPlotCropCounts(allSeasonExportRows);
   allSeasonExportRows.length = 0; // Release per-cell row objects before ZIP serialization.
   const cropsCsv = CropExport.buildCropsCsv(cropLookupRows);
@@ -1724,16 +1771,21 @@ document.getElementById('btn-save').onclick = async () => {
   folder.file('metadata.json', JSON.stringify({
     survey_area: 'Paoay, Atok, Benguet',
     surveyed_at: new Date().toISOString(),
-    schema_version: 5,
+    schema_version: 6,
+    reference_grid: GridMath.DEFAULT_GRID,
+    class_mapping: Object.fromEntries(cropLookupRows.map(crop=>[crop.crop_id,RFLabels.classIdForCrop(CropCatalog.byId(crop.crop_id))])),
     grid_resolution: `${GRID}x${GRID}`,
     authoritative_ground_truth_file: 'seasons.csv',
     date_encoding: {
-      type: 'recurring annual MM-DD inclusive range',
-      fields: ['start_mmdd', 'end_mmdd', 'wraps_year'],
-      note: 'start_mmdd and end_mmdd are inclusive recurring annual planting-to-harvest windows with no year component',
+      type: 'MM-DD inclusive range with explicit crop-cycle start year',
+      fields: ['start_mmdd', 'end_mmdd', 'wraps_year', 'reference_year'],
+      note: 'reference_year is the year of the season start; wrapped ranges end in the following year. Image capture date is not inferred from the basemap.',
     },
-    coordinate_reference_system: 'EPSG:4326',
-    sentinel2_alignment_note: 'Use WGS84 cell centers or bounds from seasons.csv to sample Sentinel-2 bands and vegetation indices for a chosen target year.',
+    coordinate_reference_system: GridMath.DEFAULT_GRID.crs,
+    geographic_coordinate_reference_system: 'EPSG:4326',
+    sentinel2_alignment_note: 'Each label cell is exactly one reference raster pixel. Extract predictors by s2_row/s2_col only after verifying CRS, transform, dimensions, crop-cycle dates and year. WGS84 bounds are bounding boxes; footprint_wgs84 records the projected pixel corners.',
+    training_boundary_rule: 'Include only inside_paoay=true; this flag tests the pixel center against the stored Paoay boundary.',
+    validation_note: 'Grid plot_idx is a 500 m editing tile, not an observed field or 50 m validation plot. field_id must identify actual observed fields for independent train/test splitting.',
     crops: cropLookupRows,
     farmers: [...farmerMap.entries()].map(([id, f]) => ({
       id, name: f.name, plot_count: f.plots.length,
@@ -1896,8 +1948,10 @@ document.addEventListener('keydown', (e)=>{
     const targetCrops = CROPS.filter(crop => CropCatalog.isTarget(crop.id));
     if (!targetCrops[+e.key - 1]) return;
     state.selectedCropId = targetCrops[+e.key - 1].id;
+    resetReferenceConfirmation();
     buildPalette();
     updateScheduleReadout();
+    renderCanvas();
     schedSave();
   }
   if (e.key === 'e' || e.key === 'E'){ state.brush = 'erase'; updateBrush(); }

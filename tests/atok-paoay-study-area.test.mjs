@@ -6,6 +6,7 @@ import vm from 'node:vm';
 const dataSource = await readFile(new URL('../data.js', import.meta.url), 'utf8');
 const appSource = await readFile(new URL('../app.js', import.meta.url), 'utf8');
 const htmlSource = await readFile(new URL('../taniman.html', import.meta.url), 'utf8');
+const gridSource = await readFile(new URL('../grid.js', import.meta.url), 'utf8');
 
 function loadData() {
   const sandbox = { window: {} };
@@ -41,7 +42,7 @@ test('Paoay and Atok polygons have expected coordinate ranges', () => {
 });
 
 test('app uses the Atok/Paoay storage namespace and zone names', () => {
-  assert.match(appSource, /const\s+STORAGE_KEY\s*=\s*'taniman_v4_atok_paoay'/);
+  assert.match(appSource, /const\s+STORAGE_KEY\s*=\s*'taniman_v5_sentinel2'/);
   assert.doesNotMatch(appSource, /localStorage\.getItem\('taniman_v3'\)|STORAGE_KEY\s*=\s*'taniman_v3'/);
   assert.match(appSource, /function\s+classifyZone\s*\(\s*lat,\s*lng\s*\)/);
   assert.match(appSource, /return\s+'paoay'/);
@@ -53,6 +54,7 @@ test('classifyZone returns paoay, atok, and outside for known coordinates', () =
   const end = appSource.indexOf('// month mask helpers');
   assert.notEqual(end, -1, 'classifyZone must appear before state setup');
   const sandbox = { window: loadData() };
+  vm.runInNewContext(gridSource, sandbox);
   vm.runInNewContext(`${appSource.slice(0, end)}
 globalThis.__zones = [
   classifyZone(16.624, 120.755),
@@ -76,7 +78,7 @@ test('Add Plot control is not active in the Paoay-only workflow', () => {
 });
 
 test('old taniman_v3 data cannot hydrate active Atok/Paoay state', () => {
-  assert.match(appSource, /const\s+STORAGE_KEY\s*=\s*'taniman_v4_atok_paoay'/);
+  assert.match(appSource, /const\s+STORAGE_KEY\s*=\s*'taniman_v5_sentinel2'/);
   assert.doesNotMatch(appSource, /taniman_v3/);
 });
 

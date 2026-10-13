@@ -15,7 +15,7 @@ test('plot state stores seasons instead of crop-index month mask cells', () => {
 
 test('painting adds cropId date seasons and does not OR month masks', () => {
   assert.match(appSource, /function addCellsToPaintSeason/);
-  assert.match(appSource, /cropId:\s*crop\.id/);
+  assert.match(appSource, /RFLabels\.paintSeasonData\(state, crop\)/);
   assert.doesNotMatch(appSource, /p\.cells\[state\.crop\]\[k\]\s*\|=/);
 });
 
@@ -45,9 +45,9 @@ test('export writes ML-ready seasons csv with georeferenced rows', () => {
   assert.match(appSource, /folder\.file\('seasons\.csv',\s*seasonsCsv\)/);
 });
 
-test('metadata documents recurring inclusive date windows', () => {
-  assert.match(appSource, /schema_version:\s*5/);
-  assert.match(appSource, /recurring annual/);
+test('metadata documents inclusive dated crop-cycle windows', () => {
+  assert.match(appSource, /schema_version:\s*6/);
+  assert.match(appSource, /explicit crop-cycle start year/);
   assert.match(appSource, /inclusive/);
 });
 

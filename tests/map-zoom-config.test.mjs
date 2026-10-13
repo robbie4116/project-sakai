@@ -99,7 +99,7 @@ test('map uses separate context and detail bounds', () => {
 
   assert.equal(readBoundsConstant(appSource, 'MAP_CONTEXT_BOUNDS'), true);
   assert.equal(readBoundsConstant(appSource, 'MAP_DETAIL_BOUNDS'), true);
-  assert.match(initMapBlock, /maxBounds:\s*MAP_CONTEXT_BOUNDS/);
+  assert.match(initMapBlock, /maxBounds:\s*L\.latLngBounds/);
   assert.match(contextLayerBlock, /bounds:\s*MAP_CONTEXT_BOUNDS/);
   assert.match(detailLayerBlock, /bounds:\s*MAP_DETAIL_BOUNDS/);
 });
@@ -155,10 +155,9 @@ test('offline plot canvas draws the selected plot crop before label overlays', (
   const getPlotTileBlock = extractFunctionBlock('getPlotTile');
 
   assert.match(appSource, /function\s+getPlotTile\s*\(\s*idx\s*\)/);
-  assert.match(appSource, /const\s+PLOTS\s*=\s*PAOAY_PLOTS/);
+  assert.match(appSource, /const\s+PLOTS\s*=\s*window\.PLOTS/);
   assert.match(getPlotTileBlock, /if\s*\(\s*!plot\s*\|\|\s*!plot\.tilePath\s*\)\s*return\s+null/);
   assert.match(getPlotTileBlock, /img\.src\s*=\s*plot\.tilePath/);
-  assert.match(renderCanvasBlock, /if\s*\(\s*useOnlineImagery\(\)\s*\)/);
   assert.match(renderCanvasBlock, /const\s+tile\s*=\s*getPlotTile\(state\.plotIdx\)/);
   assert.match(renderCanvasBlock, /if\s*\(\s*tile\s*&&\s*tile\.complete\s*&&\s*tile\.naturalWidth\s*>\s*0\s*\)/);
   assert.match(renderCanvasBlock, /ctx\.drawImage\(tile,\s*0,\s*0,\s*w,\s*h\)/);
@@ -174,17 +173,17 @@ test('plot canvas uses device-pixel backing resolution instead of browser-upscal
   assert.match(fitCanvasBlock, /canvas\.height\s*=\s*Math\.round\(size\s*\*\s*dpr\)/);
 });
 
-test('online plot canvas uses ESRI World Imagery as its background', () => {
+test('online plot canvas uses imagery already reprojected to the reference grid', () => {
   const renderCanvasBlock = extractFunctionBlock('renderCanvas');
   const getMapTileImageBlock = extractFunctionBlock('getMapTileImage');
 
-  assert.match(renderCanvasBlock, /drawMapTileBackground\(plot,\s*w,\s*h,\s*ESRI_TILE_TEMPLATE,\s*ONLINE_IMAGERY_NATIVE_ZOOM\)/);
+  assert.match(renderCanvasBlock, /getPlotTile\(state\.plotIdx\)/);
+  assert.doesNotMatch(renderCanvasBlock, /drawMapTileBackground\(/);
   assert.match(getMapTileImageBlock, /const\s+isExternal\s*=\s*urlTemplate\.startsWith\('http'\)/);
   assert.match(getMapTileImageBlock, /if\s*\(\s*isExternal\s*\)\s*img\.crossOrigin\s*=\s*'anonymous'/);
-  assert.match(renderCanvasBlock, /return/);
 });
 
-test('offline plot canvas falls back to offline Atok detail map tiles when a Paoay plot crop is not loaded', () => {
+test('missing plot imagery never falls back to stretched geographic imagery', () => {
   const renderCanvasBlock = extractFunctionBlock('renderCanvas');
   const drawMapTileBlock = extractFunctionBlock('drawMapTileBackground');
 
@@ -193,8 +192,8 @@ test('offline plot canvas falls back to offline Atok detail map tiles when a Pao
   assert.match(appSource, /function\s+latLngToGlobalPixel\s*\(/);
   assert.match(appSource, /tiles\/map\/\{z\}\/\{x\}\/\{y\}\.jpg/);
   assert.match(renderCanvasBlock, /const\s+plot\s*=\s*PLOTS\[state\.plotIdx\]/);
-  assert.match(renderCanvasBlock, /drawMapTileBackground\(plot,\s*w,\s*h,\s*'tiles\/map\/\{z\}\/\{x\}\/\{y\}\.jpg',\s*CANVAS_DETAIL_ZOOM\)/);
-  assert.match(renderCanvasBlock, /drawMapTileBackground\(plot,\s*w,\s*h\)/);
+  assert.doesNotMatch(renderCanvasBlock, /drawMapTileBackground\(/);
+  assert.match(renderCanvasBlock, /Loading aligned reference imagery/);
   assert.match(appSource, /function\s+drawMapTileBackground\s*\([^)]*zoom\s*=\s*MAP_DETAIL_MAX_ZOOM/);
   assert.match(drawMapTileBlock, /ctx\.drawImage\(/);
   assert.doesNotMatch(renderCanvasBlock, /outside_custom|tublay/i);

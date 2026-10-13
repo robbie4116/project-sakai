@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import vm from 'node:vm';
+import {createRequire} from 'node:module';
+const GridMath = createRequire(import.meta.url)('../grid.js');
 
 const catalogSource = await readFile(new URL('../crop-catalog.js', import.meta.url), 'utf8');
 const appSource = await readFile(new URL('../app.js', import.meta.url), 'utf8');
@@ -78,6 +80,7 @@ async function makeHarness() {
     state,
     PLOTS: [{ idx: 0 }],
     GRID: 50,
+    GridMath,
     ALL_MONTHS: 4095,
     document,
     tr: key => key,

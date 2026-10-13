@@ -16,28 +16,31 @@ This extracts the Paoay barangay boundary from the faeldon Philippines JSON maps
 - `boundaries/Benguet_Atok_Paoay_boundary.geojson`
 
 The existing Atok municipality boundary remains the outer offline boundary.
-Paoay is the only plotting boundary.
+Paoay is the training-domain reference outline; editing tiles cover the reference
+Sentinel-2 raster extent, with Paoay membership carried in the export.
 
 ### 2. Generate tile assets
 
 ```bash
-pip install rasterio Pillow numpy
-python generate_tiles.py
+pip install -r requirements-dev.txt
+python generate_plots.py
 ```
 
-Requires these source rasters in the project root (not committed):
+The current web labeling grid and imagery need no local source rasters. For
+legacy offline map assets only, `generate_tiles.py` requires these rasters:
 
 - `atok_satellite.tif` - high-detail Atok satellite raster for offline map tiles and Paoay plot crops
 - `benguet_satellite.tif` - wider low-zoom satellite context map tiles
 
 Tile outputs:
 
-- `tiles/plots/` - generated Paoay plot crop JPEGs used by the labeling canvas
+- `tiles/s2-plots/` - current UTM-aligned labeling imagery
+- `tiles/plots/` - legacy geographic-grid plot images
 - `tiles/map/` - high-detail offline Atok map tiles
 - `tiles/context/` - wider low-zoom offline satellite context tiles for zoomed-out orientation
 
 After tile generation, the static web app and downloadable Tauri app can render
-Atok/Paoay locally. Plotting is fixed to the generated Paoay plots only; there
+Atok/Paoay locally. Plotting is fixed to the Sentinel-2 raster grid; there
 is no Add Plot workflow.
 
 ### 3. Configure Supabase
@@ -178,3 +181,47 @@ open /Applications/Taniman.app
 Only use this bypass for builds you trust from this repository. A normal
 double-click download experience requires paid Apple Developer ID signing and
 Apple notarization.
+
+## Sentinel-2 labeling grid
+
+The current website uses the exact grid of `Sentinel2_CSPlus_2024_01_H1.tif`:
+EPSG:32651, 10 m pixels, upper-left edge `(258690, 1841210)`, 571 columns
+and 494 rows. The 120 editing tiles are 500 m squares with 50 × 50 cells;
+they are not the paper's 50 m independent validation plots. Partial edge cells
+outside the raster are disabled. Zoom changes display size, never ground size.
+
+Run `python generate_plots.py` to regenerate `s2-grid-data.js` and the UTM-aligned
+imagery in `tiles/s2-plots/`. `generate_tiles.py` and `tiles/plots/` describe the
+legacy geographic grid and must not replace these new assets. Esri imagery is
+reference context; its capture date is not inferred as the crop observation date.
+
+Before painting, choose the crop-cycle start year, dates and class, then confirm
+the evidence. Use observed field IDs consistently across editing tiles. Exports
+record zero-based Sentinel-2 row/column, UTM centers and bounds, geographic
+footprints, year, class ID, field ID and Paoay membership. Labels outside Paoay
+are excluded by the training preparation command.
+
+Old browser labels remain in `taniman_v4_atok_paoay`; corrected labels use
+`taniman_v5_sentinel2` with a grid identifier. Native saves use separate
+`state-s2-v1.json` and backup files, preserving legacy `state.json` files.
+The connected database already uses the per-season foundation schema. Before
+merging/deploying this branch, run **`docs/supabase-s2-labels.sql`** in its SQL
+Editor. This additive migration creates the separate `s2_label_plots` JSON table
+and a crop-deletion RPC scoped to the new table. New grid plot IDs are stored in
+1000000–1000119 there. Existing `plots`, `seasons` and legacy label records are
+preserved. Crops used by another labeling dataset cannot be deleted through the
+new app. Do not rerun either destructive reset script for this change.
+Concurrent editing still follows the existing whole-plot save behavior.
+
+The crop-cycle start year also controls the canvas, map and legend's label view.
+An empty year shows all recorded years explicitly. Erasing requires a year and
+removes only that cycle's observations; clearing a whole plot still clears all
+its years. ZIP exports always contain every recorded year.
+
+See [Random Forest training preparation](docs/random-forest-training.md) to turn
+an export and a dated, aligned predictor stack into a training table. Correct
+geometry does not establish crop identity, historical crop presence, or model
+accuracy: those still need verified observations and independent field validation.
+
+Checks: `node --test tests/*.test.mjs` and
+`python -m pytest tests/test_plot_grid.py tests/test_generate_plots.py tests/test_prepare_rf_training.py`.

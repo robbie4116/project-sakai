@@ -220,12 +220,14 @@ function syncSeasonSelectors({ normalize = true } = {}) {
 }
 
 function setPaintSeasonRange(start, end) {
+  if (typeof window.resetReferenceConfirmation === 'function') window.resetReferenceConfirmation();
   state.paintStartDate = start;
   state.paintEndDate = end;
   activeDateReset = false;
   normalizeActivePaintRange({ save: false });
   syncSeasonSelectors({ normalize: false });
   updateScheduleReadout();
+  window.TANIMAN.renderCanvas();
   window.TANIMAN.schedSave();
 }
 

@@ -12,6 +12,11 @@
   'use strict';
   if (!window.__TAURI__) return;
 
+  // This grid has different pixel identities from the original labeling grid.
+  // Keep its files separate so saving never rotates or overwrites legacy labels.
+  const stateFilename = 'state-s2-v1.json';
+  const photoPrefix = 's2-v1_';
+
   // In Tauri mode, localStorage is never the source of truth. Wipe any stale
   // taniman_v3 entry on every launch so it can never leak in via a missed gate.
   try { localStorage.removeItem('taniman_v3'); } catch (e) {}
@@ -26,13 +31,13 @@
     try {
       dataDir = await window.__TAURI__.core.invoke('get_data_dir');
       const fs = window.__TAURI__.fs;
-      const stateFile = `${dataDir}/state.json`;
-      const bakFile = `${dataDir}/state.json.bak`;
+      const stateFile = `${dataDir}/${stateFilename}`;
+      const bakFile = `${stateFile}.bak`;
       if (await fs.exists(stateFile)) {
         try {
           cachedState = JSON.parse(await fs.readTextFile(stateFile));
         } catch (e) {
-          console.warn('state.json parse failed; trying .bak', e);
+          console.warn(`${stateFilename} parse failed; trying .bak`, e);
           if (await fs.exists(bakFile)) {
             cachedState = JSON.parse(await fs.readTextFile(bakFile));
           }
@@ -66,9 +71,9 @@
         await window.__TANIMAN_OFFLINE_READY;
         if (!dataDir) throw new Error('offline dataDir unavailable');
         const fs = window.__TAURI__.fs;
-        const stateFile = `${dataDir}/state.json`;
-        const tmpFile   = `${dataDir}/state.json.tmp`;
-        const bakFile   = `${dataDir}/state.json.bak`;
+        const stateFile = `${dataDir}/${stateFilename}`;
+        const tmpFile   = `${stateFile}.tmp`;
+        const bakFile   = `${stateFile}.bak`;
         await fs.writeTextFile(tmpFile, text);
         if (await fs.exists(stateFile)) {
           if (await fs.exists(bakFile)) await fs.remove(bakFile);
@@ -100,7 +105,7 @@
       for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
       const relPath = await window.__TAURI__.core.invoke('write_photo', {
         plotIdx: idx,
-        suffix: suffix,
+        suffix: `${photoPrefix}${suffix}`,
         data: Array.from(bytes),
       });
       return relPath;

@@ -14,7 +14,7 @@ const DIST = join(SRC_TAURI, 'dist-static');
 
 // taniman.html is handled separately (renamed to index.html for Tauri)
 const FILES = [
-  'app.js', 'data.js', 'styles.css', 'config.js',
+  'app.js', 'data.js', 's2-grid-data.js', 'grid.js', 'rf-labels.js', 'styles.css', 'config.js',
   'supabase-sync.js', 'offline-storage.js',
   'month-view-utils.js', 'season-utils.js', 'calendar.js', 'crop-catalog.js', 'crop-picker.js', 'crop-export.js'
 ];

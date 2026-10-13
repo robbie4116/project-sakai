@@ -27,10 +27,9 @@ test('outside plot creation UI and runtime are removed', () => {
   assert.doesNotMatch(appSource, /enabledOutsidePlots|customOutsidePlots|removeOutsidePlot|setOutsideAddMode/);
 });
 
-test('runtime exposes generated Paoay plots as the full active plot list', () => {
-  assert.match(appSource, /const\s+PAOAY_PLOTS\s*=\s*window\.PAOAY_PLOTS/);
-  assert.match(appSource, /const\s+PLOTS\s*=\s*PAOAY_PLOTS/);
-  assert.match(appSource, /const\s+CORE_PLOT_COUNT\s*=\s*PAOAY_PLOTS\.length/);
+test('runtime exposes generated Sentinel-2 plots as the full active plot list', () => {
+  assert.match(appSource, /const\s+PLOTS\s*=\s*window\.PLOTS/);
+  assert.match(htmlSource, /s2-grid-data\.js/);
   assert.doesNotMatch(appSource, /concat\(|buildOutsidePlots|TUBLAY_PLOTS|AMBASSADOR_PLOTS/);
 });
 

@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import vm from 'node:vm';
+import {createRequire} from 'node:module';
+const RFLabels = createRequire(import.meta.url)('../rf-labels.js');
 
 const appSource = await readFile(new URL('../app.js', import.meta.url), 'utf8');
 const htmlSource = await readFile(new URL('../taniman.html', import.meta.url), 'utf8');
@@ -97,6 +99,8 @@ test('a selected crop missing from the catalog stays visible as an unresolved pl
 
 test('unresolved selected crop blocks new paint while retaining its selected ID', () => {
   const activePaintSeasonData = runFunction(appSource, 'activePaintSeasonData', {
+    referenceConfirmed: true,
+    RFLabels,
     state: { selectedCropId: 'crop_missing', paintStartDate: '06-01', paintEndDate: '06-30' },
     CROPS: targets,
     CropCatalog: {
@@ -109,7 +113,9 @@ test('unresolved selected crop blocks new paint while retaining its selected ID'
 
   assert.equal(data, null);
   const resolved = runFunction(appSource, 'activePaintSeasonData', {
-    state: { selectedCropId: 'crop_saved', paintStartDate: '06-01', paintEndDate: '06-30' },
+    referenceConfirmed: true,
+    RFLabels,
+    state: { selectedCropId: 'crop_saved', paintStartDate: '06-01', paintEndDate: '06-30', referenceYear:2024 },
     CropCatalog: {
       byId: id => ({ id, hex: '#118833', isResolved: true }),
       isResolved: id => id === 'crop_saved',
@@ -117,7 +123,7 @@ test('unresolved selected crop blocks new paint while retaining its selected ID'
     isValidMmdd: value => /^\d{2}-\d{2}$/.test(value),
   })();
   assert.deepEqual(JSON.parse(JSON.stringify(resolved)), {
-    cropId: 'crop_saved', start: '06-01', end: '06-30',
+    cropId: 'crop_saved', start: '06-01', end: '06-30', referenceYear:2024, fieldId:'',
   });
 });
 

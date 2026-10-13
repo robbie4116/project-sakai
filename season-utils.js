@@ -68,6 +68,10 @@
   }
 
   function cellGeometry(plot, cellIdx, grid) {
+    if (plot && Number.isInteger(plot.pr) && Number.isInteger(plot.pc)) {
+      const gridMath = typeof module !== 'undefined' && module.exports ? require('./grid.js') : root.TANIMAN_GRID;
+      return gridMath.cellGeometry(plot, cellIdx);
+    }
     const cell_row = Math.floor(cellIdx / grid);
     const cell_col = cellIdx % grid;
     const latStep = (plot.latN - plot.latS) / grid;
@@ -93,16 +97,20 @@
     for (const season of plotData.seasons || []) {
       if (!isValidMmdd(season.start) || !isValidMmdd(season.end)) continue;
       for (const cellIdx of season.cells || []) {
+        const geometry = cellGeometry(plot, cellIdx, grid);
+        if (!geometry) continue;
         rows.push({
           plot_idx: plotIdx,
           season_id: season.id,
           cell_idx: cellIdx,
-          ...cellGeometry(plot, cellIdx, grid),
+          ...geometry,
           crop_id: season.cropId,
           start_mmdd: season.start,
           end_mmdd: season.end,
           wraps_year: rangeWrapsYear(season.start, season.end),
           farmer_id: farmerId,
+          reference_year: season.referenceYear ?? '',
+          field_id: season.fieldId || '',
         });
       }
     }

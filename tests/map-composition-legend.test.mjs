@@ -132,5 +132,5 @@ test('expanded crop legend bounds and scrolls its rows on desktop and narrow scr
 
 test('offline desktop staging includes the shared legend source files', () => {
   assert.match(prepareDistSource, /cpSync\(tanimanSrc, join\(DIST, 'index\.html'\)\)/);
-  assert.match(prepareDistSource, /'app\.js', 'data\.js', 'styles\.css', 'config\.js'/);
+  for (const file of ['app.js','data.js','grid.js','s2-grid-data.js','styles.css','config.js']) assert.ok(prepareDistSource.includes(`'${file}'`));
 });

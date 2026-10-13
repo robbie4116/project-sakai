@@ -7,11 +7,11 @@ const appSource = await readFile(new URL('../app.js', import.meta.url), 'utf8');
 const htmlSource = await readFile(new URL('../taniman.html', import.meta.url), 'utf8');
 const prepareDistSource = await readFile(new URL('../src-tauri/scripts/prepare-dist.mjs', import.meta.url), 'utf8');
 
-test('target crops are exactly lettuce, potato, carrot', () => {
-  assert.match(dataSource, /id:'lettuce'/);
+test('default classes include the paper targets and non-crop land cover', () => {
+  assert.match(dataSource, /id:'cabbage'/);
   assert.match(dataSource, /id:'potato'/);
   assert.match(dataSource, /id:'carrot'/);
-  assert.doesNotMatch(dataSource, /id:'cabbage'|id:'wombok'/);
+  for (const id of ['other_cultivated','forest','built_up','bare_fallow']) assert.ok(dataSource.includes(`id:'${id}'`));
 });
 
 test('season utilities load before app startup', () => {

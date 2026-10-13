@@ -124,6 +124,12 @@
         </div>
       </div>
 
+      <div class="reference-controls">
+        <label>Crop-cycle start year <input id="reference-year" type="number" min="1980" max="2100" placeholder="e.g. 2024"></label>
+        <label>Observed field ID <input id="reference-field" type="text" maxlength="80" placeholder="Optional, e.g. F-001"></label>
+        <label class="reference-confirm"><input id="reference-confirmed" type="checkbox"> I verified this class and these dates for this year</label>
+        <span id="labeling-status" role="status" aria-live="polite"></span>
+      </div>
       <div class="ed-body">
 
         <div class="canvas-zone">
@@ -310,9 +316,12 @@
 
 <!-- DATA + APP -->
 <script src="data.js"></script>
+<script src="s2-grid-data.js"></script>
+<script src="grid.js"></script>
 <script src="config.js"></script>
 <script src="month-view-utils.js"></script>
 <script src="season-utils.js"></script>
+<script src="rf-labels.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 <script src="supabase-sync.js"></script>
 <script src="offline-storage.js"></script>
