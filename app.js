@@ -68,15 +68,10 @@ state.selection = { classKey: null, cropId: null, remark: '' };
 state.paintStartDate = null;
 state.paintEndDate = null;
 state.datesAuto = false;
-state.referenceYear = state.referenceYear ?? '';
+// Labels are recurring calendars with no year (Sir Kent's farm calendars hold
+// every year), so older saved states drop their crop-cycle year.
+delete state.referenceYear;
 state.fieldId = state.fieldId || '';
-let referenceConfirmed = false;
-function resetReferenceConfirmation() {
-  referenceConfirmed = false;
-  const control = document.getElementById('reference-confirmed');
-  if (control) control.checked = false;
-}
-window.resetReferenceConfirmation = resetReferenceConfirmation;
 delete state.selectedCropId;
 delete state.crop;
 
@@ -372,7 +367,6 @@ function monthRangeForViewMonth(m) {
 }
 function seasonIntersectsViewMonths(season, viewMonths = state.viewMonths) {
   if (!season || !isValidMmdd(season.start) || !isValidMmdd(season.end)) return false;
-  if (RFLabels.validYear(state.referenceYear) && Number(season.referenceYear) !== Number(state.referenceYear)) return false;
   for (let m=0; m<12; m++) {
     if (!(viewMonths & (1 << m))) continue;
     const monthRange = monthRangeForViewMonth(m);
@@ -400,10 +394,7 @@ function currentSelectionStatus() {
     { ...state.selection, start: state.paintStartDate, end: state.paintEndDate },
     id => CropCatalog.isResolved(id));
   if (!selection.ready) return selection;
-  if (!RFLabels.validYear(state.referenceYear)) return {ready:false,message:'Choose the crop-cycle start year.'};
-  if (!referenceConfirmed) return {ready:false,message:'Confirm the class and dates for this year.'};
-  const meta = {...Classes.paintMeta({...state.selection,start:state.paintStartDate,end:state.paintEndDate},id=>CropCatalog.isResolved(id)),referenceYear:Number(state.referenceYear),fieldId:state.fieldId};
-  if (!RFLabels.absoluteRange(meta)) return {ready:false,message:'These dates are invalid for the selected year.'};
+  const meta = {...Classes.paintMeta({...state.selection,start:state.paintStartDate,end:state.paintEndDate},id=>CropCatalog.isResolved(id)),fieldId:state.fieldId};
   try { Classes.seasonId(state.plotIdx,meta); } catch (_) { return {ready:false,message:'Shorten the field ID or remark before painting.'}; }
   return selection;
 }
@@ -412,7 +403,7 @@ function activePaintSeasonData() {
   const meta = Classes.paintMeta(
     { ...state.selection, start: state.paintStartDate, end: state.paintEndDate },
     id => CropCatalog.isResolved(id));
-  return meta && {...meta,referenceYear:Number(state.referenceYear),fieldId:state.fieldId || ''};
+  return meta && {...meta,fieldId:state.fieldId || ''};
 }
 function cellVisibleColors(p, cellIdx, viewMonths = state.viewMonths) {
   const out = [];
@@ -804,20 +795,11 @@ function updateMapPlot(idx){
 }
 
 // ── PLOT CANVAS ───────────────────────────────────────────────────
-const referenceYearInput = document.getElementById('reference-year');
 const referenceFieldInput = document.getElementById('reference-field');
-referenceYearInput.value = state.referenceYear || '';
 referenceFieldInput.value = state.fieldId || '';
-referenceYearInput.addEventListener('input', () => {
-  state.referenceYear = referenceYearInput.value === '' ? '' : Number(referenceYearInput.value);
-  resetReferenceConfirmation(); renderCanvas(); drawPlotsOnMap(); updateLegend(); schedSave();
-});
 referenceFieldInput.addEventListener('input', () => {
   state.fieldId = referenceFieldInput.value.trim();
-  resetReferenceConfirmation(); renderCanvas(); schedSave();
-});
-document.getElementById('reference-confirmed').addEventListener('change', event => {
-  referenceConfirmed = event.target.checked; renderCanvas();
+  renderCanvas(); schedSave();
 });
 const canvas = document.getElementById('plot-canvas');
 const ctx = canvas.getContext('2d');
@@ -930,7 +912,6 @@ function renderCanvas(){
   tag.textContent = brushHidden
     ? `Hidden · ${maskToDisplayLabel(paintMonths)} brush`
     : 'Showing · ' + maskToDisplayLabel(state.viewMonths, { singleLong: true }).toLowerCase();
-  tag.textContent += RFLabels.validYear(state.referenceYear) ? ` · cycle ${state.referenceYear}` : ' · all recorded years';
   const prompt = document.getElementById('canvas-prompt');
   if (prompt) {
     const status = currentSelectionStatus();
@@ -979,11 +960,9 @@ function addCellsToPaintSeason(idx, p, cellIds) {
   return true;
 }
 function eraseCellsFromSeasons(idx, p, cellIds) {
-  if (!RFLabels.validYear(state.referenceYear)) { toast('Choose the crop-cycle year to erase.'); return false; }
   const remove = new Set(cellIds);
   let changed = false;
   for (const season of p.seasons) {
-    if (Number(season.referenceYear) !== Number(state.referenceYear)) continue;
     const removed = (season.cells || []).filter(c => remove.has(c));
     if (!removed.length) continue;
     season.cells = season.cells.filter(c => !remove.has(c));
@@ -1094,7 +1073,6 @@ function applyClassDates(key) {
   }
 }
 function refreshSelectionUi() {
-  resetReferenceConfirmation();
   buildPalette();
   updateBrush();
   if (typeof window.syncSeasonSelectors === 'function') window.syncSeasonSelectors();
@@ -1121,7 +1099,6 @@ function selectCrop(cropId) {
   refreshSelectionUi();
 }
 function setRemark(text) {
-  resetReferenceConfirmation();
   state.selection.remark = text;
   if (typeof window.updateScheduleReadout === 'function') window.updateScheduleReadout();
   renderCanvas();
@@ -1401,7 +1378,7 @@ function renderScheduleSummary(){
         : Classes.className(season.classId, state.lang);
     return `<div class="ss-season">
       <span class="ss-dot" style="background:${seasonHex(season)}"></span>
-      <span>${escapeHtml(label)} · ${RFLabels.validYear(season.referenceYear) ? season.referenceYear : 'Undated'} · ${season.start}-${season.end}${wraps}</span>
+      <span>${escapeHtml(label)} · ${season.start}-${season.end}${wraps}</span>
       <span class="ss-count">${season.cells.length}</span>
     </div>`;
   }).join('') + `</div>`;

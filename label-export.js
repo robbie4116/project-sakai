@@ -22,7 +22,6 @@
     return {
       class_id: season.classId == null ? '' : season.classId,
       crop_id: season.classId == null ? '' : season.classId === 4 ? (season.cropId || '') : cls.key,
-      reference_year: Number.isInteger(season.referenceYear) ? season.referenceYear : '',
       field_id: String(season.fieldId || '').trim(),
       class_name: cls.name.en,
       crop_name: season.classId === 4 ? Classes.cropName(catalog, season.cropId) : '',
@@ -66,7 +65,7 @@
             geometry.s2_row, geometry.s2_col, geometry.utm_x, geometry.utm_y, geometry.center_lat, geometry.center_lng,
             fieldIdFor(season.id, cellIdx), referenceGrid.id,
             geometry.pixel_id,
-            Grid.isInsidePaoay(geometry.center_lat, geometry.center_lng, paoayPoly), cols.reference_year, cols.crop_id,
+            Grid.isInsidePaoay(geometry.center_lat, geometry.center_lng, paoayPoly), cols.crop_id,
           ]);
         }
       }
@@ -81,7 +80,7 @@
       const cols = seasonColumns(field.season, catalog);
       return [
         cols.field_id, cols.class_id, cols.class_name, cols.crop_name, cols.remark,
-        cols.start_mmdd, cols.end_mmdd, cols.wraps_year, field.cell_count, field.plot_idxs.join(';'), field.field_id, cols.reference_year, cols.crop_id,
+        cols.start_mmdd, cols.end_mmdd, cols.wraps_year, field.cell_count, field.plot_idxs.join(';'), field.field_id, cols.crop_id,
       ];
     });
 
@@ -91,7 +90,7 @@
     }
 
     const metadata = {
-      schema_version: 6,
+      schema_version: 7,
       survey_area: 'Paoay, Atok, Benguet (Sentinel-2 composite extent)',
       exported_at: exportedAt,
       authoritative_ground_truth_file: 'seasons.csv',
@@ -101,9 +100,9 @@
       field_identity: { observed: 'field_id', derived_connected_component: 'component_id' },
       boundary_mask: { method: 'pixel center in Paoay polygon', supplied: Array.isArray(paoayPoly) && paoayPoly.length >= 3 },
       date_encoding: {
-        type: 'MM-DD inclusive range with explicitly observed optional season start year',
-        fields: ['start_mmdd', 'end_mmdd', 'wraps_year', 'reference_year'],
-        note: 'reference_year is the recorded season start year; missing years remain blank and are excluded from training.',
+        type: 'Recurring MM-DD inclusive range, no year',
+        fields: ['start_mmdd', 'end_mmdd', 'wraps_year'],
+        note: 'Each label is an expert-reported crop calendar that repeats every year; training applies it to the imagery year.',
       },
       classes: Classes.ALL.map(cls => ({ class_id: cls.id, key: cls.key, name: cls.name.en, hex: cls.hex })),
       notes: [
@@ -115,9 +114,9 @@
 
     return {
       seasonsCsv: csv(['plot_idx', 'season_id', 'field_id', 'class_id', 'class_name', 'crop_name', 'remark',
-        'start_mmdd', 'end_mmdd', 'wraps_year', 's2_row', 's2_col', 'utm_x', 'utm_y', 'center_lat', 'center_lng', 'component_id', 'grid_id', 'pixel_id', 'inside_paoay', 'reference_year', 'crop_id'], seasonRows),
+        'start_mmdd', 'end_mmdd', 'wraps_year', 's2_row', 's2_col', 'utm_x', 'utm_y', 'center_lat', 'center_lng', 'component_id', 'grid_id', 'pixel_id', 'inside_paoay', 'crop_id'], seasonRows),
       fieldsCsv: csv(['field_id', 'class_id', 'class_name', 'crop_name', 'remark', 'start_mmdd', 'end_mmdd',
-        'wraps_year', 'cell_count', 'plot_idxs', 'component_id', 'reference_year', 'crop_id'], fieldRows),
+        'wraps_year', 'cell_count', 'plot_idxs', 'component_id', 'crop_id'], fieldRows),
       classesCsv: csv(['class_id', 'key', 'class_name', 'hex'], classRows),
       plotsCsv: csv(['plot_idx', 'plot_row', 'plot_col', 'valid_cols', 'valid_rows', 'note', 'photo_count',
         'season_count', 'class_1_cells', 'class_2_cells', 'class_3_cells', 'class_4_cells', 'class_5_cells',

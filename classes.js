@@ -6,12 +6,12 @@
 
   const Seasons = root.TANIMAN_SEASONS || require('./season-utils.js');
   function encodeCycleId(baseId, meta) {
-    if (meta.referenceYear === undefined) {
+    if (meta.referenceYear == null && !meta.fieldId) {
       if (baseId.length > 400) throw new RangeError('Season ID exceeds 400 characters');
       return baseId;
     }
     const cycle = root.TANIMAN_CYCLE_META || (typeof require === 'function' ? require('./cycle-metadata.js') : null);
-    if (!cycle) throw new Error('Cycle metadata module must be loaded before encoding a reference year');
+    if (!cycle) throw new Error('Cycle metadata module must be loaded before encoding a field ID');
     return cycle.encodeId(baseId, meta);
   }
 
@@ -85,10 +85,10 @@
     ].join('|');
   }
 
-  // Plot-independent identity keeps distinct observed fields and cycles apart.
+  // Plot-independent identity keeps distinct observed fields apart.
   function seasonKey(meta) {
     const validYear = Number.isInteger(meta.referenceYear) && meta.referenceYear >= 1980 && meta.referenceYear <= 2100;
-    return validYear ? encodeCycleId(baseSeasonKey(meta), meta) : baseSeasonKey(meta);
+    return validYear || meta.fieldId ? encodeCycleId(baseSeasonKey(meta), meta) : baseSeasonKey(meta);
   }
 
   function seasonId(plotIdx, meta) {

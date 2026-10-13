@@ -23,8 +23,17 @@ test('legacy IDs never infer a year', () => {
   assert.deepEqual(Cycle.decodeId(Cycle.encodeId('p0|2', { referenceYear: 1980 })), { referenceYear: 1980 });
 });
 
+test('a field ID is stored without any year', () => {
+  const encoded = Cycle.encodeId('p0|2', { fieldId: 'F-001' });
+  assert.match(encoded, /^cycle-v1\|\d+:\[null,"F-001"\]p0\|2$/);
+  assert.deepEqual(Cycle.decodeId(encoded), { fieldId: 'F-001' });
+  assert.equal(Cycle.encodeId('p0|2', { fieldId: '' }), 'p0|2');
+  assert.equal(Cycle.encodeId('p0|2', { referenceYear: null }), 'p0|2');
+  assert.deepEqual(Cycle.decodeId('cycle-v1|11:[null,null]p0'), {});
+});
+
 test('invalid explicit metadata is blocked and malformed encoded IDs are legacy unknowns', () => {
-  for (const year of [1979, 2101, 2026.5, '2026', NaN, null]) {
+  for (const year of [1979, 2101, 2026.5, '2026', NaN]) {
     assert.throws(() => Cycle.encodeId('p0|2', { referenceYear: year }), /year/i);
   }
   assert.throws(() => Cycle.encodeId('p0|2', { referenceYear: 2026, fieldId: 42 }), /field/i);

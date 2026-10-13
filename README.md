@@ -119,25 +119,26 @@ Use the "Save all (.zip)" button in the app footer. Exports:
   for class 4 and `remark` only for Other.
 - `fields.csv` - one row per connected component (4-connected cells sharing a
   season, across plot borders), including the observed `field_id`, derived
-  `component_id`, class, dates, reference year, cell count and `plot_idxs`
+  `component_id`, class, dates, cell count and `plot_idxs`
   (`;`-joined).
 - `classes.csv` - `class_id, key, class_name, hex`, plus one row per class-4
   crop name (`class_id=4`, `key=crop:<uuid>`).
 - `plots.csv` - `plot_idx, plot_row, plot_col, valid_cols, valid_rows, note,
   photo_count, season_count`, one `class_<id>_cells` column per class, and
   `other_cells`.
-- `metadata.json` - schema version 6 and the grid constants (CRS, origin, pixel
+- `metadata.json` - schema version 7 and the grid constants (CRS, origin, pixel
   size, width, height) so the pipeline can verify alignment.
 - `labels/plotNNN.png` - color-coded label map per plot (unlabeled cells
   transparent, out-of-bounds cells `#404040`), and `photos/`.
 
 Rows with an empty `class_id` are "Other": they are for review, not training.
-Dates use MM-DD selectors with an explicit observed crop-cycle start year.
-Choose the year and confirm the class and dates before painting. It also scopes
-the map, canvas and erase tool; erasing preserves observations from other years.
-An empty year shows all recorded years. The year and observed field ID roundtrip
-through versioned season IDs so the existing per-season RPC remains compatible.
-Rows without a verified year stay blank and are excluded from training.
+Labels are recurring crop calendars with no year: "potato 05-01 to 07-31"
+means the field grows potato in those months every year, as reported by the
+expert labeler. Painting needs only a class and its MM-DD dates (ranges may wrap
+past New Year). On one cell, two different classes may not share any calendar
+day; the app blocks such a brush stamp and asks you to erase first. Erasing
+removes every label on the erased cells. The optional observed field ID
+roundtrips through versioned season IDs, so the per-season RPC needs no change.
 `field_id` is the observed field ID you enter; `component_id` is the generated
 connected component and is not evidence of independent agricultural fields.
 Exports also include the exact reference grid, pixel IDs and Paoay membership.

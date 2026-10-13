@@ -1220,9 +1220,8 @@ input,textarea{font:inherit;color:inherit;background:none;border:none;outline:no
 .remark-field input { width: 100%; }
 .reference-controls { display:flex; flex-wrap:wrap; gap:8px 14px; padding:8px 18px; border-bottom:1px solid var(--border); font-size:12px; }
 .reference-controls label { display:flex; align-items:center; gap:6px; }
-.reference-controls input[type="number"] { width:86px; }
 .reference-controls input[type="text"] { width:130px; }
-.reference-controls input[type="number"], .reference-controls input[type="text"] { padding:5px 7px; border:1px solid var(--border); border-radius:5px; background:var(--surface); color:inherit; }
+.reference-controls input[type="text"] { padding:5px 7px; border:1px solid var(--border); border-radius:5px; background:var(--surface); color:inherit; }
 .canvas-frame { flex-shrink:0; }
 @media (max-width:700px) { .editor { grid-template-rows:auto auto auto auto; } }
 @media (min-width:701px) and (max-width:1100px) { .main { overflow-y:auto; grid-template-rows:380px minmax(600px,1fr); } }

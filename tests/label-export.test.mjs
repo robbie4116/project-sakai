@@ -66,7 +66,8 @@ test('plots.csv has per-class cell counts and no farmer columns', () => {
 test('metadata records the grid and nothing mentions farmers', () => {
   const out = LabelExport.buildExport({ plots: [plot0], plotData, catalog, grid: GRID, exportedAt: '2026-10-13T00:00:00Z' });
   const meta = JSON.parse(out.metadataJson);
-  assert.equal(meta.schema_version, 6);
+  assert.equal(meta.schema_version, 7);
+  assert.match(meta.date_encoding.type, /recurring/i);
   assert.deepEqual(meta.grid, GRID);
   assert.equal(meta.authoritative_ground_truth_file, 'seasons.csv');
   const everything = out.seasonsCsv + out.fieldsCsv + out.classesCsv + out.plotsCsv + out.metadataJson;
@@ -78,14 +79,13 @@ const records = text => {
   return rows.map(row => Object.fromEntries(header.map((key, i) => [key, row[i]])));
 };
 const mask = [[16, 120], [17, 120], [17, 121], [16, 121]];
-test('RF contract exports explicit years, observed fields, mapping and exact pixel geometry', () => {
+test('RF contract exports recurring calendars, observed fields, mapping and exact pixel geometry', () => {
   const data = structuredClone(plotData);
-  data[0].seasons[0].referenceYear = 2024;
   data[0].seasons[0].fieldId = 'observed-A';
   const out = LabelExport.buildExport({ plots: [plot0], plotData: data, catalog, grid: GRID, paoayPoly: mask });
   const rows = records(out.seasonsCsv);
   const meta = JSON.parse(out.metadataJson);
-  assert.equal(rows[0].reference_year, '2024');
+  assert.equal('reference_year' in rows[0], false);
   assert.equal(rows[0].field_id, 'observed-A');
   assert.equal(rows[0].component_id, 'F0001');
   assert.equal(rows[0].crop_id, 'cabbage');
@@ -95,7 +95,6 @@ test('RF contract exports explicit years, observed fields, mapping and exact pix
   assert.equal(rows[0].utm_x, '258695');
   assert.equal(rows[0].utm_y, '1841205');
   assert.equal(rows[2].field_id, '');
-  assert.equal(rows[2].reference_year, '');
   assert.equal(rows[2].crop_id, LETTUCE);
   assert.equal(rows[3].crop_id, '');
   assert.equal(meta.class_mapping.cabbage, 2);

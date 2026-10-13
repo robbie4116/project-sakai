@@ -10,31 +10,41 @@ test('classes match the seven-class paper scheme and resolve other crops', () =>
   assert.equal(labels.classIdForCrop({id:'unknown',isResolved:false}),null);
 });
 
-test('painting requires an explicit crop-cycle year and dates', () => {
+test('painting needs only a class and dates, never a year', () => {
   const crop = {id:'carrot',isResolved:true};
-  const selection = {paintStartDate:'11-01',paintEndDate:'02-28',referenceYear:2024,fieldId:' F1 '};
-  assert.deepEqual(labels.paintSeasonData(selection,crop), {cropId:'carrot',start:'11-01',end:'02-28',referenceYear:2024,fieldId:'F1'});
-  assert.equal(labels.paintSeasonData({...selection,referenceYear:''},crop),null);
+  const selection = {paintStartDate:'11-01',paintEndDate:'02-28',fieldId:' F1 '};
+  assert.deepEqual(labels.paintSeasonData(selection,crop), {cropId:'carrot',start:'11-01',end:'02-28',fieldId:'F1'});
+  assert.deepEqual(labels.paintSeasonData({...selection,fieldId:undefined},crop), {cropId:'carrot',start:'11-01',end:'02-28',fieldId:''});
   assert.equal(labels.paintSeasonData({...selection,paintStartDate:''},crop),null);
+  assert.equal(labels.paintSeasonData(selection,{id:'unknown',isResolved:false}),null);
 });
 
-test('different crops conflict only when absolute crop-cycle dates overlap', () => {
-  const a = {cropId:'carrot',start:'11-01',end:'02-28',referenceYear:2024,cells:[0]};
-  assert.equal(labels.hasConflict([a],{cropId:'cabbage',start:'01-01',end:'03-01',referenceYear:2025},[0]),true);
-  assert.equal(labels.hasConflict([a],{cropId:'cabbage',start:'01-01',end:'03-01',referenceYear:2024},[0]),false);
-  assert.equal(labels.hasConflict([a],{...a,cropId:'carrot'},[0]),false);
+test('different crops conflict when their recurring calendars share any day', () => {
+  const potato = {cropId:'potato',start:'05-01',end:'07-31',cells:[0]};
+  assert.equal(labels.hasConflict([potato],{cropId:'cabbage',start:'08-01',end:'10-31'},[0]),false);
+  assert.equal(labels.hasConflict([potato],{cropId:'cabbage',start:'07-01',end:'09-30'},[0]),true);
+  assert.equal(labels.hasConflict([potato],{cropId:'cabbage',start:'07-31',end:'09-30'},[0]),true, 'shared end day');
+  assert.equal(labels.hasConflict([potato],{cropId:'cabbage',start:'05-01',end:'07-31'},[0]),true, 'identical dates');
+  assert.equal(labels.hasConflict([potato],{cropId:'cabbage',start:'05-01',end:'07-31'},[1]),false, 'different cell');
+  assert.equal(labels.hasConflict([potato],{cropId:'potato',start:'06-01',end:'08-31'},[0]),false, 'same crop');
+});
+
+test('wrapping calendars conflict across New Year', () => {
+  const carrot = {cropId:'carrot',start:'11-01',end:'02-28',cells:[0]};
+  assert.equal(labels.hasConflict([carrot],{cropId:'cabbage',start:'02-01',end:'04-30'},[0]),true);
+  assert.equal(labels.hasConflict([carrot],{cropId:'cabbage',start:'12-15',end:'12-20'},[0]),true);
+  assert.equal(labels.hasConflict([carrot],{cropId:'cabbage',start:'03-01',end:'10-31'},[0]),false);
 });
 
 test('class-based target crops with null crop names still conflict',()=>{
-  const a={classId:1,cropId:null,start:'01-01',end:'03-01',referenceYear:2024,cells:[0]};
+  const a={classId:1,cropId:null,start:'01-01',end:'03-01',cells:[0]};
   assert.equal(labels.hasConflict([a],{...a,classId:2},[0]),true);
   assert.equal(labels.hasConflict([a],{...a,classId:1},[0]),false);
 });
 
-test('undated legacy annotations do not block a dated observation',()=>{
-  const legacy={classId:1,cropId:null,start:'01-01',end:'03-01',cells:[0]};
-  assert.equal(labels.hasConflict([legacy],{...legacy,classId:2,referenceYear:2024},[0]),false);
-  assert.equal(labels.hasConflict([{...legacy,referenceYear:2024}],{...legacy,classId:2,referenceYear:2024},[0]),true);
+test('stored labels that still carry a legacy year are compared by calendar only',()=>{
+  const legacy={classId:1,cropId:null,start:'01-01',end:'03-01',referenceYear:2023,cells:[0]};
+  assert.equal(labels.hasConflict([legacy],{classId:2,cropId:null,start:'02-01',end:'02-10'},[0]),true);
 });
 
 test('remote storage uses a separate index range and rejects invalid plot indices', () => {

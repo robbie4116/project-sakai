@@ -39,7 +39,6 @@ class TrainingTests(unittest.TestCase):
     def row(self, **changes):
         row = dict(s2_row=0, s2_col=1, pixel_id='test-grid:r0:c1',
                    grid_id='test-grid', crop_id='carrot', class_id=1,
-                   reference_year=2024, year_of_season_start=2024,
                    inside_paoay='true', start_mmdd='01-01', end_mmdd='06-30', field_id='')
         row.update(changes)
         return row
@@ -75,8 +74,8 @@ class TrainingTests(unittest.TestCase):
 const Export = require('./label-export.js');
 const Grid = require('./grid.js');
 const plot = { idx: 0, pr: 0, pc: 0, validCols: 50, validRows: 50 };
-const season = { id: 'synthetic', classId: 1, start: '01-01', end: '06-30', cells: [1], referenceYear: 2024, fieldId: 'observed-fixture' };
-const out = Export.buildExport({ plots: [plot], plotData: { 0: { seasons: [season, {...season, id: 'legacy', cells: [2], referenceYear: null}, {...season, id: 'other', classId: null, cells: [3], remark: 'review'}] } }, paoayPoly: [[16,120],[17,120],[17,121],[16,121]] });
+const season = { id: 'synthetic', classId: 1, start: '01-01', end: '06-30', cells: [1], fieldId: 'observed-fixture' };
+const out = Export.buildExport({ plots: [plot], plotData: { 0: { seasons: [season, {...season, id: 'other', classId: null, cells: [3], remark: 'review'}] } }, paoayPoly: [[16,120],[17,120],[17,121],[16,121]] });
 process.stdout.write(JSON.stringify(out));
 """
         result = subprocess.run(['node', '-e', js], cwd=repository, text=True, capture_output=True, check=True)
@@ -97,7 +96,7 @@ process.stdout.write(JSON.stringify(out));
         self.assertEqual(row['pixel_id'], 'r0_c1')
         self.assertEqual(row['field_id'], 'observed-fixture')
         self.assertEqual(report['samples_written'], 1)
-        self.assertEqual(report['exclusions']['reference_year_mismatch'], 1)
+        self.assertEqual(report['reference_year'], 2024)
         self.assertEqual(report['exclusions']['invalid_class'], 1)
 
     def test_extracts_correct_pixel_indices_and_reports_missing_fields(self):
@@ -122,9 +121,9 @@ process.stdout.write(JSON.stringify(out));
         self.assertFalse(self.output.exists())
         self.assertFalse(self.output.with_suffix('.report.json').exists())
 
-    def test_excludes_nodata_nonfinite_outside_and_wrong_year(self):
+    def test_excludes_nodata_nonfinite_and_outside(self):
         rows = [self.row(s2_col=0), self.row(s2_col=2), self.row(inside_paoay='false'),
-                self.row(reference_year=2023), self.row(field_id='field-A')]
+                self.row(field_id='field-A')]
         self.write_labels(rows)
         values = np.stack([np.full((2, 3), v, dtype='float32') for v in [2, 3, 4, 8, 5]])
         values[0, 0, 0] = -9999
@@ -133,7 +132,7 @@ process.stdout.write(JSON.stringify(out));
         report = self.run_training([dict(path=str(path), start_date='2024-01-01', end_date='2024-01-15')])
         self.assertEqual(report['samples_written'], 1)
         self.assertEqual(report['exclusions']['missing_predictor'], 2)
-        self.assertEqual(report['exclusions']['reference_year_mismatch'], 1)
+        self.assertEqual(report['exclusions']['outside_paoay'], 1)
         self.assertFalse(report['independent_field_splits_available'], 'one field cannot support independent split')
 
     def test_conflicting_classes_fail_without_output(self):
@@ -155,23 +154,24 @@ process.stdout.write(JSON.stringify(out));
         self.assertEqual(report['samples_written'], 1)
         self.assertEqual(report['exclusions']['feature_window_outside_season'], 1)
 
-    def test_crossyear_verified_conflict_is_checked_before_cycle_exclusion(self):
+    def test_wrapping_calendar_conflicts_across_new_year(self):
         self.write_labels([
             self.row(start_mmdd='11-01', end_mmdd='02-28'),
-            self.row(crop_id='cabbage', class_id=2, reference_year=2025,
-                     year_of_season_start=2025, start_mmdd='01-01', end_mmdd='03-31')])
+            self.row(crop_id='cabbage', class_id=2, start_mmdd='01-01', end_mmdd='03-31')])
         path = self.raster()
         with self.assertRaisesRegex(ValueError, 'conflict'):
             self.run_training([dict(path=str(path), start_date='2025-01-01', end_date='2025-01-15')])
         self.assertFalse(self.output.exists())
 
-    def test_historical_nonoverlapping_labels_are_only_excluded(self):
-        self.write_labels([
-            self.row(), self.row(crop_id='cabbage', class_id=2,
-                                 reference_year=2023, year_of_season_start=2023)])
+    def test_recurring_label_applies_to_the_imagery_year(self):
+        # A legacy reference_year column is ignored: calendars repeat every year.
+        self.write_labels([self.row(reference_year=2019)])
         report = self.run_training()
+        with self.output.open() as handle:
+            row = next(csv.DictReader(handle))
         self.assertEqual(report['samples_written'], 1)
-        self.assertEqual(report['exclusions']['reference_year_mismatch'], 1)
+        self.assertEqual(row['reference_year'], '2024')
+        self.assertEqual(row['year_of_season_start'], '2024')
 
     def test_unresolved_mapping_does_not_block_known_crop_labels(self):
         self.metadata.write_text(json.dumps({'reference_grid': self.grid,
@@ -187,13 +187,20 @@ process.stdout.write(JSON.stringify(out));
         self.assertEqual(report['samples_written'], 1)
         self.assertEqual(report['exclusions']['feature_window_outside_season'], 1)
 
-    def test_wrap_season_uses_start_year_and_next_year_intervals(self):
-        self.write_labels([self.row(start_mmdd='11-01', end_mmdd='02-28'),
-                           self.row(s2_col=2, start_mmdd='11-01', end_mmdd='02-28', year_of_season_start=2023)])
+    def test_wrap_season_covers_next_year_intervals(self):
+        self.write_labels([self.row(start_mmdd='11-01', end_mmdd='02-28')])
         path = self.raster()
         report = self.run_training([dict(path=str(path), start_date='2025-01-01', end_date='2025-01-15')])
+        with self.output.open() as handle:
+            row = next(csv.DictReader(handle))
         self.assertEqual(report['samples_written'], 1)
-        self.assertEqual(report['exclusions']['season_cycle_mismatch'], 1)
+        self.assertEqual(row['year_of_season_start'], '2024')
+
+    def test_recurring_feb_29_falls_on_feb_28_in_common_years(self):
+        self.write_labels([self.row(start_mmdd='02-01', end_mmdd='02-29')])
+        path = self.raster()
+        report = self.run_training([dict(path=str(path), start_date='2025-02-01', end_date='2025-02-15')])
+        self.assertEqual(report['samples_written'], 1)
 
     def test_rejects_feature_year_outside_cycle(self):
         self.write_labels([self.row()])

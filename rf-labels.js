@@ -15,46 +15,25 @@
     if (!crop || crop.isResolved === false) return null;
     return CLASS_MAPPING[crop.id] || (crop.id.startsWith('crop_') ? 4 : null);
   }
-  function validYear(year) {
-    return year !== '' && year != null && Number.isInteger(Number(year)) && Number(year) >= 1980 && Number(year) <= 2100;
-  }
+  // Labels are recurring calendars: "potato 05-01..07-31" holds every year,
+  // so a label is only a class plus an MM-DD range (wrapping past Dec 31 is fine).
   function paintSeasonData(selection, crop) {
-    if (!classIdForCrop(crop) || !validYear(selection.referenceYear) || !dates.isValidMmdd(selection.paintStartDate) || !dates.isValidMmdd(selection.paintEndDate)) return null;
-    const year = Number(selection.referenceYear);
-    // MM-DD permits Feb 29 for recurring calendars; a dated observation must be real.
-    const result = {cropId:crop.id,start:selection.paintStartDate,end:selection.paintEndDate,referenceYear:year,fieldId:String(selection.fieldId || '').trim()};
-    if (!absoluteRange(result)) return null;
-    return result;
-  }
-  function absoluteRange(season) {
-    if (!validYear(season.referenceYear) || !dates.isValidMmdd(season.start) || !dates.isValidMmdd(season.end)) return null;
-    const year = Number(season.referenceYear);
-    const endYear = year + Number(dates.rangeWrapsYear(season.start,season.end));
-    const make = (y, mmdd) => {
-      const [m,d] = mmdd.split('-').map(Number);
-      const value = new Date(Date.UTC(y,m-1,d));
-      return value.getUTCMonth() === m-1 && value.getUTCDate() === d ? value.getTime() : null;
-    };
-    const start = make(year,season.start), end = make(endYear,season.end);
-    return start == null || end == null ? null : [start,end];
+    if (!classIdForCrop(crop) || !dates.isValidMmdd(selection.paintStartDate) || !dates.isValidMmdd(selection.paintEndDate)) return null;
+    return {cropId:crop.id,start:selection.paintStartDate,end:selection.paintEndDate,fieldId:String(selection.fieldId || '').trim()};
   }
   function hasConflict(seasons, selection, cells) {
-    const range = absoluteRange(selection);
-    if (!range) return true;
+    if (!dates.isValidMmdd(selection.start) || !dates.isValidMmdd(selection.end)) return true;
     const selected = new Set(cells);
     return seasons.some(season => {
       const sameClass = season.classId === undefined && selection.classId === undefined
         ? season.cropId === selection.cropId
         : season.classId === selection.classId && (season.classId !== 4 || season.cropId === selection.cropId);
       if (sameClass || !(season.cells || []).some(cell=>selected.has(cell))) return false;
-      // Legacy annotations have no observed year and are excluded from training.
-      // Keep them without treating them as observations of every dated cycle.
-      if (!validYear(season.referenceYear)) return false;
-      const other = absoluteRange(season);
-      return !other || (range[0] <= other[1] && other[0] <= range[1]);
+      if (!dates.isValidMmdd(season.start) || !dates.isValidMmdd(season.end)) return true;
+      return dates.seasonsOverlap(season.start, season.end, selection.start, selection.end);
     });
   }
-  const api = {CLASS_MAPPING,cloudPlotIdx,localPlotIdx,classIdForCrop,validYear,paintSeasonData,absoluteRange,hasConflict};
+  const api = {CLASS_MAPPING,cloudPlotIdx,localPlotIdx,classIdForCrop,paintSeasonData,hasConflict};
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   root.TANIMAN_RF_LABELS = api;
 })(typeof window !== 'undefined' ? window : globalThis);

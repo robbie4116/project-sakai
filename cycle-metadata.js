@@ -1,4 +1,6 @@
-// Carry cycle identity through the foundation schema's opaque season IDs.
+// Carry the observed field ID (and a legacy cycle year) through the foundation
+// schema's opaque season IDs. Labels are recurring calendars, so new IDs carry
+// no year: [null, fieldId].
 (function (root) {
   'use strict';
 
@@ -9,10 +11,12 @@
   function encodeId(baseId, meta = {}) {
     if (typeof baseId !== 'string' || !baseId) throw new TypeError('A base season ID is required');
     let id = baseId;
-    if (meta.referenceYear !== undefined) {
-      if (!validYear(meta.referenceYear)) throw new RangeError('Reference year must be an integer from 1980 to 2100');
-      if (meta.fieldId != null && typeof meta.fieldId !== 'string') throw new TypeError('Field ID must be a string');
-      const json = JSON.stringify([meta.referenceYear, meta.fieldId == null ? null : meta.fieldId]);
+    const hasYear = meta.referenceYear !== undefined && meta.referenceYear !== null;
+    if (meta.fieldId != null && typeof meta.fieldId !== 'string') throw new TypeError('Field ID must be a string');
+    const fieldId = meta.fieldId ? meta.fieldId : null;
+    if (hasYear || fieldId !== null) {
+      if (hasYear && !validYear(meta.referenceYear)) throw new RangeError('Reference year must be an integer from 1980 to 2100');
+      const json = JSON.stringify([hasYear ? meta.referenceYear : null, fieldId]);
       id = `${PREFIX}${json.length}:${json}${baseId}`;
     }
     // JS counts surrogate pairs twice, making this conservative for SQL char_length.
@@ -30,9 +34,10 @@
     if (!Number.isSafeInteger(length) || start + length >= rest.length) return {};
     try {
       const values = JSON.parse(rest.slice(start, start + length));
-      if (!Array.isArray(values) || values.length !== 2 || !validYear(values[0])) return {};
+      if (!Array.isArray(values) || values.length !== 2 || !(values[0] === null || validYear(values[0]))) return {};
       if (values[1] !== null && typeof values[1] !== 'string') return {};
-      return { referenceYear: values[0], ...(values[1] === null ? {} : { fieldId: values[1] }) };
+      if (values[0] === null && values[1] === null) return {};
+      return { ...(values[0] === null ? {} : { referenceYear: values[0] }), ...(values[1] === null ? {} : { fieldId: values[1] }) };
     } catch (_) {
       return {};
     }

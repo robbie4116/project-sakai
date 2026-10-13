@@ -215,7 +215,6 @@ function syncSeasonSelectors() {
 window.syncSeasonSelectors = syncSeasonSelectors;
 
 function setPaintSeasonRange(start, end) {
-  if (typeof window.resetReferenceConfirmation === 'function') window.resetReferenceConfirmation();
   state.paintStartDate = start;
   state.paintEndDate = end;
   state.datesAuto = false;

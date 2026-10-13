@@ -60,7 +60,7 @@ test('an unresolved class-4 crop name blocks new paint; a resolved one paints', 
       selection: { classKey: 'other_cultivated', cropId: LETTUCE, remark: '' },
       paintStartDate: '06-01',
       paintEndDate: '06-30',
-      referenceYear:2024, fieldId:'', plotIdx:0,
+      fieldId:'', plotIdx:0,
     },
     Classes,
     CropCatalog: { isResolved: id => cropResolved && id === LETTUCE },
@@ -69,7 +69,7 @@ test('an unresolved class-4 crop name blocks new paint; a resolved one paints', 
 
   assert.equal(run(false), null);
   assert.deepEqual(JSON.parse(JSON.stringify(run(true))), {
-    classId: 4, cropId: LETTUCE, remark: '', start: '06-01', end: '06-30', referenceYear:2024, fieldId:'',
+    classId: 4, cropId: LETTUCE, remark: '', start: '06-01', end: '06-30', fieldId:'',
   });
 });
 

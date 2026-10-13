@@ -1,6 +1,12 @@
 #!/usr/bin/env python3
-"""Join verified pixel labels to an exactly aligned, fixed raster stack."""
+"""Join pixel labels to an exactly aligned, fixed raster stack.
+
+Labels are recurring crop calendars (MM-DD ranges with no year): an expert's
+"potato 05-01..07-31" holds every year, so each label is applied to the
+feature manifest's reference_year.
+"""
 import argparse
+import calendar
 from collections import Counter
 import csv
 from datetime import date
@@ -24,13 +30,26 @@ def integer(value):
     return int(number)
 
 
-def season_dates(row, reference_year):
-    year = integer(row.get('year_of_season_start') or reference_year)
+def calendar_date(year, month, day):
+    # A recurring Feb 29 falls on Feb 28 in common years.
+    if (month, day) == (2, 29) and not calendar.isleap(year):
+        day = 28
+    return date(year, month, day)
+
+
+def season_dates(row, start_year):
     start_parts = [int(part) for part in row['start_mmdd'].split('-')]
     end_parts = [int(part) for part in row['end_mmdd'].split('-')]
-    start = date(year, *start_parts)
-    end = date(year + (tuple(end_parts) < tuple(start_parts)), *end_parts)
+    if len(start_parts) != 2 or len(end_parts) != 2:
+        raise ValueError('expected MM-DD')
+    start = calendar_date(start_year, *start_parts)
+    end = calendar_date(start_year + (tuple(end_parts) < tuple(start_parts)), *end_parts)
     return start, end
+
+
+def season_occurrences(row, year):
+    """Every dated occurrence of a recurring label that can touch the year's cycle."""
+    return [season_dates(row, start_year) for start_year in (year - 1, year, year + 1)]
 
 
 def prepare_training(labels, metadata, features, output):
@@ -82,7 +101,7 @@ def prepare_training(labels, metadata, features, output):
         with labels.open(encoding='utf-8-sig', newline='') as handle:
             reader = csv.DictReader(handle)
             required = {'s2_row', 's2_col', 'grid_id', 'crop_id', 'class_id',
-                        'reference_year', 'inside_paoay', 'start_mmdd', 'end_mmdd'}
+                        'inside_paoay', 'start_mmdd', 'end_mmdd'}
             if not required.issubset(reader.fieldnames or []):
                 raise ValueError('Labels missing required columns: ' + ', '.join(sorted(required - set(reader.fieldnames or []))))
             candidates = {}
@@ -94,13 +113,6 @@ def prepare_training(labels, metadata, features, output):
                     continue
                 if row['grid_id'] != grid['id']:
                     raise ValueError('Label grid_id does not match reference grid')
-                try:
-                    label_year = integer(row['reference_year'])
-                except (ValueError, TypeError):
-                    label_year = None
-                if label_year is None:
-                    exclusions['reference_year_mismatch'] += 1
-                    continue
                 try:
                     class_id = integer(row['class_id'])
                     if row['crop_id'] not in classes or classes[row['crop_id']] != class_id:
@@ -125,29 +137,28 @@ def prepare_training(labels, metadata, features, output):
                         if not math.isfinite(actual) or abs(actual - expected) > 1e-6:
                             raise ValueError(f'Label {key} center does not align with pixel row/column')
                 try:
-                    season_start, season_end = season_dates(row, label_year)
+                    occurrences = season_occurrences(row, year)
                 except (ValueError, TypeError):
                     exclusions['invalid_season_dates'] += 1
                     continue
                 key = (r, c)
                 # Even a partial label can contradict the class of a complete
-                # candidate. Check verified date overlaps before eligibility.
+                # candidate. Check calendar overlaps before eligibility.
                 previous_observations = observations.setdefault(key, [])
-                for previous_class, previous_start, previous_end in previous_observations:
+                for previous_class, previous_occurrences in previous_observations:
                     if previous_class != class_id and any(
                             max(season_start, previous_start, start) <= min(season_end, previous_end, end)
+                            for season_start, season_end in occurrences
+                            for previous_start, previous_end in previous_occurrences
                             for start, end, *_ in intervals):
                         raise ValueError(f'Class conflict at pixel row {r}, column {c} within retained feature intervals')
-                previous_observations.append((class_id, season_start, season_end))
-                if label_year != year:
-                    exclusions['reference_year_mismatch'] += 1
-                    continue
-                if season_start.year != year:
-                    exclusions['season_cycle_mismatch'] += 1
-                    continue
-                if not all(season_start <= start <= end <= season_end for start, end, *_ in intervals):
+                previous_observations.append((class_id, occurrences))
+                covering = [(season_start, season_end) for season_start, season_end in occurrences
+                            if all(season_start <= start <= end <= season_end for start, end, *_ in intervals)]
+                if not covering:
                     exclusions['feature_window_outside_season'] += 1
                     continue
+                season_start = covering[0][0]
                 if key in candidates:
                     previous = candidates[key]
                     if previous['class_id'] != class_id:
