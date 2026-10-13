@@ -1434,17 +1434,12 @@ document.getElementById('btn-undo').onclick = undo;
 document.getElementById('btn-redo').onclick = redo;
 
 // ── ZIP EXPORT ────────────────────────────────────────────────────
-// Output layout:
-//   paoay_cropmap_YYYY-MM-DD/
-//     labels.csv          one row per (cell, crop) with 12 month columns
-//     plots.csv           one row per plot with farmer + per-crop month masks
-//     farmers.csv         one row per Farmer ID with their plot list
-//     metadata.json       full structured dump
-//     labels/plotXXX.png  rendered crop label PNG (500x500, 10px/cell)
-//     photos/plotXXX_N.jpg
+// paoay_cropmap_YYYY-MM-DD/
+//   seasons.csv  fields.csv  classes.csv  plots.csv  metadata.json
+//   labels/plotNNN.png   photos/plotNNN_N.jpg
 document.getElementById('btn-save').onclick = async () => {
   CropCatalog.registerReferences(state.plots);
-  const indices = Object.keys(state.plots).map(k=>+k).filter(plotHasData);
+  const indices = PLOTS.map(plot => plot.idx).filter(plotHasData);
   if (!indices.length){ toast(tr('empty')); return; }
   const btn = document.getElementById('btn-save');
   btn.disabled = true;
@@ -1452,170 +1447,46 @@ document.getElementById('btn-save').onclick = async () => {
   btn.innerHTML = '<span>⏳</span>';
   try {
   await flushCloudSync();
+  if (outbox.size()) await flushCloudSync();   // edits made while the first flush ran
 
   const zip = new JSZip();
   const dateStamp = new Date().toISOString().slice(0,10);
   const folder = zip.folder('paoay_cropmap_' + dateStamp);
 
-  let seasonsCsv =
-    'plot_idx,season_id,cell_idx,cell_row,cell_col,crop_id,start_mmdd,end_mmdd,wraps_year,center_lat,center_lng,lat_s,lat_n,lng_w,lng_e,farmer_id\n';
-  let labelsCsv =
-    'plot_idx,plot_area,plot_source,plot_row,plot_col,farmer_id,season_id,cell_idx,cell_row,cell_col,crop_id,crop_en,start_mmdd,end_mmdd,wraps_year,center_lat,center_lng,lat_s,lat_n,lng_w,lng_e\n';
-  const targetCrops = CROPS.filter(crop => CropCatalog.isTarget(crop.id));
-  let plotsCsv =
-    'plot_idx,plot_area,plot_source,plot_row,plot_col,centerLat,centerLng,farmer_id,farmer_name,note,photo_count,season_count,total_season_cells,' +
-    targetCrops.map(c=>`${c.id}_cells`).join(',') + ',other_crop_cells\n';
-  const allSeasonExportRows = [];
-  const farmerMap = new Map(); // farmer_id -> { name, plots:[], patches, crops:Set }
-  const metaPlots = [];
+  const plotData = {};
+  for (const idx of indices) plotData[idx] = ensurePlot(idx);
+  const exported = LabelExport.buildExport({ plots: PLOTS, plotData, catalog: CropCatalog, grid: window.GRID });
+  folder.file('seasons.csv', exported.seasonsCsv);
+  folder.file('fields.csv', exported.fieldsCsv);
+  folder.file('classes.csv', exported.classesCsv);
+  folder.file('plots.csv', exported.plotsCsv);
+  folder.file('metadata.json', exported.metadataJson);
 
-  // canvas for PNG label render
   const oc = document.createElement('canvas');
   oc.width = 500; oc.height = 500;
   const oct = oc.getContext('2d');
-
   for (const idx of indices) {
-    const p = ensurePlot(idx);
+    const p = plotData[idx];
     const plot = PLOTS[idx];
-    if (!plot) continue;
-    const plotArea = plot.area || 'paoay';
-    const plotSource = plot.source || 'field_grid';
-    const farmerId = (p.farmerId || '').trim();
-    const farmerName = (p.farmer || '').trim();
-    const note = p.note || '';
-
-    const seasonRows = seasonExportRows({ plotIdx: idx, plot, plotData: p, grid: GRID, farmerId });
-    for (const row of seasonRows) allSeasonExportRows.push(row);
-    const cropCounts = CropExport.buildPlotCropCounts(seasonRows);
-    const cropCountById = new Map(cropCounts.map(count => [count.crop_id, count.season_cell_rows]));
-    const otherCropCells = cropCounts.reduce((sum, count) =>
-      sum + (CropCatalog.isTarget(count.crop_id) ? 0 : count.season_cell_rows), 0);
-    for (const row of seasonRows) {
-      seasonsCsv += [
-        row.plot_idx, csvEscape(row.season_id), row.cell_idx, row.cell_row, row.cell_col,
-        csvEscape(row.crop_id), csvEscape(row.start_mmdd), csvEscape(row.end_mmdd), row.wraps_year,
-        row.center_lat, row.center_lng, row.lat_s, row.lat_n, row.lng_w, row.lng_e,
-        csvEscape(row.farmer_id),
-      ].join(',') + '\n';
-      const crop = CropCatalog.byId(row.crop_id) || { name: { en: `Unknown crop (${row.crop_id})` } };
-      labelsCsv += [
-        row.plot_idx, csvEscape(plotArea), csvEscape(plotSource), plot.r, plot.c, csvEscape(farmerId),
-        csvEscape(row.season_id), row.cell_idx, row.cell_row, row.cell_col,
-        csvEscape(row.crop_id), csvEscape(crop.name.en || crop.name[state.lang] || row.crop_id),
-        csvEscape(row.start_mmdd), csvEscape(row.end_mmdd), row.wraps_year,
-        row.center_lat, row.center_lng, row.lat_s, row.lat_n, row.lng_w, row.lng_e,
-      ].join(',') + '\n';
-    }
-
-    // PNG label image (snapshot in "all months" view for visual QA only)
-    if (seasonRows.length) {
-      oct.fillStyle = '#0A1A0A';
-      oct.fillRect(0, 0, 500, 500);
+    if (plotHasPaint(idx)) {
+      oct.clearRect(0, 0, 500, 500);
       for (let r=0; r<GRID; r++) for (let c=0; c<GRID; c++) {
         const cellIdx = r*GRID + c;
-        const present = cellVisibleCropIds(p, cellIdx, ALL_MONTHS).map(cropIndexFromId).filter(i => i >= 0);
-        if (!present.length) continue;
-        drawMixedCell(oct, c*10, r*10, 10, 10, present, state.mixedStyle);
+        if (!GridMath.isCellInBounds(plot, cellIdx)) {
+          oct.fillStyle = '#404040';
+          oct.fillRect(c*10, r*10, 10, 10);
+          continue;
+        }
+        const colors = cellVisibleColors(p, cellIdx, ALL_MONTHS);
+        if (colors.length) drawMixedCell(oct, c*10, r*10, 10, 10, colors, state.mixedStyle);
       }
       folder.file(`labels/plot${String(idx).padStart(3,'0')}.png`,
         oc.toDataURL('image/png').split(',')[1], { base64: true });
     }
-
-    // plots.csv — one row per plot
-    const photos = (p.photos || []).filter(ph => ph && (ph.url || ph.dataUrl));
-    plotsCsv += [
-      idx, csvEscape(plotArea), csvEscape(plotSource), plot.r, plot.c, plot.centerLat, plot.centerLng,
-      csvEscape(farmerId), csvEscape(farmerName), csvEscape(note), photos.length,
-      (p.seasons || []).length, seasonRows.length,
-      ...targetCrops.map(crop => cropCountById.get(crop.id) || 0), otherCropCells,
-    ].join(',') + '\n';
-
-    // Photos export
-    photos.forEach((ph, pi) => {
-      if (ph.dataUrl) {
-        folder.file(`photos/plot${String(idx).padStart(3,'0')}_${pi}.jpg`,
-          ph.dataUrl.split(',')[1], { base64: true });
-      }
-    });
-
-    // farmer aggregation
-    if (farmerId) {
-      if (!farmerMap.has(farmerId)) farmerMap.set(farmerId, { name:'', plots:[], patches:0, crops:new Set() });
-      const f = farmerMap.get(farmerId);
-      if (farmerName && !f.name) f.name = farmerName;
-      f.plots.push(idx);
-      f.patches += seasonRows.length;
-      for (const row of seasonRows) {
-        if (row.crop_id != null && String(row.crop_id) !== '') f.crops.add(String(row.crop_id));
-      }
-    }
-
-    // metadata
-    metaPlots.push({
-      plot_idx: idx,
-      area: plotArea,
-      source: plot.source || 'field_grid',
-      row: plot.r, col: plot.c,
-      centerLat: plot.centerLat, centerLng: plot.centerLng,
-      farmer_id: farmerId,
-      farmer_name: farmerName,
-      note: p.note || '',
-      photo_count: photos.length,
-      season_count: (p.seasons || []).length,
-      season_cell_rows: seasonRows.length,
-      crops: cropCounts.map(count => {
-        const crop = CropCatalog.byId(count.crop_id);
-        return {
-          id: count.crop_id,
-          en: crop?.name?.en || `Unknown crop (${count.crop_id})`,
-          is_target: CropCatalog.isTarget(count.crop_id),
-          is_resolved: CropCatalog.isResolved(count.crop_id),
-          season_cell_rows: count.season_cell_rows,
-        };
-      }),
-      seasons: cloneSeasons(p.seasons),
+    (p.photos || []).filter(ph => ph && ph.dataUrl).forEach((ph, pi) => {
+      folder.file(`photos/plot${String(idx).padStart(3,'0')}_${pi}.jpg`, ph.dataUrl.split(',')[1], { base64: true });
     });
   }
-
-  const cropLookupRows = CropExport.buildCropLookupRows(allSeasonExportRows, CropCatalog.all());
-  const plotCropCountRows = CropExport.buildPlotCropCounts(allSeasonExportRows);
-  allSeasonExportRows.length = 0; // Release per-cell row objects before ZIP serialization.
-  const cropsCsv = CropExport.buildCropsCsv(cropLookupRows);
-  const plotCropCountsCsv = CropExport.buildPlotCropCountsCsv(plotCropCountRows);
-
-  // farmers.csv
-  let farmersCsv = 'farmer_id,farmer_name,plot_count,plot_indices,total_patches,crops\n';
-  for (const [id, f] of farmerMap.entries()) {
-    farmersCsv += `${csvEscape(id)},${csvEscape(f.name)},${f.plots.length},${csvEscape(f.plots.join(';'))},${f.patches},${csvEscape(JSON.stringify([...f.crops]))}\n`;
-  }
-
-  folder.file('seasons.csv', seasonsCsv);
-  folder.file('labels.csv', labelsCsv);
-  folder.file('plots.csv', plotsCsv);
-  folder.file('farmers.csv', farmersCsv);
-  folder.file('crops.csv', cropsCsv);
-  folder.file('plot_crop_counts.csv', plotCropCountsCsv);
-  folder.file('metadata.json', JSON.stringify({
-    survey_area: 'Paoay, Atok, Benguet',
-    surveyed_at: new Date().toISOString(),
-    schema_version: 5,
-    grid_resolution: `${GRID}x${GRID}`,
-    authoritative_ground_truth_file: 'seasons.csv',
-    date_encoding: {
-      type: 'recurring annual MM-DD inclusive range',
-      fields: ['start_mmdd', 'end_mmdd', 'wraps_year'],
-      note: 'start_mmdd and end_mmdd are inclusive recurring annual planting-to-harvest windows with no year component',
-    },
-    coordinate_reference_system: 'EPSG:4326',
-    sentinel2_alignment_note: 'Use WGS84 cell centers or bounds from seasons.csv to sample Sentinel-2 bands and vegetation indices for a chosen target year.',
-    crops: cropLookupRows,
-    farmers: [...farmerMap.entries()].map(([id, f]) => ({
-      id, name: f.name, plot_count: f.plots.length,
-      plot_indices: f.plots, total_patches: f.patches,
-      crops: [...f.crops],
-    })),
-    plots: metaPlots,
-  }, null, 2));
 
   if (window.__TAURI__) {
     const uint8 = await zip.generateAsync({type:'uint8array'});
@@ -1652,10 +1523,6 @@ function toast(msg){
   t.classList.add('show');
   clearTimeout(toastTimer);
   toastTimer = setTimeout(()=>t.classList.remove('show'), 2200);
-}
-
-function csvEscape(value) {
-  return CropExport.csvEscape(value);
 }
 
 // ── EVENT WIRING ──────────────────────────────────────────────────
