@@ -287,7 +287,7 @@
     }
 
     function render() {
-      targetGroup.hidden = false;
+      targetGroup.hidden = targetCrops().length === 0;
       otherGroup.hidden = isTauri;
       renderTargets();
       if (!isTauri) renderCustom();

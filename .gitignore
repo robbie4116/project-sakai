@@ -17,3 +17,9 @@ src-tauri/dist-static/
 
 # Superpowers visual-companion scratch files
 .superpowers/
+
+# Any local raster (Sentinel-2 composites etc.) and the Esri tile cache
+*.tif
+*.tif.aux.xml
+.tile-cache/
+.pytest_cache/

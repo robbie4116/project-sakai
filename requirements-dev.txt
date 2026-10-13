@@ -1,3 +1,6 @@
-rasterio==1.4.3
-Pillow==11.2.1
-numpy==2.2.5
+rasterio
+Pillow
+numpy
+pyproj
+requests
+pytest

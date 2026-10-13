@@ -39,15 +39,13 @@ test('app initializes canonical viewMonths and legacy mirror from month utility'
   assert.match(appSource, /state\.viewMonth\s*=\s*viewMonthFromMask\(state\.viewMonths\)/);
 });
 
-test('visible crop and dominant crop calculations use viewMonths mask overlap', () => {
-  const cellVisible = extractFunctionBlock(appSource, 'cellVisibleCrops');
-  const cellVisibleIds = extractFunctionBlock(appSource, 'cellVisibleCropIds');
+test('visible color and dominant class calculations use viewMonths mask overlap', () => {
+  const cellVisible = extractFunctionBlock(appSource, 'cellVisibleColors');
   const composition = extractFunctionBlock(appSource, 'plotCompositionForView');
   const dominant = extractFunctionBlock(appSource, 'dominantCropForView');
 
-  assert.match(cellVisible, /cellVisibleCropIds\(p,\s*cellIdx\)/);
-  assert.match(appSource, /function cellVisibleCropIds\(p,\s*cellIdx,\s*viewMonths\s*=\s*state\.viewMonths\)/);
-  assert.match(cellVisibleIds, /seasonIntersectsViewMonths\(season,\s*viewMonths\)/);
+  assert.match(appSource, /function cellVisibleColors\(p,\s*cellIdx,\s*viewMonths\s*=\s*state\.viewMonths\)/);
+  assert.match(cellVisible, /seasonIntersectsViewMonths\(season,\s*viewMonths\)/);
   assert.doesNotMatch(cellVisible, /state\.viewMonth(?!s)/);
 
   assert.match(appSource, /function plotCompositionForView\(idx,\s*viewMonths\s*=\s*state\.viewMonths\)/);

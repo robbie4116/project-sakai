@@ -2,12 +2,14 @@
 (function () {
   'use strict';
 
-  const CACHE_KEY = 'taniman_custom_crops_v1';
+  const CACHE_KEY = 'taniman_custom_crops_v2';
   const UNKNOWN_HEX = '#9CA3AF';
   const isTauri = Boolean(window.__TAURI__);
-  const crops = Array.isArray(window.CROPS) ? window.CROPS : [];
-  const targets = crops.map(crop => ({ ...crop, isTarget: true, isResolved: true }));
-  const targetById = new Map(targets.map(crop => [crop.id, crop]));
+  // Class 4 "Other cultivated" crop names only. Carrot, cabbage and potato are
+  // classes now (classes.js), so there are no target crops in this catalog.
+  const crops = [];
+  const targets = [];
+  const targetById = new Map();
   const targetNames = new Set();
   const customById = new Map();
   const confirmedById = new Map();
@@ -51,7 +53,7 @@
     const displayName = displayNameFromRow(row);
     if (!displayName || [...displayName].length > 80) return null;
     return {
-      id: `crop_${row.id}`,
+      id: row.id,
       hex: row.hex,
       name: { en: displayName },
       isTarget: false,
@@ -61,7 +63,7 @@
 
   function rawRows() {
     return Array.from(customById.values(), crop => ({
-      id: crop.id.slice('crop_'.length),
+      id: crop.id,
       name: crop.name.en,
       hex: crop.hex,
     }));
@@ -157,15 +159,12 @@
     if (!displayName) throw new Error('Crop name is required.');
     if ([...displayName].length > 80) throw new Error('Crop name must be 80 characters or fewer.');
     if (!isHex(hex)) throw new Error('Crop color must be a six-digit hex value such as #258C55.');
-    if (targetNames.has(nameKey(displayName))) throw new Error('Target crop names cannot be added as custom crops.');
+    if (targetNames.has(nameKey(displayName))) throw new Error('Carrot, cabbage and potato are classes. Pick them under Class.');
     return displayName;
   }
 
-  for (const target of targets) {
-    for (const value of Object.values(target.name || {})) {
-      if (normalizeName(value)) targetNames.add(nameKey(value));
-    }
-  }
+  const reservedNames = (window.TANIMAN_CLASSES && window.TANIMAN_CLASSES.RESERVED_CROP_NAMES) || [];
+  for (const name of reservedNames) targetNames.add(nameKey(name));
 
   // Hydrate the stable shared array before app.js and calendar.js retain it.
   setCustomRows(readCache());
@@ -308,12 +307,12 @@
     if (isTauri) throw new Error('Custom crops are unavailable in the offline app.');
     const id = cropIdentity(cropId);
     if (id == null || targetById.has(id)) throw new Error('Only custom crops can be removed.');
-    if (!id.startsWith('crop_') || !isUuid(id.slice('crop_'.length)) || !customById.has(id)) {
+    if (!isUuid(id) || !customById.has(id)) {
       throw new Error('Unknown custom crop.');
     }
     if (typeof window.deleteCustomCrop !== 'function') throw new Error('Custom crop catalog is unavailable.');
 
-    const removed = await window.deleteCustomCrop(id.slice('crop_'.length));
+    const removed = await window.deleteCustomCrop(id);
     mutationGeneration++;
     customById.delete(id);
     confirmedById.delete(id);

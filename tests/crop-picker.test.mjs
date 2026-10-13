@@ -595,15 +595,13 @@ test('picker control strings are translated in English, Tagalog, and Ilocano', (
   }
 });
 
-test('the app sanitizes deleted crop seasons while preserving dirty plot sync work', () => {
+test('the app drops deleted crop seasons and their pending deltas', () => {
   const removeCustomCrop = appSource.match(/async function removeCustomCrop\(cropId\) \{([\s\S]*?)\n\}/)?.[0] || '';
 
   assert.match(appSource, /async function removeCustomCrop\(cropId\)/);
   assert.match(appSource, /await CropCatalog\.remove\(cropId\)/);
-  assert.match(removeCustomCrop, /season\.cropId !== cropId/);
-  assert.match(removeCustomCrop, /markCloudDirty\(idx\)/);
-  assert.doesNotMatch(removeCustomCrop, /cloudDirty\.delete\(idx\)/);
-  assert.doesNotMatch(removeCustomCrop, /delete plot\._dirty_at/);
+  assert.match(removeCustomCrop, /outbox\.dropCrop\(cropId\)/);
+  assert.match(removeCustomCrop, /s\.cropId !== cropId/);
   assert.match(removeCustomCrop, /undoStack\.length = 0/);
   assert.match(removeCustomCrop, /redoStack\.length = 0/);
   assert.match(appSource, /onRemove:\s*removeCustomCrop/);
