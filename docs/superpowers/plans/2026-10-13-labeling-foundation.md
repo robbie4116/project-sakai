@@ -466,7 +466,14 @@ The app will be broken until Chunk 3, because `app.js` still reads `PAOAY_PLOTS`
 - Create: `docs/supabase-foundation.sql`
 - Delete: `docs/supabase-setup.sql`, `docs/supabase-add-crops.sql`
 
-You can't run this script yourself. Write it exactly as below; the owner runs it in Task 22. Spec reference: §8.
+You can't run this script yourself; the owner runs it in Task 22. Spec reference: §8.
+
+> **Already done (2026-10-13):** `docs/supabase-foundation.sql` and `docs/supabase-foundation-smoke.sql` are already committed on `main` with exactly the content below. The repo owner may have run the script already. In this task:
+> - check that both files match the content below;
+> - do Step 3 (delete the old scripts);
+> - commit.
+>
+> Don't change the SQL unless a later task needs it. If it does, tell the owner, because they'll have to run the changed script again.
 
 - [ ] **Step 1: Write `docs/supabase-foundation.sql`**
 
